@@ -30,7 +30,7 @@ Locked design choices:
 ### Non-goals
 - No web UI, dashboard, or server
 - No re-implementation of tmux, git, or Claude Code subagents
-- No messaging between agents (sessions coordinate through SQLite only)
+- No direct messaging between sessions or agents. They coordinate through the SQLite store only: claims, the contract file, and the `messages` table
 - No embeddings or vector DB in v1 (FTS5 only)
 - No storing transcripts
 - No copying git history into the DB (what changed and who changed it comes from `git` when needed)
@@ -62,7 +62,7 @@ Most of the machinery already exists. shoal is mostly glue plus a SQLite file.
 |------|---------------------------|-----------------|
 | Isolation | `git worktree`, branches | Naming, creation, cleanup |
 | Terminal multiplexing | tmux windows | `tmux new-window -n <task>` + status tracking |
-| Role agents (backend, frontend, QA) | Claude Code subagents (`.claude/agents/*.md`) | A small default set of templates |
+| Role agents (lead, backend, frontend, integration, docs, QA) | Claude Code subagents (`.claude/agents/*.md`) | Eight language-agnostic `shoal-*` definitions (§7) |
 | Context injection | Claude Code hooks (`SessionStart`, `PreToolUse`, `PostToolUse`, `Stop`) | Hook handlers that query SQLite |
 | Project rules | `CLAUDE.md` | Proposes recurring lessons and active conventions for it |
 | Quality gates | The project's own test/lint/build | Runs them from `.shoal.toml`, records pass/fail |
@@ -85,16 +85,19 @@ Most of the machinery already exists. shoal is mostly glue plus a SQLite file.
       config.toml                           # project config when the repo runs in stealth mode
       reports/                              # rendered markdown reports (default sink)
       worktrees/
-        <task-slug>/                        # git worktrees live here, outside the repo tree
-      tasks/
-        <task-slug>/
-          todo.md                           # execution surface
-          context.md                        # scoped brief for this task only
-          contract.md                       # API contract (feature lane, when FE and BE both change)
+        <task-slug>/                        # git worktree for one task, outside the repo tree
+          .shoal/                           # per-task files, listed in .git/info/exclude, never committed
+            task.json                       # {"project_id", "task_id", "slug"}: marks this as a shoal worktree
+            brief.md                        # task brief passed to claude at start
+            todo.md                         # execution surface
+            contract.md                     # API contract owned by shoal-lead (feature lane)
+
+~/.claude/agents/shoal-*.md                 # stealth default: agent team definitions (§7)
 
 <repo>/                                     # default (stealth): nothing committed
   .claude/settings.local.json               # hook wiring, excluded from git
   .shoal.toml                               # OPT-IN: committed stack commands, no secrets, no memory
+  .claude/agents/shoal-*.md                 # OPT-IN: committed agent team definitions
 ```
 
 ### 4.2 Repo footprint
@@ -111,6 +114,9 @@ test  = "php artisan test"
 lint  = "vendor/bin/pint --test"
 build = "npm run build"
 test_file = "php artisan test --filter {name}"   # optional, for fast regression runs
+
+[session]
+model = "claude-opus-5-5"        # model for sessions shoalctl launches; agent definitions inherit it
 
 [lanes]
 qa_max_rounds = 3                # same cap in every lane
@@ -145,6 +151,11 @@ deny_globs = [".env*", "storage/**"]
 | `shoalctl qa <task>` | Runs the gates and the adversarial QA subagent. Increments the round. Escalates after 3 |
 | `shoalctl done <task>` | Writes the summary record, renders the report, enqueues the task for merge |
 | `shoalctl merge` | Processes the merge queue one task at a time |
+| `shoalctl agents install [--commit]` / `shoalctl agents list` | Installs the `shoal-*` agent definitions: `~/.claude/agents/` by default, `<repo>/.claude/agents/` with `--commit` |
+| `shoalctl contract freeze <task>` | Records the contract hash and version; later edits must bump the version |
+| `shoalctl claim <task> --as <agent> <glob>...` / `shoalctl release <task> --as <agent> [<glob>...]` | Per-agent file claims inside one task |
+| `shoalctl msg send <task> --from <agent> --to <agent\|*> --kind <kind> "<body>"` | Leaves a message in the store |
+| `shoalctl msg inbox <task> --as <agent> [--all]` | Prints unread messages for that agent and marks them read |
 | `shoalctl recall <query \| --file path>` | FTS5 search over decisions, lessons, conventions, and bugs |
 | `shoalctl why <file \| sha \| bug-id>` | Shows the stored WHY together with live `git log` for that file or SHA |
 | `shoalctl convention propose\|agree\|retire` | Manages the convention lifecycle |
@@ -167,6 +178,9 @@ Store the reasons. Point at git for everything else.
 | `conventions` | `id, rule, scope_glob, status(proposed\|active\|retired), proposed_at, agreed_at, source_task_id` | e.g. "use the strategy pattern from now on" |
 | `qa` | `id, question, answer, files(json), task_id, true_at_sha` | Questions you answered during work |
 | `merge_queue` | `task_id, position, state(waiting\|rebasing\|testing\|merged\|failed)` | Serial merge |
+| `messages` | `id, task_id, from_agent, to_agent, kind, subject, body, reply_to, created_at` | Agent-to-agent notes inside one task (§7.4). `to_agent = '*'` is a broadcast |
+| `message_reads` | `message_id, agent, read_at` | Per-recipient read state, so a broadcast is read once by each agent |
+| `contracts` | `task_id, version, sha256, frozen_at, frozen_by` | One row per frozen contract version |
 | `fts_*` | FTS5 virtual tables over summaries, bugs, decisions, lessons, conventions, qa | Search |
 
 The DB does **not** store diffs, authors, commit messages, blame, or transcripts. shoal runs `git log`, `git show`, or `git blame` live when needed.
@@ -255,12 +269,12 @@ Every task is in exactly one lane, chosen at `shoalctl new <lane>`. The lane dec
 | After `done` | enqueue for merge | enqueue for merge | enqueue for merge, create backport task |
 
 ### 6.1 Feature lane
-1. **Spec**: the lead agent writes `todo.md`, the list of new behaviours, and file claims. You confirm scope
-2. **API contract**: `contract.md` (endpoints, payloads, events, errors), frozen before parallel work starts
-3. **Parallel build**: builder agents share **one worktree per feature**. Each agent claims its own files, and `PostToolUse` warns an agent that writes outside its claims
+1. **Spec**: `shoal-lead` writes `todo.md`, the list of new behaviours, and file claims. You confirm scope
+2. **API contract**: `shoal-lead` writes `contract.md` (endpoints, payloads, events, errors) and freezes it before parallel work starts
+3. **Parallel build**: `shoal-backend`, `shoal-frontend`, and `shoal-integration` share **one worktree per feature**. Each agent claims its own files, and `PostToolUse` warns an agent that writes outside its claims
 4. **Tests**: every new behaviour in the list gets at least one automated test, or a manual-check line you waive explicitly
-5. **Docs**: update README, runbooks, and API docs the change affects
-6. **Adversarial QA loop**: gates plus the QA agents. Each failure is recorded as a lesson. Max 3 rounds, then escalate
+5. **Docs**: `shoal-docs` updates README, runbooks, and API docs the change affects
+6. **Adversarial QA loop**: gates plus `shoal-qa-breaker`, `shoal-qa-regression`, and `shoal-qa-scope`. Each failure is recorded as a lesson. Max 3 rounds, then escalate
 7. **Report**: `done` writes the summary and renders the report
 
 ### 6.2 Bugfix lane
@@ -298,16 +312,81 @@ A hotfix repairs what is running in production right now. It follows the bugfix 
 
 ---
 
-## 7. Coordination and Conflict Flow
+## 7. Agent Team per Task
+
+Each task gets a small team of Claude Code subagents. They are plain `.md` agent definitions; shoal ships them, installs them, and gives them a shared place to coordinate. It does not run its own agent runtime.
+
+### 7.1 Install location
+- **Stealth (default):** `shoalctl agents install` writes the definitions to `~/.claude/agents/shoal-<role>.md`. They are user-level, so every project sees them and no repo changes.
+- **Opt-in:** `shoalctl agents install --commit` writes them to `<repo>/.claude/agents/shoal-<role>.md` for teams that want them in version control.
+- The `shoal-` prefix keeps them from colliding with your own agents.
+- Each file carries `shoal_version: <n>` in its frontmatter. shoal records the SHA-256 of every file it writes. On upgrade it replaces a file only if the file still matches a hash it wrote; a file you edited is left alone and reported. `uninstall` removes only unmodified files.
+- Definitions are language-agnostic. Stack details (test command, paths, conventions) come from `.shoal.toml`, the task brief, and hook context, never from the agent file.
+- Every definition uses `model: inherit`, so the team runs on the session's model (§4.3 `[session].model`).
+
+### 7.2 Roles
+
+| Agent | Job | Writes | Tools |
+|-------|-----|--------|-------|
+| `shoal-lead` | Plans the task, writes `todo.md` and the behaviour list, splits work between agents, assigns file claims, and **owns the API contract** between frontend and backend. The only agent that edits `contract.md` | `todo.md`, `contract.md`, claims | Read, Grep, Glob, Edit, Write, Bash, Task |
+| `shoal-backend` | Server side: data model, business logic, API endpoints, jobs. Implements the contract exactly | Its claimed files | Read, Grep, Glob, Edit, Write, Bash |
+| `shoal-frontend` | Client side: UI, state, API calls against the contract | Its claimed files | Read, Grep, Glob, Edit, Write, Bash |
+| `shoal-integration` | Third-party APIs: auth flows, webhooks, retries, rate limits, timeouts, idempotency, error mapping | Its claimed files | Read, Grep, Glob, Edit, Write, Bash, WebFetch |
+| `shoal-docs` | README, runbooks, API docs, changelog entries the change affects | Docs files only | Read, Grep, Glob, Edit, Write |
+| `shoal-qa-breaker` | Adversarial testing. Tries to break the change: edge cases, bad input, auth and permission abuse, concurrency and double-submit, empty and huge data, network and dependency failure. Every break becomes a failing test | Test files only | Read, Grep, Glob, Write, Edit, Bash |
+| `shoal-qa-regression` | Runs the full configured suite through `shoalctl test` and compares it with the baseline. Reports regressions; does not fix them | Nothing | Read, Grep, Glob, Bash |
+| `shoal-qa-scope` | Turns every user-specified scope item into a case matrix and covers each row with an automated test or a manual-check line | Test files, scope rows | Read, Grep, Glob, Write, Edit, Bash |
+
+QA agents never edit production code. A failure goes back to the lead as a message, and the lead routes the fix.
+
+### 7.3 Team per lane
+
+| Lane | Agents |
+|------|--------|
+| feature | `shoal-lead`, then whichever of `shoal-backend` / `shoal-frontend` / `shoal-integration` the plan needs, `shoal-docs`, and all three QA agents |
+| bugfix | `shoal-lead` (trace + red test), one builder, `shoal-qa-breaker`, `shoal-qa-regression`, plus `shoal-qa-scope` when the task has scope items |
+| hotfix | Same as bugfix. All three QA agents run when scope items exist; `shoal-qa-breaker` and `shoal-qa-regression` always run |
+
+The brief tells the main session to act as `shoal-lead` and to spawn the others with the Task tool.
+
+### 7.4 Coordination
+Agents can't message each other directly. Subagents of one session report only to their parent, and separate sessions share nothing. Everything goes through three channels.
+
+1. **Contract file.** `<worktree>/.shoal/contract.md`, owned by `shoal-lead`. Sections: `Endpoints`, `Events`, `Types`, `Errors`, `Open questions`. `shoalctl contract freeze <task>` stores its SHA-256 as version 1 before parallel build starts. After a freeze:
+   - only the lead edits it; a `PreToolUse` warning fires when another agent opens it for writing
+   - any change requires `shoalctl contract freeze` again, which bumps the version, and a broadcast `contract-change` message naming what changed
+   - `shoalctl qa` fails if the file's hash differs from the latest frozen version
+2. **File claims per agent.** The lead assigns claims with `shoalctl claim <task> --as <agent> <glob>`. Builders edit only inside their claims. `PostToolUse` records the actual path; if the hook input identifies the subagent, the actual claim is attributed to it, otherwise to `shoal-lead`. A write outside the writer's claims produces a one-line warning, not a block.
+3. **Messages in the store.** `shoalctl msg send` and `shoalctl msg inbox`. Agents check their inbox at the start of each step and before reporting back. The `SessionStart` brief and the lead's `PreToolUse` context include an unread count.
+
+**Message shape** (`messages` table):
+
+| Column | Type | Rule |
+|--------|------|------|
+| `id` | INTEGER PK | |
+| `task_id` | INTEGER NOT NULL | FK `tasks.id`. Messages never cross tasks |
+| `from_agent` | TEXT NOT NULL | `shoal-<role>` or `human` |
+| `to_agent` | TEXT NOT NULL | `shoal-<role>`, `human`, or `*` (everyone in the task) |
+| `kind` | TEXT NOT NULL | `question`, `answer`, `handoff`, `contract-change`, `blocker`, `qa-failure`, `info` |
+| `subject` | TEXT NOT NULL | ≤ 120 chars |
+| `body` | TEXT NOT NULL | ≤ 4,000 chars. Point at files and line numbers; don't paste them |
+| `reply_to` | INTEGER NULL | FK `messages.id`. `answer` must set it |
+| `created_at` | TEXT NOT NULL | RFC 3339 UTC |
+
+Read state lives in `message_reads(message_id, agent, read_at)`, primary key `(message_id, agent)`. `msg inbox --as X` returns messages where `to_agent IN (X, '*')`, `from_agent != X`, and no `message_reads` row exists for X, oldest first, then inserts the read rows in the same transaction. Messages are never edited or deleted while the task is open; `gc` drops them with the task's other working rows after merge, keeping the summary.
+
+---
+
+## 8. Coordination and Conflict Flow
 
 Sessions don't talk to each other. They read and write one SQLite file. Overlap is caught at planning time.
 
-### 7.1 File claims
+### 8.1 File claims
 - During `plan`, every task declares `expected` path globs
 - `plan` checks them against open claims of other tasks
 - While a task runs, `PostToolUse` records `actual` paths and warns on paths held by another task
 
-### 7.2 Overlap resolution: always ask, one keypress
+### 8.2 Overlap resolution: always ask, one keypress
 
 | Key | Action |
 |-----|--------|
@@ -318,11 +397,11 @@ Sessions don't talk to each other. They read and write one SQLite file. Overlap 
 
 shoal never resolves an overlap silently. Overlap found late (from actual claims) warns both tasks, and the later one is queued behind the earlier one at merge time.
 
-### 7.3 Concurrency safety
+### 8.3 Concurrency safety
 - SQLite runs in WAL mode. Claims are taken inside `BEGIN IMMEDIATE`, so two `plan` runs can't both win the same path
 - Nobody writes to the base branch except `shoalctl merge`
 
-### 7.4 Merge queue
+### 8.4 Merge queue
 1. Take the first `waiting` task
 2. Rebase onto base and run the full gates
 3. Pass: fast-forward base, record `merged_sha`, release claims
@@ -333,32 +412,32 @@ shoal never resolves an overlap silently. Overlap found late (from actual claims
 
 ---
 
-## 8. Memory and Staleness Rules
+## 9. Memory and Staleness Rules
 
 A record holds what was true at a specific commit. The code is what's true now.
 
-### 8.1 Code over record
+### 9.1 Code over record
 - Every record stores `true_at_sha` and `files`
 - Every injected record carries: *"Recorded at `<sha>`. Verify against current code before relying on it."*
 - When code disagrees with a record, **the code wins**. The agent runs `shoalctl flag-stale <id> "<reason>"`. The record stays for history but is no longer injected
 
-### 8.2 Cheap staleness pre-check (no LLM)
+### 9.2 Cheap staleness pre-check (no LLM)
 - Before injecting, run `git diff --quiet <true_at_sha> HEAD -- <files>`
 - Unchanged: inject as-is. Changed: inject with a `[files changed since record]` tag
 
-### 8.3 Regression lookup ("the bug came back")
+### 9.3 Regression lookup ("the bug came back")
 1. `shoalctl why bug:<id>` returns root cause, `fix_sha`, files, regression test
 2. shoal runs `git log <fix_sha>..HEAD -- <files>` live
 3. Output shows the commits that touched those files after the fix, author and SHA straight from git
 4. Then checks whether the regression test still exists and still passes
 
-### 8.4 Lessons
+### 9.4 Lessons
 - **Recorded** on every QA failure: pattern, fix, stack, path_glob
 - **Injected** only when a touched file matches `path_glob` or the stack matches
 - **Proposed for CLAUDE.md** once `hits >= 3` across different tasks. **You approve every promotion.** On approval the rule goes into `context.md` (imported by the managed block, or injected by hook in stealth mode), `promoted = 1`, and the per-file injection stops
 - **Decay**: not hit in 90 days, no longer injected. Still searchable
 
-### 8.5 Conventions
+### 9.5 Conventions
 1. You say "use the strategy pattern from now on". The agent saves it as `proposed` with a scope glob
 2. The next session opens with a brainstorm: the brief lists proposed conventions, and the agent discusses scope and exceptions **before doing anything else**
 3. Once agreed it becomes `active` and is injected when files in scope are touched
@@ -366,7 +445,7 @@ A record holds what was true at a specific commit. The code is what's true now.
 
 ---
 
-## 9. Task Report
+## 10. Task Report
 
 Written once, to the `summaries` row. Markdown is just a rendering.
 
@@ -404,7 +483,7 @@ Reports land in `~/.shoal/projects/<id>/reports/` by default. Setting `sink = "n
 
 ---
 
-## 10. Privacy
+## 11. Privacy
 
 Nothing from a project is shipped, committed, or copied elsewhere by default.
 
@@ -416,7 +495,7 @@ Nothing from a project is shipped, committed, or copied elsewhere by default.
 
 ---
 
-## 11. Worked Example (generic app)
+## 12. Worked Example (generic app)
 
 Four tasks arrive on the same day in a Laravel + Vue app.
 
@@ -438,7 +517,7 @@ Four tasks arrive on the same day in a Laravel + Vue app.
 
 ---
 
-## 12. Phased Build Plan
+## 13. Phased Build Plan
 
 | Phase | Scope | Done when | Est. |
 |-------|-------|-----------|------|
@@ -453,7 +532,7 @@ If Phase 0 doesn't save time on a real week of work, stop and rethink before Pha
 
 ---
 
-## 13. Resolved Decisions
+## 14. Resolved Decisions
 
 | # | Question | Decision |
 |---|----------|----------|
