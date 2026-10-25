@@ -19,7 +19,7 @@ Locked design choices:
 | # | Goal |
 |---|------|
 | G1 | Each task gets its own branch, worktree, and tmux window |
-| G2 | Two lanes: **full** for features, **light** for bugs. QA loop capped at 3 rounds |
+| G2 | Three lanes: **feature**, **bugfix**, **hotfix**. QA loop capped at 3 rounds in every lane |
 | G3 | Catch file overlap at planning time, not at merge time |
 | G4 | Merge one task at a time, rebase the others, re-run their tests |
 | G5 | A per-project memory of WHY (root causes, decisions, conventions, lessons), linked to SHAs and file paths |
@@ -90,7 +90,7 @@ Most of the machinery already exists. shoal is mostly glue plus a SQLite file.
         <task-slug>/
           todo.md                           # execution surface
           context.md                        # scoped brief for this task only
-          contract.md                       # API contract (full lane only)
+          contract.md                       # API contract (feature lane, when FE and BE both change)
 
 <repo>/                                     # default (stealth): nothing committed
   .claude/settings.local.json               # hook wiring, excluded from git
@@ -113,14 +113,16 @@ build = "npm run build"
 test_file = "php artisan test --filter {name}"   # optional, for fast regression runs
 
 [lanes]
-feature = "full"
-bugfix  = "light"
-hotfix  = "light"
-qa_max_rounds = 3
+qa_max_rounds = 3                # same cap in every lane
 
 [merge]
 base = "main"
 strategy = "rebase"              # rebase | squash
+
+[hotfix]
+production_ref = "production"    # branch name, tag name, or "tag:<glob>" for the newest matching tag
+backport = true                  # create a backport task to [merge].base when the hotfix is done
+max_diff_lines = 100             # minimal-diff rule: added + removed lines, excluding test files
 
 [reports]
 sink = "local"                   # local | notes | both
@@ -136,7 +138,7 @@ deny_globs = [".env*", "storage/**"]
 |---------|--------------|
 | `shoalctl init [--commit-config]` | Registers the project, creates `~/.shoal/projects/<id>/`, wires hooks (stealth by default) |
 | `shoalctl brief` | Prints the session-start brief (<1k tokens). Also run by the `SessionStart` hook |
-| `shoalctl new <type> "<title>"` | Creates the task record (`feature`/`bugfix`/`hotfix`), assigns a lane |
+| `shoalctl new <lane> "<title>"` | Creates the task record in lane `feature`, `bugfix`, or `hotfix` |
 | `shoalctl plan <task>` | Agent writes `todo.md` plus file claims. Runs the overlap check |
 | `shoalctl start <task>` | Creates the branch and worktree, opens a tmux window, launches `claude` with the scoped context |
 | `shoalctl status` | Board of tasks: lane, stage, QA round, claims, blocked-by |
@@ -156,7 +158,7 @@ Store the reasons. Point at git for everything else.
 
 | Table | Key columns | Notes |
 |-------|-------------|-------|
-| `tasks` | `id, slug, type, lane, title, ask, stage, qa_round, branch, worktree, tmux_window, base_sha, merged_sha, blocked_by, created_at, closed_at` | One row per task |
+| `tasks` | `id, slug, lane(feature\|bugfix\|hotfix), title, ask, stage, qa_round, branch, worktree, tmux_window, base_ref, base_sha, merged_sha, blocked_by, parent_task_id, created_at, closed_at` | One row per task. `parent_task_id` links a backport to its hotfix |
 | `file_claims` | `task_id, agent, path_glob, kind(expected\|actual), released_at` | Planning claims. `agent` lets subagents in one worktree own separate files |
 | `summaries` | `task_id, decision, alternatives_rejected, why, verification, risks, followups, commits(json), files(json), true_at_sha` | **The report.** Single source of truth |
 | `bugs` | `id, task_id, symptom, root_cause, fix_sha, files(json), regression_test, true_at_sha, stale` | Regression lookups |
@@ -224,22 +226,56 @@ new -> planned -> (blocked | ready) -> in-progress -> qa[1..3] -> done -> queued
                                                      \-> escalated (after round 3)
 ```
 
-### 6.1 Full lane (features)
-1. **Spec**: agent writes `todo.md` plus file claims. You confirm scope
-2. **API contract**: `contract.md` (endpoints, payloads, events), frozen before parallel work starts
-3. **Parallel build**: backend / frontend / integration subagents share **one worktree per feature**. Each agent claims its own files, and `PostToolUse` warns an agent that writes outside its claims
-4. **Docs**: update README, runbooks, and API docs the change affects
-5. **Adversarial QA loop**: gates plus a QA subagent that tries to break the change. Each failure is recorded as a lesson. Max 3 rounds, then escalate
-6. **Report**: `done` writes the summary and renders the report
+Every task is in exactly one lane, chosen at `shoalctl new <lane>`. The lane decides where the branch starts, which rules apply, and what happens after `done`. All three lanes run the same QA loop with the same 3-round cap.
 
-### 6.2 Light lane (bugs, hotfixes)
+| | feature | bugfix | hotfix |
+|---|---------|--------|--------|
+| Branches from | `[merge].base` | `[merge].base` | `[hotfix].production_ref` |
+| Branch name | `feature/<slug>` | `bugfix/<slug>` | `hotfix/<slug>` |
+| Merges into | `[merge].base` | `[merge].base` | the production branch (see §6.3) |
+| Test rule | tests for every new behaviour | failing regression test before the fix | failing regression test before the fix |
+| Diff rule | none | smallest change that fixes it | minimal-diff rule, enforced |
+| QA | full | full | full, no shortcuts |
+| After `done` | enqueue for merge | enqueue for merge | enqueue for merge, create backport task |
+
+### 6.1 Feature lane
+1. **Spec**: the lead agent writes `todo.md`, the list of new behaviours, and file claims. You confirm scope
+2. **API contract**: `contract.md` (endpoints, payloads, events, errors), frozen before parallel work starts
+3. **Parallel build**: builder agents share **one worktree per feature**. Each agent claims its own files, and `PostToolUse` warns an agent that writes outside its claims
+4. **Tests**: every new behaviour in the list gets at least one automated test, or a manual-check line you waive explicitly
+5. **Docs**: update README, runbooks, and API docs the change affects
+6. **Adversarial QA loop**: gates plus the QA agents. Each failure is recorded as a lesson. Max 3 rounds, then escalate
+7. **Report**: `done` writes the summary and renders the report
+
+### 6.2 Bugfix lane
 1. **Trace**: reproduce, find the root cause, write a `bugs` row
-2. **Fix**: smallest change that fixes it
-3. **Regression test**: required. Its path is stored on the bug record
-4. **QA**: gates plus a short adversarial pass. Max 3 rounds
-5. **Report**
+2. **Red**: write a regression test that reproduces the bug and fails on the unfixed code. shoal records the failing run
+3. **Fix**: smallest change that fixes it
+4. **Green**: the same test passes. shoal records the passing run. The test path is stored on the bug record
+5. **QA**: gates plus the QA agents. Max 3 rounds
+6. **Report**
 
-### 6.3 Escalation (after QA round 3)
+### 6.3 Hotfix lane
+A hotfix repairs what is running in production right now. It follows the bugfix steps, with three differences.
+
+1. **Start point.** The branch starts from `[hotfix].production_ref`, resolved locally (shoal never fetches):
+   - a branch name: the tip of that local branch
+   - a tag name: that tag
+   - `tag:<glob>`: the newest tag matching the glob, by `git tag --list '<glob>' --sort=-v:refname`
+   If the ref does not resolve, `start` stops with a config error. When the ref is a branch, the hotfix merges back into that branch. When it is a tag, the merge queue has no target: `done` leaves the branch ready and the report says so; tagging and releasing stay human actions.
+2. **Minimal-diff rule.** The fix changes only what the bug needs:
+   - no refactors, renames, reformatting, or unrelated cleanup
+   - no dependency or lockfile changes unless the bug is in a dependency
+   - total added + removed lines outside test files must not exceed `[hotfix].max_diff_lines`
+   `done` checks the line budget with `git diff --numstat <base_sha>...HEAD`. Over budget, `done` refuses until the diff shrinks or you pass `--accept-large-diff --reason "<text>"`, which goes into the report.
+3. **Full QA, no shortcuts.** Every gate and every QA agent runs, with the same 3-round cap. Production urgency is not a reason to skip a check.
+
+**Backport.** When a hotfix reaches `done` and `[hotfix].backport = true`, shoal creates a bugfix-lane task titled `Backport: <hotfix title>` with `parent_task_id` set to the hotfix. It starts in `new` and is never started automatically. Its brief says:
+- cherry-pick the hotfix commits (listed by SHA) onto `[merge].base`
+- the hotfix's regression test must exist on the base branch and pass
+- if that test already passes on the base branch before the cherry-pick (the bug never existed there), record that in the report instead of a red run
+
+### 6.4 Escalation (after QA round 3)
 - The task goes to `escalated`, and the tmux window title changes to `!<task>`
 - The report gets a "Blocked" section: what failed, the 3 attempts, the best hypothesis
 - No further automatic retries
@@ -321,8 +357,7 @@ Written once, to the `summaries` row. Markdown is just a rendering.
 ```markdown
 ---
 task: <slug>
-type: feature|bugfix|hotfix
-lane: full|light
+lane: feature|bugfix|hotfix
 status: merged|escalated
 commits: [abc1234, def5678]
 date: YYYY-MM-DD
@@ -371,10 +406,10 @@ Four tasks arrive on the same day in a Laravel + Vue app.
 
 | Task | Lane | Expected claims |
 |------|------|-----------------|
-| Feature A: Dropbox integration | full | `app/Integrations/Dropbox/**`, `config/services.php`, `routes/api.php`, `resources/js/settings/integrations/**` |
-| Feature B: Clients CRUD | full | `app/Http/Controllers/ClientController.php`, `app/Models/Client.php`, `routes/web.php`, `resources/js/clients/**` |
-| Bug A: Users page shows wrong display name | light | `app/Models/User.php`, `resources/js/users/**` |
-| Bug B: Users page sort broken | light | `resources/js/users/**`, `app/Http/Controllers/UserController.php` |
+| Feature A: Dropbox integration | feature | `app/Integrations/Dropbox/**`, `config/services.php`, `routes/api.php`, `resources/js/settings/integrations/**` |
+| Feature B: Clients CRUD | feature | `app/Http/Controllers/ClientController.php`, `app/Models/Client.php`, `routes/web.php`, `resources/js/clients/**` |
+| Bug A: Users page shows wrong display name | bugfix | `app/Models/User.php`, `resources/js/users/**` |
+| Bug B: Users page sort broken | bugfix | `resources/js/users/**`, `app/Http/Controllers/UserController.php` |
 
 1. `plan` runs for all four. Features A and B touch different route files: both `ready`. Bugs A and B both claim `resources/js/users/**`
 2. shoal asks, one keypress. Different root causes, so you press `s`: Bug B is `blocked_by` Bug A
@@ -394,7 +429,7 @@ Four tasks arrive on the same day in a Laravel + Vue app.
 | **0: MVP** | Go skeleton, modernc FTS5 spike, `init` (stealth), `new`, `start`, `status`, `done` with report render, `tasks` + `summaries` | Two tasks run in parallel on a real project, two reports produced | 2-3 days |
 | **1: Claims + queue** | `plan` with claims, one-keypress overlap prompt, `merge` queue, `needs-rebase` | The Bug A / Bug B scenario works end to end | 2-3 days |
 | **2: Memory + hooks** | `bugs`, `decisions`, `lessons`, FTS5, `SessionStart` + `PreToolUse`, staleness pre-check, `why`, `recall` | Brief < 1k tokens measured; a lesson is injected on a matching file touch | 3-4 days |
-| **3: Lanes + QA loop** | Lane templates, QA subagent, 3-round cap, escalation | One feature runs through the full lane | 2-3 days |
+| **3: Lanes + QA loop** | Lane templates, QA subagent, 3-round cap, escalation | One feature runs through the feature lane | 2-3 days |
 | **4: Conventions + promotion** | Convention lifecycle, brainstorm-first brief, managed CLAUDE.md block, conflict detection | "Strategy pattern" example works end to end | 1-2 days |
 | **5: Publish** | `export`/`purge`/`uninstall`, release CI guard, Homebrew tap, cross-compiled releases | Installed on a project with zero repo footprint | 2 days |
 
@@ -409,7 +444,10 @@ If Phase 0 doesn't save time on a real week of work, stop and rethink before Pha
 | 1 | Runtime | Go, single static binary, `modernc.org/sqlite` |
 | 2 | Repo footprint | Commit nothing by default (stealth). Committing `.shoal.toml` is opt-in per project |
 | 3 | Overlap resolution | Always ask, one keypress |
-| 4 | Parallel subagents in the full lane | One shared worktree per feature; each agent claims its own files |
+| 4 | Parallel subagents in the feature lane | One shared worktree per feature; each agent claims its own files |
 | 5 | Lesson promotion | Proposed after 3 repeats across tasks; you approve every time |
 | 6 | Project identity | Hash of the git remote URL, fallback to repo path |
 | 7 | Worktree location | `~/.shoal/projects/<id>/worktrees/` |
+| 8 | Lanes | Three lanes: feature, bugfix, hotfix. The old full/light split is gone |
+| 9 | Hotfix start point | `[hotfix].production_ref` in `.shoal.toml`: a branch, a tag, or `tag:<glob>` |
+| 10 | Hotfix diff and QA | Minimal-diff rule with a line budget; full QA, no shortcuts; a backport task to the base branch is created on `done` |
