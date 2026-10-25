@@ -12,5 +12,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "shoalctl: unknown command %q\n", os.Args[1])
 		os.Exit(2)
 	}
+	if len(os.Args) > 2 {
+		fmt.Fprintf(os.Stderr, "shoalctl: %s takes no arguments, got %q\n", os.Args[1], os.Args[2:])
+		os.Exit(2)
+	}
 	fmt.Println("shoalctl " + version)
 }

@@ -34,7 +34,7 @@ Other observations:
 - In both cases `CLAUDE_PROJECT_DIR` and the hook's `cwd` are the **worktree** path, not the main checkout.
 - `.claude/settings.local.json` listed in the main repo's `.git/info/exclude` keeps `git status` clean inside the worktree, so the shared exclude covers worktrees.
 
-Implication for design: Claude Code resolves the main checkout for local settings, so shoal must register each hook in exactly **one** place. Two options for Kenneth to choose in Phase 2:
+Implication for design: these headless runs suggest (inferred, not confirmed) that Claude Code also loads the main checkout's local settings, so shoal must register each hook in exactly **one** place. Two options, to be decided by the maintainer in Phase 2:
 1. Main checkout only. Every task worktree inherits the hooks for free, but they also fire in sessions you run in the main checkout without shoal. The hook can exit early when `CLAUDE_PROJECT_DIR` is not a shoal worktree.
 2. Worktree only, written by `shoalctl start`. This requires that the main checkout's local file has no shoal hooks.
 

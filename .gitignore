@@ -1,5 +1,6 @@
 # Binaries
-/shoal
+/shoalctl
+/hookprobe
 /bin/
 *.exe
 *.exe~
