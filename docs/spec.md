@@ -45,7 +45,7 @@ Locked design choices:
 | Startup latency | Hooks fire on every file read and edit. A Go binary starts in roughly 5 ms; a Python interpreter with imports is roughly 50-100 ms or more per call |
 | Zero runtime deps | One binary. No Python or Node install needed on the machine |
 | Cross-compile | macOS, Linux, Windows from one build |
-| Distribution | GitHub Releases, a Homebrew tap, and `go install` |
+| Distribution | Binary `shoalctl`. GitHub Releases, a Homebrew tap (`kennethsolomon/tap/shoalctl`, planned), and `go install github.com/kennethsolomon/shoalctl/cmd/shoalctl@latest`. Repo: `github.com/kennethsolomon/shoalctl` |
 | SQLite | [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite): a CGo-free translation of C SQLite, so cross-compiling needs no C toolchain |
 
 > FTS5 note: the modernc package documentation references FTS5 internals, and the package is built with FTS5 enabled. Phase 0 includes a spike test that creates an FTS5 virtual table on every release target before anything else depends on it.
@@ -100,7 +100,7 @@ Most of the machinery already exists. shoal is mostly glue plus a SQLite file.
 ### 4.2 Repo footprint
 
 - **Default is stealth.** shoal commits nothing. Hooks go into `.claude/settings.local.json`, config lives in `~/.shoal/projects/<id>/config.toml`, and any file shoal creates in the repo is added to `.git/info/exclude`.
-- **Committing `.shoal.toml` is opt-in** per project (`shoal init --commit-config`), for teams that want shared stack commands.
+- **Committing `.shoal.toml` is opt-in** per project (`shoalctl init --commit-config`), for teams that want shared stack commands.
 
 ### 4.3 Project config (`.shoal.toml`)
 
@@ -134,21 +134,21 @@ deny_globs = [".env*", "storage/**"]
 
 | Command | What it does |
 |---------|--------------|
-| `shoal init [--commit-config]` | Registers the project, creates `~/.shoal/projects/<id>/`, wires hooks (stealth by default) |
-| `shoal brief` | Prints the session-start brief (<1k tokens). Also run by the `SessionStart` hook |
-| `shoal new <type> "<title>"` | Creates the task record (`feature`/`bugfix`/`hotfix`), assigns a lane |
-| `shoal plan <task>` | Agent writes `todo.md` plus file claims. Runs the overlap check |
-| `shoal start <task>` | Creates the branch and worktree, opens a tmux window, launches `claude` with the scoped context |
-| `shoal status` | Board of tasks: lane, stage, QA round, claims, blocked-by |
-| `shoal qa <task>` | Runs the gates and the adversarial QA subagent. Increments the round. Escalates after 3 |
-| `shoal done <task>` | Writes the summary record, renders the report, enqueues the task for merge |
-| `shoal merge` | Processes the merge queue one task at a time |
-| `shoal recall <query \| --file path>` | FTS5 search over decisions, lessons, conventions, and bugs |
-| `shoal why <file \| sha \| bug-id>` | Shows the stored WHY together with live `git log` for that file or SHA |
-| `shoal convention propose\|agree\|retire` | Manages the convention lifecycle |
-| `shoal gc` | Removes merged worktrees, closes tmux windows, flags stale records |
-| `shoal export <id>` / `shoal purge <id>` | Offboarding. `purge` asks for confirmation |
-| `shoal uninstall` | Removes hook entries and the managed CLAUDE.md block, nothing else |
+| `shoalctl init [--commit-config]` | Registers the project, creates `~/.shoal/projects/<id>/`, wires hooks (stealth by default) |
+| `shoalctl brief` | Prints the session-start brief (<1k tokens). Also run by the `SessionStart` hook |
+| `shoalctl new <type> "<title>"` | Creates the task record (`feature`/`bugfix`/`hotfix`), assigns a lane |
+| `shoalctl plan <task>` | Agent writes `todo.md` plus file claims. Runs the overlap check |
+| `shoalctl start <task>` | Creates the branch and worktree, opens a tmux window, launches `claude` with the scoped context |
+| `shoalctl status` | Board of tasks: lane, stage, QA round, claims, blocked-by |
+| `shoalctl qa <task>` | Runs the gates and the adversarial QA subagent. Increments the round. Escalates after 3 |
+| `shoalctl done <task>` | Writes the summary record, renders the report, enqueues the task for merge |
+| `shoalctl merge` | Processes the merge queue one task at a time |
+| `shoalctl recall <query \| --file path>` | FTS5 search over decisions, lessons, conventions, and bugs |
+| `shoalctl why <file \| sha \| bug-id>` | Shows the stored WHY together with live `git log` for that file or SHA |
+| `shoalctl convention propose\|agree\|retire` | Manages the convention lifecycle |
+| `shoalctl gc` | Removes merged worktrees, closes tmux windows, flags stale records |
+| `shoalctl export <id>` / `shoalctl purge <id>` | Offboarding. `purge` asks for confirmation |
+| `shoalctl uninstall` | Removes hook entries and the managed CLAUDE.md block, nothing else |
 
 ### 4.5 SQLite schema (`memory.db`)
 
@@ -175,7 +175,7 @@ Inject only what matches the file being touched, and only once per session.
 
 | Hook | Trigger | Injects (via `additionalContext`) | Budget |
 |------|---------|-----------------------------------|--------|
-| `SessionStart` | Session opens | `shoal brief`: active task, its `todo.md` head, pending proposed conventions, open blockers | ≤ 1k tokens |
+| `SessionStart` | Session opens | `shoalctl brief`: active task, its `todo.md` head, pending proposed conventions, open blockers | ≤ 1k tokens |
 | `PreToolUse` (Read/Edit/Write) | A file is about to be touched | Conventions, lessons, decisions whose globs match that path. Each record is tagged "verify against current code" | ≤ 300 tokens per file, deduped per session |
 | `PostToolUse` (Edit/Write) | A file was changed | Records an actual claim. Warns if another open task claims the path | ~1 line |
 | `Stop` | Session ends | Asks for a structured summary (not the transcript) when the task is at `done` | n/a |
@@ -197,13 +197,13 @@ shoal never rewrites your content.
   ```
 - The block is one import line. Claude Code supports `@path` imports in CLAUDE.md (relative or absolute, home paths allowed, up to four hops of nesting), so shoal's content lives in `~/.shoal/`, outside the repo.
 - Claude Code shows a one-time approval dialog the first time a project imports a file outside the working directory. shoal's `init` output tells you to expect it.
-- Install is idempotent: re-running `init` finds the markers and leaves the block alone. `shoal uninstall` removes the markers and the lines between them, nothing else.
+- Install is idempotent: re-running `init` finds the markers and leaves the block alone. `shoalctl uninstall` removes the markers and the lines between them, nothing else.
 
 ### 5.2 Stealth mode (default)
 - The committed `CLAUDE.md` is not touched at all.
 - Context arrives through hooks registered in `.claude/settings.local.json`: `SessionStart` for the brief, file-scoped `PreToolUse`/`PostToolUse` for everything else.
 - Claude Code adds `settings.local.json` to your global git excludes only when Claude Code itself creates the file. shoal may create it first, so shoal adds it to `.git/info/exclude`. It never edits the committed `.gitignore`. `.git/info/exclude` lives in the shared git dir, so it covers every worktree.
-- Optional: a `CLAUDE.local.md` containing the import line, also added to `.git/info/exclude`. A gitignored `CLAUDE.local.md` only exists in the worktree where it was created, so `shoal start` writes one into each task worktree it creates.
+- Optional: a `CLAUDE.local.md` containing the import line, also added to `.git/info/exclude`. A gitignored `CLAUDE.local.md` only exists in the worktree where it was created, so `shoalctl start` writes one into each task worktree it creates.
 
 ### 5.3 Existing rules win
 - At install, shoal reads the existing `CLAUDE.md` (and `CLAUDE.local.md`, `.claude/rules/`).
@@ -211,8 +211,8 @@ shoal never rewrites your content.
 
 ### 5.4 Existing hooks are merged, never replaced
 - shoal reads `.claude/settings.json` and `.claude/settings.local.json` before writing, and adds its entries alongside any existing ones.
-- Claude Code itself merges hook entries across user, project, and local settings, so a shoal hook in the local file runs next to a team hook in the committed file.
-- Each shoal entry is tagged with a `shoal hook` command prefix, which is how `uninstall` finds and removes only its own entries.
+- Claude Code itself merges hook entries across user, project, and local settings, so a shoalctl hook in the local file runs next to a team hook in the committed file.
+- Each shoal entry is tagged with a `shoalctl hook` command prefix, which is how `uninstall` finds and removes only its own entries.
 
 ---
 
@@ -267,7 +267,7 @@ shoal never resolves an overlap silently. Overlap found late (from actual claims
 
 ### 7.3 Concurrency safety
 - SQLite runs in WAL mode. Claims are taken inside `BEGIN IMMEDIATE`, so two `plan` runs can't both win the same path
-- Nobody writes to the base branch except `shoal merge`
+- Nobody writes to the base branch except `shoalctl merge`
 
 ### 7.4 Merge queue
 1. Take the first `waiting` task
@@ -287,14 +287,14 @@ A record holds what was true at a specific commit. The code is what's true now.
 ### 8.1 Code over record
 - Every record stores `true_at_sha` and `files`
 - Every injected record carries: *"Recorded at `<sha>`. Verify against current code before relying on it."*
-- When code disagrees with a record, **the code wins**. The agent runs `shoal flag-stale <id> "<reason>"`. The record stays for history but is no longer injected
+- When code disagrees with a record, **the code wins**. The agent runs `shoalctl flag-stale <id> "<reason>"`. The record stays for history but is no longer injected
 
 ### 8.2 Cheap staleness pre-check (no LLM)
 - Before injecting, run `git diff --quiet <true_at_sha> HEAD -- <files>`
 - Unchanged: inject as-is. Changed: inject with a `[files changed since record]` tag
 
 ### 8.3 Regression lookup ("the bug came back")
-1. `shoal why bug:<id>` returns root cause, `fix_sha`, files, regression test
+1. `shoalctl why bug:<id>` returns root cause, `fix_sha`, files, regression test
 2. shoal runs `git log <fix_sha>..HEAD -- <files>` live
 3. Output shows the commits that touched those files after the fix, author and SHA straight from git
 4. Then checks whether the regression test still exists and still passes
@@ -382,7 +382,7 @@ Four tasks arrive on the same day in a Laravel + Vue app.
 5. `merge`: Bug A lands. Bug B unblocks, starts from the new base, and its brief includes Bug A's lesson because the paths match
 6. Feature A writes `contract.md`; backend and frontend subagents share one worktree, each claiming its own files. QA attacks token expiry
 7. Feature B merges after Feature A, rebases cleanly, re-runs tests
-8. Three weeks later Bug A regresses. `shoal why bug:A` shows the fix SHA and a later commit by another developer that rewrote the accessor and deleted the regression test in the same commit
+8. Three weeks later Bug A regresses. `shoalctl why bug:A` shows the fix SHA and a later commit by another developer that rewrote the accessor and deleted the regression test in the same commit
 
 ---
 

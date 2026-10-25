@@ -7,7 +7,8 @@
 
 **Run many Claude Code sessions on one repo without collisions, and remember why the code is the way it is.**
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/kennethsolomon/shoalctl/blob/main/LICENSE)
+[![GitHub](https://img.shields.io/badge/github-kennethsolomon%2Fshoalctl-181717.svg?logo=github)](https://github.com/kennethsolomon/shoalctl)
 [![Go](https://img.shields.io/badge/go-1.25%2B-00ADD8.svg)](https://go.dev/)
 [![Build](https://img.shields.io/badge/build-not%20yet-lightgrey.svg)](#roadmap)
 [![Status](https://img.shields.io/badge/status-pre--alpha-orange.svg)](#status)
@@ -22,7 +23,7 @@
 
 ## What is shoal
 
-A shoal is many fish moving together without colliding. shoal is a small CLI that does the same for AI coding sessions.
+A shoal is many fish moving together without colliding. shoal is a small CLI that does the same for AI coding sessions. The command is `shoalctl`.
 
 You give it tasks. It gives each task its own branch, git worktree, and tmux window, then launches Claude Code inside it. It checks which files each task plans to touch and asks you before two tasks overlap. It merges finished work one task at a time. And it keeps a per-project SQLite memory of the *why*: root causes, decisions, conventions, and lessons, each tied to a commit SHA and file paths.
 
@@ -45,7 +46,7 @@ All planned. See [Roadmap](#roadmap) for phase.
 - **Serial merge queue.** Rebase, run gates, fast-forward, mark overlapping tasks for rebase. Never pushes.
 - **Two lanes.** Full lane for features (spec, contract, parallel subagents, docs, QA). Light lane for bugs (trace, fix, regression test, QA). QA capped at 3 rounds, then escalates to you.
 - **File-scoped memory.** Hooks inject only the lessons and decisions that match the file being touched, once per session. Session-start brief stays under ~1k tokens.
-- **`shoal why`.** Stored root cause plus live `git log`, so a regression points at the commit that undid the fix.
+- **`shoalctl why`.** Stored root cause plus live `git log`, so a regression points at the commit that undid the fix.
 - **Stealth by default.** Nothing committed to the repo. Good for client work.
 - **Any stack.** Your test, lint, and build commands live in config.
 
@@ -55,10 +56,10 @@ All planned. See [Roadmap](#roadmap) for phase.
 
 | | |
 |---|---|
-| ![shoal status board](docs/images/status.png) | ![overlap prompt](docs/images/overlap.png) |
-| *Mockup, design preview: `shoal status`* | *Mockup, design preview: one-keypress overlap prompt* |
-| ![task report](docs/images/report.png) | ![shoal why](docs/images/why.png) |
-| *Mockup, design preview: task report* | *Mockup, design preview: `shoal why` regression lookup* |
+| ![shoalctl status board](docs/images/status.png) | ![overlap prompt](docs/images/overlap.png) |
+| *Mockup, design preview: `shoalctl status`* | *Mockup, design preview: one-keypress overlap prompt* |
+| ![task report](docs/images/report.png) | ![shoalctl why](docs/images/why.png) |
+| *Mockup, design preview: task report* | *Mockup, design preview: `shoalctl why` regression lookup* |
 
 ## Quick start
 
@@ -67,21 +68,23 @@ All planned. See [Roadmap](#roadmap) for phase.
 Install (once releases exist):
 
 ```sh
-brew install <tap>/shoal          # Homebrew tap, name TBD
+brew install kennethsolomon/tap/shoalctl                       # Homebrew tap (planned)
 # or
-go install github.com/<owner>/shoal@latest
+go install github.com/kennethsolomon/shoalctl/cmd/shoalctl@latest
 # or download a binary from GitHub Releases
+# or build from source
+git clone https://github.com/kennethsolomon/shoalctl.git
 ```
 
 Five commands:
 
 ```sh
 cd your-repo
-shoal init                                  # register the project, wire hooks (stealth, nothing committed)
-shoal new bugfix "Users page shows wrong display name"
-shoal plan bug-users-name                   # agent writes todo.md + file claims, overlap check runs
-shoal start bug-users-name                  # branch + worktree + tmux window + claude
-shoal done bug-users-name && shoal merge    # write the report, merge through the queue
+shoalctl init                                  # register the project, wire hooks (stealth, nothing committed)
+shoalctl new bugfix "Users page shows wrong display name"
+shoalctl plan bug-users-name                   # agent writes todo.md + file claims, overlap check runs
+shoalctl start bug-users-name                  # branch + worktree + tmux window + claude
+shoalctl done bug-users-name && shoalctl merge    # write the report, merge through the queue
 ```
 
 Requirements (planned): git, tmux, Claude Code.
@@ -90,20 +93,20 @@ Requirements (planned): git, tmux, Claude Code.
 
 ```mermaid
 flowchart LR
-    N[shoal new] --> P[shoal plan<br/>todo.md + file claims]
+    N[shoalctl new] --> P[shoalctl plan<br/>todo.md + file claims]
     P -->|overlap?| K{one-keypress<br/>prompt}
-    K -->|serialize / merge / parallel| S[shoal start<br/>worktree + tmux + claude]
+    K -->|serialize / merge / parallel| S[shoalctl start<br/>worktree + tmux + claude]
     P -->|no overlap| S
-    S --> Q[shoal qa<br/>gates + adversarial QA, max 3]
-    Q --> D[shoal done<br/>summary row -> report]
-    D --> M[shoal merge<br/>serial queue]
+    S --> Q[shoalctl qa<br/>gates + adversarial QA, max 3]
+    Q --> D[shoalctl done<br/>summary row -> report]
+    D --> M[shoalctl merge<br/>serial queue]
     H[(memory.db<br/>SQLite + FTS5)] -. hooks inject matching lessons .-> S
     Q -. failures become lessons .-> H
     D -. decisions, bugs .-> H
 ```
 
 - Sessions never talk to each other. They coordinate through one SQLite file in WAL mode.
-- Claude Code hooks (`SessionStart`, `PreToolUse`, `PostToolUse`, `Stop`) call the shoal binary, which is why it's written in Go: hooks fire on every file touch, so startup time matters.
+- Claude Code hooks (`SessionStart`, `PreToolUse`, `PostToolUse`, `Stop`) call the shoalctl binary, which is why it's written in Go: hooks fire on every file touch, so startup time matters.
 - Everything shoal stores lives in `~/.shoal/projects/<id>/`, where `<id>` is a hash of the git remote URL (falling back to the repo path).
 
 ## Installing into an existing project
@@ -120,7 +123,7 @@ shoal never rewrites your `CLAUDE.md`.
   ```
 
 - **Your rules win.** When a proposed convention contradicts an existing rule, shoal flags it for discussion instead of overriding it.
-- **Hooks are merged.** Existing hooks in `.claude/settings.json` stay. `shoal uninstall` removes only shoal's entries and block.
+- **Hooks are merged.** Existing hooks in `.claude/settings.json` stay. `shoalctl uninstall` removes only shoal's entries and block.
 
 Details in [spec section 5](docs/spec.md#5-installing-into-a-project-that-already-has-a-claudemd).
 
@@ -159,21 +162,21 @@ All planned.
 
 | Command | What it does |
 |---------|--------------|
-| `shoal init` | Register the project and wire hooks (stealth by default) |
-| `shoal brief` | Print the session-start brief (also run by the `SessionStart` hook) |
-| `shoal new <type> "<title>"` | Create a `feature`, `bugfix`, or `hotfix` task |
-| `shoal plan <task>` | Write `todo.md` and file claims, run the overlap check |
-| `shoal start <task>` | Branch + worktree + tmux window + `claude` |
-| `shoal status` | Board of all tasks |
-| `shoal qa <task>` | Gates plus adversarial QA round (max 3) |
-| `shoal done <task>` | Write the summary, render the report, enqueue for merge |
-| `shoal merge` | Process the merge queue one task at a time |
-| `shoal recall <query>` | Full-text search over decisions, lessons, bugs, conventions |
-| `shoal why <file\|sha\|bug>` | Stored WHY plus live `git log` |
-| `shoal convention propose\|agree\|retire` | Manage conventions |
-| `shoal gc` | Clean up merged worktrees and windows |
-| `shoal export` / `shoal purge` | Offboard a project's data |
-| `shoal uninstall` | Remove shoal's hooks and CLAUDE.md block only |
+| `shoalctl init` | Register the project and wire hooks (stealth by default) |
+| `shoalctl brief` | Print the session-start brief (also run by the `SessionStart` hook) |
+| `shoalctl new <type> "<title>"` | Create a `feature`, `bugfix`, or `hotfix` task |
+| `shoalctl plan <task>` | Write `todo.md` and file claims, run the overlap check |
+| `shoalctl start <task>` | Branch + worktree + tmux window + `claude` |
+| `shoalctl status` | Board of all tasks |
+| `shoalctl qa <task>` | Gates plus adversarial QA round (max 3) |
+| `shoalctl done <task>` | Write the summary, render the report, enqueue for merge |
+| `shoalctl merge` | Process the merge queue one task at a time |
+| `shoalctl recall <query>` | Full-text search over decisions, lessons, bugs, conventions |
+| `shoalctl why <file\|sha\|bug>` | Stored WHY plus live `git log` |
+| `shoalctl convention propose\|agree\|retire` | Manage conventions |
+| `shoalctl gc` | Clean up merged worktrees and windows |
+| `shoalctl export` / `shoalctl purge` | Offboard a project's data |
+| `shoalctl uninstall` | Remove shoal's hooks and CLAUDE.md block only |
 
 ## Memory & privacy
 
@@ -197,7 +200,7 @@ All planned.
 
 ## Contributing
 
-shoal is at the design stage. Issues and discussion on the [spec](docs/spec.md) are welcome. Code contributions will open once Phase 0 lands.
+shoal is at the design stage. [Issues](https://github.com/kennethsolomon/shoalctl/issues) and discussion on the [spec](docs/spec.md) are welcome. Code contributions will open once Phase 0 lands.
 
 ## License
 
