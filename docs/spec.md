@@ -26,6 +26,7 @@ Locked design choices:
 | G6 | Session-start brief under ~1k tokens. Everything else is pulled in only when the related file is touched |
 | G7 | A short report for every task. The report is the DB record, rendered to markdown |
 | G8 | Project data never leaves `~/.shoal/` unless you opt in per project |
+| G9 | Zero regression: no test that passed at baseline fails at merge unless a human accepts it by name, with a reason (§8) |
 
 ### Non-goals
 - No web UI, dashboard, or server
@@ -110,10 +111,18 @@ Most of the machinery already exists. shoal is mostly glue plus a SQLite file.
 ```toml
 [stack]
 name = "laravel"                 # free text, used for lesson matching
-test  = "php artisan test"
 lint  = "vendor/bin/pint --test"
 build = "npm run build"
-test_file = "php artisan test --filter {name}"   # optional, for fast regression runs
+
+[tests]                          # the zero-regression protocol (§8) reads this table
+command = "php artisan test --log-junit {junit}"  # full suite; {junit} = absolute path shoal expects the report at
+format = "junit"                 # junit | go-json | exit-code | none
+junit_path = "{junit}"           # where the JUnit XML lands; a path or glob relative to the worktree, or {junit}
+rerun_command = "php artisan test --log-junit {junit} --filter {tests}"  # optional: re-run only named tests
+flaky_retries = 2                # re-runs of a failing run before a failure counts (0 = no retries)
+timeout = "30m"                  # whole-suite timeout per run
+coverage_format = ""             # "" (off) | lcov | cobertura | go-cover
+coverage_path = ""               # coverage report path, relative to the worktree
 
 [session]
 model = "claude-opus-5-5"        # model for sessions shoalctl launches; agent definitions inherit it
@@ -150,7 +159,13 @@ deny_globs = [".env*", "storage/**"]
 | `shoalctl status` | Board of tasks: lane, stage, QA round, claims, blocked-by |
 | `shoalctl qa <task>` | Runs the gates and the adversarial QA subagent. Increments the round. Escalates after 3 |
 | `shoalctl done <task>` | Writes the summary record, renders the report, enqueues the task for merge |
-| `shoalctl merge` | Processes the merge queue one task at a time |
+| `shoalctl merge [--accept-regression <test> --reason "<text>"]...` | Processes the merge queue one task at a time through the merge gate (§8.5). The flag is the only override, may repeat, and is recorded in the report |
+| `shoalctl test <task> [--kind baseline\|gate\|qa]` | Runs the configured suite in the task worktree and records per-test results |
+| `shoalctl repro red\|green <task> --test <id>` | Records the red (failing) or green (passing) run of a bugfix or hotfix regression test |
+| `shoalctl scope add <task> "<text>"` | Adds a required scope item ("also test X"). `new --scope "<text>"` does the same at creation |
+| `shoalctl scope show\|review <task>` | Shows the case matrix; `review` walks every non-green row: `w` waive (asks a reason), `k` keep |
+| `shoalctl scope check <task> <case-id> --pass\|--fail [--note "<text>"]` | Records the result of a manual-check row |
+| `shoalctl test quarantine list\|release <test>` | Lists or releases quarantined flaky tests |
 | `shoalctl agents install [--commit]` / `shoalctl agents list` | Installs the `shoal-*` agent definitions: `~/.claude/agents/` by default, `<repo>/.claude/agents/` with `--commit` |
 | `shoalctl contract freeze <task>` | Records the contract hash and version; later edits must bump the version |
 | `shoalctl claim <task> --as <agent> <glob>...` / `shoalctl release <task> --as <agent> [<glob>...]` | Per-agent file claims inside one task |
@@ -169,7 +184,7 @@ Store the reasons. Point at git for everything else.
 
 | Table | Key columns | Notes |
 |-------|-------------|-------|
-| `tasks` | `id, slug, lane(feature\|bugfix\|hotfix), title, ask, stage, qa_round, branch, worktree, tmux_window, base_ref, base_sha, merged_sha, blocked_by, parent_task_id, created_at, closed_at` | One row per task. `parent_task_id` links a backport to its hotfix |
+| `tasks` | `id, slug, lane(feature\|bugfix\|hotfix), title, ask, stage, qa_round, branch, worktree, tmux_window, base_ref, base_sha, baseline_run_id, merged_sha, blocked_by, parent_task_id, created_at, closed_at` | One row per task. `parent_task_id` links a backport to its hotfix |
 | `file_claims` | `task_id, agent, path_glob, kind(expected\|actual), released_at` | Planning claims. `agent` lets subagents in one worktree own separate files |
 | `summaries` | `task_id, decision, alternatives_rejected, why, verification, risks, followups, commits(json), files(json), true_at_sha` | **The report.** Single source of truth |
 | `bugs` | `id, task_id, symptom, root_cause, fix_sha, files(json), regression_test, true_at_sha, stale` | Regression lookups |
@@ -181,6 +196,14 @@ Store the reasons. Point at git for everything else.
 | `messages` | `id, task_id, from_agent, to_agent, kind, subject, body, reply_to, created_at` | Agent-to-agent notes inside one task (§7.4). `to_agent = '*'` is a broadcast |
 | `message_reads` | `message_id, agent, read_at` | Per-recipient read state, so a broadcast is read once by each agent |
 | `contracts` | `task_id, version, sha256, frozen_at, frozen_by` | One row per frozen contract version |
+| `test_runs` | `id, task_id, kind(baseline\|gate\|qa\|repro\|final), sha, command, command_hash, format, fidelity(per-test\|suite), status(running\|completed\|error\|timeout), exit_code, attempts, total, passed, failed, skipped, output_path, pid, started_at, finished_at` | One row per suite run (§8.1) |
+| `test_results` | `run_id, test_id, attempt, status(pass\|fail\|skip), duration_ms, message` | One row per test per attempt. PK `(run_id, test_id, attempt)` |
+| `test_quarantine` | `test_id, detected_run_id, reason, quarantined_at, released_at` | Flaky-at-baseline tests (§8.7) |
+| `coverage_files` | `run_id, path, lines_total, lines_covered` | Per-file coverage, when configured |
+| `regression_proofs` | `task_id, test_id, red_run_id, red_sha, green_run_id, green_sha, test_changed_after_red` | Red-then-green proof for bugfix and hotfix (§8.3) |
+| `scope_items` | `id, task_id, source(user\|behaviour), text, created_at` | "also test X" and feature behaviours |
+| `scope_cases` | `id, scope_item_id, category, description, check(automated\|manual), test_id, manual_step, status(pending\|pass\|fail\|waived), waive_reason, decided_by, decided_at, version` | The case matrix (§8.6) |
+| `regression_overrides` | `task_id, gate_run_id, target, reason, accepted_by, accepted_at` | Every `--accept-regression`. `target` is a test id, `coverage:<path>`, or `(suite)` |
 | `fts_*` | FTS5 virtual tables over summaries, bugs, decisions, lessons, conventions, qa | Search |
 
 The DB does **not** store diffs, authors, commit messages, blame, or transcripts. shoal runs `git log`, `git show`, or `git blame` live when needed.
@@ -213,6 +236,23 @@ Claude Code caps a hook's `additionalContext` at 10,000 characters; shoal's own 
 - `shoalctl status` shows a warning when `hooks.log` has new lines since the last `status`, so failures stay visible without touching the session.
 
 **Entry shape.** Each entry calls the absolute path of the binary captured at `init`, for example `"/usr/local/bin/shoalctl hook session-start"`, with `"timeout": 10`. `uninstall` finds shoal's entries by matching a command whose program basename is `shoalctl` and whose first argument is `hook`. Re-running `init` (for example after upgrading the binary) rewrites only those entries.
+
+### 4.7 Exit codes
+Every command uses the same codes. Hooks are the exception: they always exit 0 (§4.6).
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Internal error (bug in shoal). Message includes the operation and the underlying error |
+| 2 | Usage error: unknown command, bad flag, bad argument |
+| 3 | Config error: not a git repo, project not initialized, invalid or conflicting config, DB newer than the binary |
+| 4 | Not found: unknown task slug, test id, or case id |
+| 5 | Invalid state: the task is in a stage that doesn't allow the command, uncommitted changes, or a destructive step that needs confirmation and no terminal is attached |
+| 6 | Baseline could not be recorded |
+| 7 | Missing dependency: `git`, `tmux`, or `claude` not on `PATH`, or older than the minimum version |
+| 8 | Busy: a lock is held by another process, or an optimistic-lock conflict persisted after retries |
+| 9 | Gate blocked |
+| 10 | `done` refused |
 
 ---
 
@@ -263,7 +303,7 @@ Every task is in exactly one lane, chosen at `shoalctl new <lane>`. The lane dec
 | Branches from | `[merge].base` | `[merge].base` | `[hotfix].production_ref` |
 | Branch name | `feature/<slug>` | `bugfix/<slug>` | `hotfix/<slug>` |
 | Merges into | `[merge].base` | `[merge].base` | the production branch (see §6.3) |
-| Test rule | tests for every new behaviour | failing regression test before the fix | failing regression test before the fix |
+| Test rule (§8) | tests for every new behaviour | red, then green regression test | red, then green regression test |
 | Diff rule | none | smallest change that fixes it | minimal-diff rule, enforced |
 | QA | full | full | full, no shortcuts |
 | After `done` | enqueue for merge | enqueue for merge | enqueue for merge, create backport task |
@@ -334,8 +374,8 @@ Each task gets a small team of Claude Code subagents. They are plain `.md` agent
 | `shoal-integration` | Third-party APIs: auth flows, webhooks, retries, rate limits, timeouts, idempotency, error mapping | Its claimed files | Read, Grep, Glob, Edit, Write, Bash, WebFetch |
 | `shoal-docs` | README, runbooks, API docs, changelog entries the change affects | Docs files only | Read, Grep, Glob, Edit, Write |
 | `shoal-qa-breaker` | Adversarial testing. Tries to break the change: edge cases, bad input, auth and permission abuse, concurrency and double-submit, empty and huge data, network and dependency failure. Every break becomes a failing test | Test files only | Read, Grep, Glob, Write, Edit, Bash |
-| `shoal-qa-regression` | Runs the full configured suite through `shoalctl test` and compares it with the baseline. Reports regressions; does not fix them | Nothing | Read, Grep, Glob, Bash |
-| `shoal-qa-scope` | Turns every user-specified scope item into a case matrix and covers each row with an automated test or a manual-check line | Test files, scope rows | Read, Grep, Glob, Write, Edit, Bash |
+| `shoal-qa-regression` | Runs the full configured suite through `shoalctl test` and compares it with the baseline (§8). Reports regressions; does not fix them | Nothing | Read, Grep, Glob, Bash |
+| `shoal-qa-scope` | Turns every user-specified scope item into a case matrix and covers each row with an automated test or a manual-check line (§8.6) | Test files, scope rows | Read, Grep, Glob, Write, Edit, Bash |
 
 QA agents never edit production code. A failure goes back to the lead as a message, and the lead routes the fix.
 
@@ -377,16 +417,135 @@ Read state lives in `message_reads(message_id, agent, read_at)`, primary key `(m
 
 ---
 
-## 8. Coordination and Conflict Flow
+## 8. Zero-Regression Protocol
+
+The rule: **no test that passed before a task started may fail when the task merges, unless a human says so by name and gives a reason.** This section defines how shoal proves that. It is the most important part of the spec; where another section disagrees, this one wins.
+
+### 8.1 Getting per-test results from any stack
+shoal does not parse test-runner output. The project's configured suite command (`[tests].command`) must produce results in one of these formats:
+
+| `format` | How shoal reads it | Fidelity |
+|----------|--------------------|----------|
+| `junit` | JUnit XML, the universal format. Most runners emit it natively or with a plugin (pytest `--junitxml`, PHPUnit `--log-junit`, Jest `jest-junit`, Vitest `--reporter=junit`, RSpec `rspec_junit_formatter`, Maven Surefire, cargo-nextest, gotestsum). shoal reads every file matching `junit_path` after the command exits | per-test |
+| `go-json` | `go test -json` on stdout, parsed natively | per-test |
+| `exit-code` | Exit status only. Fallback when the runner has no per-test format | suite (reduced) |
+| `none` | No suite. The protocol is inactive and every report says so in its first line | none |
+
+Placeholders in `command`, `rerun_command`, and `junit_path`: `{junit}` is an absolute path inside `$SHOAL_HOME/projects/<id>/runs/<run-id>/junit.xml`; `{tests}` is the list of test ids to re-run, space-separated and shell-quoted. shoal deletes stale files matching `junit_path` before every run, so an old report is never read.
+
+**Test identity.** Every result gets a stable `test_id`:
+- `junit`: `<classname>::<name>` from each `<testcase>`. If `classname` is empty, the `file` attribute, then the enclosing `<testsuite name>`, is used instead. A duplicate id within one run gets `#2`, `#3` suffixes in document order.
+- `go-json`: `<Package>::<Test>`, subtests included as `<Package>::<Test>/<sub>`. A package that fails without any test result (build error, panic in `init`) records the synthetic id `<Package>::(package)` as `fail`.
+
+**Status mapping.** `pass`; `fail` (JUnit `<failure>` or `<error>`, Go `fail`, or a Go test with no terminal action, such as a timeout or panic); `skip` (JUnit `<skipped>`, Go `skip`). The first 1,000 characters of the failure text go into `test_results.message`.
+
+**Run outcome.** A run is `completed` when results were read. It is `error` when the command could not start, or exited non-zero with no readable results file, and `timeout` when it ran past `[tests].timeout` (the process group is killed). If the command exits non-zero but every parsed test passed, shoal records the synthetic id `(suite)` as `fail`, so a crash after the last test, or a coverage threshold failure, is not lost. Raw stdout and stderr go to `runs/<run-id>/output.log`.
+
+**Reduced fidelity.** With `exit-code`, the only result is `(suite)` with `pass` or `fail`. Every comparison then works on that one id, and every report carries: "Reduced fidelity: whole-suite pass/fail only. A failing baseline hides any new failure."
+
+### 8.2 (a) Baseline
+- **When:** during `shoalctl start`, after the worktree is created at `base_sha` and before `claude` is launched. Work does not start without a baseline.
+- **What:** the full configured suite, once (plus flaky re-runs, §8.7), on the base commit, in the task worktree.
+- **Recorded:** a `test_runs` row with `kind = 'baseline'` and `sha = base_sha`, and one `test_results` row per test. `tasks.baseline_run_id` points at it.
+- **Reuse:** if a `completed` baseline already exists for the same `sha` and the same `command_hash` (SHA-256 of `command` + `format` + `rerun_command`), shoal reuses it instead of running again. Two tasks started from the same base share one baseline.
+- **Pre-existing failures** are recorded as `fail` at baseline, listed in the brief and the report under "Pre-existing failures", and never counted against the task.
+- **If the baseline can't be recorded** (`error` or `timeout`), `start` stops with exit code 6, leaves the worktree in place, and sets the task to `baseline-failed`. Fix the config or the environment, then run `start` again; it resumes.
+
+### 8.3 (b) Bugfix and hotfix: red, then green
+1. The agent writes a regression test that reproduces the bug, without the fix, and commits it.
+2. `shoalctl repro red <task> --test <id>` runs that test (with `rerun_command` if set, otherwise the full suite) on the current `HEAD`. It must report the test as `fail`. shoal stores `red_run_id` and `red_sha` in `regression_proofs`. If the test passes, `red` exits 9: the test does not reproduce the bug.
+3. The agent fixes the bug and commits.
+4. `shoalctl repro green <task> --test <id>` runs it again on `HEAD`, which must descend from `red_sha`. It must report `pass`. shoal stores `green_run_id` and `green_sha`.
+5. shoal checks whether the test file changed between `red_sha` and `green_sha` (`git diff --quiet red_sha green_sha -- <test file>`). If it did, `test_changed_after_red = 1` and the report flags it for review, because a weakened test can turn green without the bug being fixed.
+
+A bugfix or hotfix task without a complete red/green proof cannot pass `done` (exit 10). The one exception is a backport whose test already passes on the base branch (§6.3): `repro red` then records `not-reproducible` and the report says why.
+
+### 8.4 (c) Feature: a test for every new behaviour
+- `shoal-lead` lists each new behaviour as a `scope_items` row with `source = 'behaviour'` (one observable behaviour per row, for example "POST /clients rejects a duplicate email with 422").
+- Each behaviour needs at least one `scope_cases` row with `check = 'automated'` whose `test_id` is **new** (absent from the baseline) and passes in the task's latest gate run.
+- A behaviour that can't be tested automatically gets a `manual` row, which counts only after you mark it with `scope check` or waive it.
+- `done` refuses (exit 10) while any behaviour lacks a passing test or a decided manual row.
+
+### 8.5 (d) Merge gate
+Run by `shoalctl merge` for each queued task, after rebasing it onto the latest base branch:
+
+1. Rebase the task branch onto the current tip of the target branch (`new_base_sha`). On conflict, `git rebase --abort`, set the task to `needs-rebase`, exit 9.
+2. Get the baseline for `new_base_sha`: reuse a cached one (§8.2) or run it now. The comparison is always against the base the task will actually land on, not the base it started from.
+3. Run the full suite on the rebased head (`kind = 'gate'`), with flaky re-runs (§8.7).
+4. Compare every `test_id` in either run, ignoring quarantined tests:
+
+| Baseline | Gate | Class | Effect |
+|----------|------|-------|--------|
+| pass | fail | `regression` | **blocks** |
+| pass | missing | `missing` (deleted or renamed) | **blocks** |
+| pass | skip | `newly-skipped` | **blocks** |
+| pass | flaky (failed, then passed on re-run) | `unstable` | **blocks** (it may be a new race) |
+| absent | fail | `new-failure` | **blocks** |
+| fail | fail | `pre-existing` | reported, not blamed |
+| fail | pass | `fixed` | reported |
+| absent | pass | `new` | reported |
+| pass | pass | `ok` | counted |
+
+5. **Coverage**, only when `coverage_format` is set: for every file that exists in both runs and appears in `git diff --name-only new_base_sha...HEAD`, line coverage (`lines_covered / lines_total`) must not drop. Any drop blocks as `coverage:<path>`. New files are reported with their coverage but do not block.
+6. **Reduced fidelity**: if the baseline `(suite)` is `fail`, shoal cannot prove the absence of a regression, so the gate blocks as `(suite)` whatever the gate run shows.
+7. Any blocking row stops the merge: the task returns to `qa` with its round count kept, the gate result is stored, and `merge` exits 9.
+
+**The only override** is a human passing `--accept-regression <target> --reason "<text>"` to `merge`, once per blocking target (a test id, `coverage:<path>`, or `(suite)`). There is no global skip, no config key, and no environment variable. Each override is written to `regression_overrides` with the gate run id and `git config user.name`, and appears in the report under "Accepted regressions". An override that names a target not in the blocking set is an error (exit 2), so a typo can't silently pass.
+
+### 8.6 (e) User-specified test scope
+When you say "also test X", it becomes a **required scope item** (`scope_items.source = 'user'`), added with `new --scope` or `scope add`.
+
+`shoal-qa-scope` expands each item into a case matrix. Every item must have at least one row in each category, or a row marked not applicable with a one-line reason:
+
+| Category | Covers |
+|----------|--------|
+| `happy` | The normal path works |
+| `boundary` | Limits: min, max, off-by-one, exact length, first and last page |
+| `invalid` | Wrong types, malformed input, injection strings |
+| `empty` | Empty, null, missing fields, zero items |
+| `permission` | Every role, logged out, another user's resource |
+| `concurrency` | Double-submit, two users editing at once, retries |
+| `failure` | Errors and network failure: timeouts, 5xx from a dependency, partial writes |
+| `ui-state` | Loading, empty, error, success, disabled states (when there is a UI) |
+
+Each row maps to either an automated test (`check = 'automated'`, `test_id` set) or a manual-check line (`check = 'manual'`, `manual_step` describing exactly what to do and what to expect). A not-applicable row is stored as `manual` with the reason and needs a human waiver like any other non-green row.
+
+A row is green when its test passes in the task's latest gate or QA run, or when you record `scope check --pass`. **The task can't reach `done` until every row is green or explicitly waived by a human** through `shoalctl scope review`; `done` exits 10 and lists the open rows. Agents can't waive.
+
+### 8.7 (f) Flaky tests
+- When a run has failures and `flaky_retries = N > 0`, shoal re-runs the failing tests up to N times: with `rerun_command` if configured, otherwise the whole suite. Each attempt is stored with its `attempt` number.
+- A test that fails on attempt 1 and passes on a later attempt is **flaky** in that run.
+- **Flaky at baseline:** the test goes into `test_quarantine` with the run id and its failure text. Quarantined tests are excluded from gate decisions and **listed in every report** under "Quarantined tests" until released with `shoalctl test quarantine release <test>`. Nothing is silently ignored.
+- **Flaky at the gate** for a test that was a stable pass at baseline: class `unstable`, which blocks (§8.5).
+- A test that fails on every attempt is a plain `fail`.
+
+### 8.8 (g) The honest limit
+Zero regression means zero regressions **that the test suite can see**. Every report ends with an "Untested areas" section:
+- With coverage configured: each changed line range (from `git diff -U0 base_sha...HEAD`) that no test executed, listed as `path:start-end`.
+- Without coverage: every changed non-test file, with the note "coverage not configured: shoal cannot tell which of these lines any test runs."
+- Every waived scope row and every accepted regression, repeated here.
+
+### 8.9 Exit codes used by the protocol
+| Code | Meaning |
+|------|---------|
+| 6 | Baseline could not be recorded (`error` or `timeout`) |
+| 9 | Gate blocked: a regression, a missing proof, a failed `repro`, or a rebase conflict. The blocking rows are printed |
+| 10 | `done` refused: open scope rows, untested behaviours, a missing red/green proof, or the hotfix line budget |
+
+The full exit code list is in §4.7.
+
+---
+
+## 9. Coordination and Conflict Flow
 
 Sessions don't talk to each other. They read and write one SQLite file. Overlap is caught at planning time.
 
-### 8.1 File claims
+### 9.1 File claims
 - During `plan`, every task declares `expected` path globs
 - `plan` checks them against open claims of other tasks
 - While a task runs, `PostToolUse` records `actual` paths and warns on paths held by another task
 
-### 8.2 Overlap resolution: always ask, one keypress
+### 9.2 Overlap resolution: always ask, one keypress
 
 | Key | Action |
 |-----|--------|
@@ -397,47 +556,47 @@ Sessions don't talk to each other. They read and write one SQLite file. Overlap 
 
 shoal never resolves an overlap silently. Overlap found late (from actual claims) warns both tasks, and the later one is queued behind the earlier one at merge time.
 
-### 8.3 Concurrency safety
+### 9.3 Concurrency safety
 - SQLite runs in WAL mode. Claims are taken inside `BEGIN IMMEDIATE`, so two `plan` runs can't both win the same path
 - Nobody writes to the base branch except `shoalctl merge`
 
-### 8.4 Merge queue
+### 9.4 Merge queue
 1. Take the first `waiting` task
-2. Rebase onto base and run the full gates
+2. Rebase onto base and run the merge gate (§8.5) plus lint and build
 3. Pass: fast-forward base, record `merged_sha`, release claims
-4. Fail: back to `qa` with the round count kept
+4. Fail: back to `qa` with the round count kept. Only `--accept-regression` overrides a blocking row
 5. Other open tasks whose claims overlap the merged files are marked `needs-rebase`; their next `qa` rebases and re-runs tests
 
 `merge` updates the local base branch only. `git push` is always a human action.
 
 ---
 
-## 9. Memory and Staleness Rules
+## 10. Memory and Staleness Rules
 
 A record holds what was true at a specific commit. The code is what's true now.
 
-### 9.1 Code over record
+### 10.1 Code over record
 - Every record stores `true_at_sha` and `files`
 - Every injected record carries: *"Recorded at `<sha>`. Verify against current code before relying on it."*
 - When code disagrees with a record, **the code wins**. The agent runs `shoalctl flag-stale <id> "<reason>"`. The record stays for history but is no longer injected
 
-### 9.2 Cheap staleness pre-check (no LLM)
+### 10.2 Cheap staleness pre-check (no LLM)
 - Before injecting, run `git diff --quiet <true_at_sha> HEAD -- <files>`
 - Unchanged: inject as-is. Changed: inject with a `[files changed since record]` tag
 
-### 9.3 Regression lookup ("the bug came back")
+### 10.3 Regression lookup ("the bug came back")
 1. `shoalctl why bug:<id>` returns root cause, `fix_sha`, files, regression test
 2. shoal runs `git log <fix_sha>..HEAD -- <files>` live
 3. Output shows the commits that touched those files after the fix, author and SHA straight from git
 4. Then checks whether the regression test still exists and still passes
 
-### 9.4 Lessons
+### 10.4 Lessons
 - **Recorded** on every QA failure: pattern, fix, stack, path_glob
 - **Injected** only when a touched file matches `path_glob` or the stack matches
 - **Proposed for CLAUDE.md** once `hits >= 3` across different tasks. **You approve every promotion.** On approval the rule goes into `context.md` (imported by the managed block, or injected by hook in stealth mode), `promoted = 1`, and the per-file injection stops
 - **Decay**: not hit in 90 days, no longer injected. Still searchable
 
-### 9.5 Conventions
+### 10.5 Conventions
 1. You say "use the strategy pattern from now on". The agent saves it as `proposed` with a scope glob
 2. The next session opens with a brainstorm: the brief lists proposed conventions, and the agent discusses scope and exceptions **before doing anything else**
 3. Once agreed it becomes `active` and is injected when files in scope are touched
@@ -445,7 +604,7 @@ A record holds what was true at a specific commit. The code is what's true now.
 
 ---
 
-## 10. Task Report
+## 11. Task Report
 
 Written once, to the `summaries` row. Markdown is just a rendering.
 
@@ -471,19 +630,34 @@ date: YYYY-MM-DD
 ## Verified
 - Gates: test PASS · lint PASS · build PASS
 - QA rounds: 2/3 - round 1 failed on <x>, lesson #12 recorded
-- Regression test: `tests/...` (bugs only)
+- Regression proof: `tests/...` red at abc1234, green at def5678 (bugfix, hotfix)
+
+## Regression check
+- Baseline `<sha>`: 412 pass, 3 fail, 2 skip (per-test)
+- Gate `<sha>`: 0 regression, 0 missing, 1 fixed, 6 new
+- Pre-existing failures: `<test id>`, ...
+- Quarantined tests: `<test id>` (flaky at baseline, run #41)
+- Accepted regressions: `<target>`: "<reason>" (by <name>)
+
+## Scope
+| Item | Rows | Green | Waived |
+|------|------|-------|--------|
+| also test CSV export | 9 | 8 | 1 (`ui-state`: no UI, waived) |
+
+## Untested areas
+- `app/Exports/Csv.php:40-52`
 
 ## Risks / Follow-ups
 - <item>
 ```
 
-Target is about 25 lines. A longer report is a transcript; cut it.
+Target is about 40 lines, including the regression and scope sections. A longer report is a transcript; cut it.
 
 Reports land in `~/.shoal/projects/<id>/reports/` by default. Setting `sink = "notes"` or `"both"` with a `notes_path` also writes them to your notes folder. That is set per project, explicitly.
 
 ---
 
-## 11. Privacy
+## 12. Privacy
 
 Nothing from a project is shipped, committed, or copied elsewhere by default.
 
@@ -495,7 +669,7 @@ Nothing from a project is shipped, committed, or copied elsewhere by default.
 
 ---
 
-## 12. Worked Example (generic app)
+## 13. Worked Example (generic app)
 
 Four tasks arrive on the same day in a Laravel + Vue app.
 
@@ -517,7 +691,7 @@ Four tasks arrive on the same day in a Laravel + Vue app.
 
 ---
 
-## 13. Phased Build Plan
+## 14. Phased Build Plan
 
 | Phase | Scope | Done when | Est. |
 |-------|-------|-----------|------|
@@ -532,7 +706,7 @@ If Phase 0 doesn't save time on a real week of work, stop and rethink before Pha
 
 ---
 
-## 14. Resolved Decisions
+## 15. Resolved Decisions
 
 | # | Question | Decision |
 |---|----------|----------|
@@ -548,3 +722,6 @@ If Phase 0 doesn't save time on a real week of work, stop and rethink before Pha
 | 10 | Hotfix diff and QA | Minimal-diff rule with a line budget; full QA, no shortcuts; a backport task to the base branch is created on `done` |
 | 11 | Hook registration | Option 1: once, in the main checkout's `.claude/settings.local.json`. Handlers exit 0 silently when `CLAUDE_PROJECT_DIR` is not a shoal worktree, so nothing double-fires |
 | 12 | Hook failure mode | Fail open: on internal error, log a warning to `$SHOAL_HOME/logs/hooks.log` and exit 0. Never exit 2 |
+| 13 | Zero regression | Per-test baseline at `start`; red/green proof for bugfix and hotfix; tests for every feature behaviour; merge gate blocks any baseline-pass test that now fails, is missing, skipped, or unstable, and any coverage drop on touched files. Only override: `merge --accept-regression <target> --reason`, recorded |
+| 14 | Test result format | JUnit XML as the universal format, `go test -json` natively, whole-suite exit code as a flagged reduced-fidelity fallback |
+| 15 | Flaky tests | Re-run up to `flaky_retries`. Flaky at baseline: quarantined and listed in every report. Flaky at the gate after a stable baseline pass: blocks |
