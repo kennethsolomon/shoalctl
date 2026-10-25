@@ -1,6 +1,6 @@
 # shoal: Design Spec
 
-> Status: **pre-alpha, Spec v2.** The Phase 0 de-risk spikes are done ([phase-0-results.md](phase-0-results.md)). None of the commands below are implemented yet. §15.1 is the build spec for the MVP.
+> Status: **pre-alpha, Spec v2.** The de-risk spikes are done ([phase-0-results.md](phase-0-results.md)). The Phase 0 MVP commands (`init`, `new`, `start`, `status`, `done`, plus the internal `hook`) are implemented per §15.1; every other command below is not built yet and exits 2 as an unknown command.
 
 shoal is a lightweight CLI for running several Claude Code sessions on one repo at the same time without them stepping on each other, and for keeping the reasons behind changes around after a session ends.
 
@@ -268,6 +268,7 @@ Every command uses the same codes. Hooks are the exception: they always exit 0 (
 | 9 | Gate blocked |
 | 10 | `done` refused |
 | 11 | `doctor` found problems it did not fix |
+| 12 | Claude Code has not trusted the main checkout, or its trust state can't be read (`start` preflight, §15.1) |
 
 ---
 
@@ -803,7 +804,7 @@ This subsection is the contract for the MVP. Where it is more specific than the 
 
 #### Requirements
 - `git` 2.31 or newer (`rev-parse --path-format`), `tmux` 3.2 or newer, `claude` on `PATH` (`claude --version` must exit 0). A missing or older tool: exit 7, naming the tool and the version found.
-- macOS and Linux. Windows is not supported in the MVP (tmux).
+- macOS and Linux. Windows is not supported in the MVP (tmux), but the binary builds there and CI runs every test that needs no tmux or POSIX shell on Windows.
 
 #### Paths
 | What | Path |
@@ -853,7 +854,7 @@ Other keys in §4.3 are parsed and validated but have no effect until their phas
 2. If `project.json` exists with a different `root`, exit 3 ("project <id> is registered at <root>"), unless `--rebind`, which updates `root`.
 3. Create the directories, open `memory.db`, apply migrations (§10.6).
 4. If no config exists, write a commented template: to `<repo>/.shoal.toml` with `--commit-config` (shoal does not commit it), otherwise to the stealth path. If `go.mod` exists at the root, the template sets `command = "go test -json ./..."` and `format = "go-json"`; otherwise `command` is empty and `init` prints the file to edit.
-5. Merge hook entries into `<main checkout>/.claude/settings.local.json` (§4.6): create the file if missing; refuse with exit 3 if it is not valid JSON, never overwriting it; keep all other keys; add `SessionStart` and `Stop` entries running `<abs path>/shoalctl hook session-start|stop` with `"timeout": 10` only if they are not already present; write through a temp file and rename.
+5. Merge hook entries into `<main checkout>/.claude/settings.local.json` (§4.6): create the file if missing; refuse with exit 3 if it is not valid JSON, never overwriting it; keep all other keys; add `SessionStart` and `Stop` entries running `<abs path>/shoalctl hook session-start|stop` with `"timeout": 10` only if they are not already present; an existing shoal entry with a different binary path or duplicates is replaced by exactly one entry; write through a temp file and rename. If the committed `.claude/settings.json` already registers shoal hooks, `init` exits 3 instead, since both files load and every hook would fire twice.
 6. Append `/.claude/settings.local.json` and `/.shoal/` to `<git-common-dir>/info/exclude` if missing.
 7. Print the project id, DB path, config path, and the hook file. Exit 0.
 
@@ -870,7 +871,7 @@ Commands take a task as its slug or its numeric id.
 #### `shoalctl start <task> [--model <model>]`
 Allowed from `new` (fresh) or `starting` / `baseline-failed` (resume). Any other stage: exit 5.
 
-1. Check dependencies (exit 7) and config (exit 3; empty `tests.command` with a format other than `none` is a config error).
+1. Check dependencies (exit 7) and config (exit 3; empty `tests.command` with a format other than `none` is a config error). Then the **trust preflight**: read `~/.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json` when that is set) read-only and require `projects[<main checkout>].hasTrustDialogAccepted == true`, checking the path as git reports it and with symlinks resolved. A missing file, invalid JSON, or no such entry exits 12 with the fix: "run `claude` once in <main checkout> and choose *Yes, I trust this folder*, then retry". Trust of a parent folder does not count. shoal never writes trust entries and never answers the dialog. The preflight runs before any task row, branch, or worktree changes.
 2. Resolve the base: `[merge].base` for feature and bugfix, `[hotfix].production_ref` for hotfix. Record `base_ref` and `base_sha`. Set stage `starting` (optimistic update, §10.2).
 3. Under `git.lock`: if the worktree doesn't exist yet, `git worktree add -b <lane>/<slug> <worktree> <base_sha>`. If the branch already exists and the worktree doesn't, exit 5; shoal never reuses or deletes a branch it didn't create in this run.
 4. Write `<worktree>/.shoal/task.json` and `brief.md`.
@@ -884,7 +885,7 @@ tmux new-window -d -t <session> -n <slug> -c <worktree> -P -F '#{window_id}' -- 
   claude --model <model> "Read .shoal/brief.md first. It is your task brief. Follow it."
 tmux set-option -w -t <window_id> remain-on-exit on
 ```
-Arguments are passed as an argv list, never through a shell string. On first launch in a new worktree, Claude Code may show its workspace trust prompt (open item from Phase 0); accepting it once per worktree is expected.
+Arguments are passed as an argv list, never through a shell string. The window also gets `SHOAL_HOME` in its environment so the hooks find the same home. Workspace trust is settled by the preflight in step 1: a worktree outside the main checkout opens without the trust dialog exactly when the main checkout is trusted ([phase-0-results.md](phase-0-results.md#workspace-trust-in-outside-worktrees)). Other interactive dialogs, such as approving an MCP server configured outside the project, can still appear and need you to attach.
 
 **Brief file** (`<worktree>/.shoal/brief.md`), written from a template, at most about 1k tokens:
 ```markdown
@@ -931,7 +932,7 @@ SLUG                     LANE     STAGE        BASE            BASELINE        W
 ```
 - `BASELINE` is pass/fail/skip, `(suite) pass|fail` for `exit-code`, `none` for `format = "none"`, `-` before start.
 - `WINDOW` is `alive` if `tmux_window` appears in `tmux list-windows -a -F '#{window_id}'`, otherwise `gone`. No tmux server counts as `gone`.
-- A last line warns when `hooks.log` has new lines since the previous `status`.
+- A last line (on stderr) warns when `hooks.log` has new lines since the previous `status`. The byte offset already seen is kept in `hooks.log.seen` next to the log.
 - `--json` prints an array of objects with the same fields, snake_case, plus `id` and `worktree`.
 - Exit codes: 0, 3.
 
@@ -1083,3 +1084,4 @@ WAL, `busy_timeout`, `BEGIN IMMEDIATE` per state change, and the `tasks.version`
 | 21 | MVP scope | `init`, `new`, `start`, `status`, `done`; tables `schema_migrations`, `tasks`, `summaries`, `test_runs`, `test_results`; baseline wired into `start`. The rest of the zero-regression gate is Phase 1 |
 | 22 | Test command | Required. A project without tests must say so with `format = "none"`, and every report then states the protocol is inactive |
 | 23 | Task files | Live in `<worktree>/.shoal/`, excluded through `info/exclude`. The brief is passed to `claude` as a one-line first prompt pointing at `.shoal/brief.md` |
+| 24 | Workspace trust | `start` checks, read-only, that Claude Code trusts the main checkout and exits 12 otherwise. Worktrees inherit that trust. shoal never writes trust into `~/.claude.json` and never answers the dialog, whose default is "No, exit" |

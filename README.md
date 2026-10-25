@@ -19,7 +19,7 @@
 
 ## Status
 
-> **Pre-alpha: design stage, not yet usable.** There is no code in this repo yet. This README and [`docs/spec.md`](docs/spec.md) describe what shoal is being built to do. Screenshots are mockups. Everything below is **planned** unless the [Roadmap](#roadmap) says otherwise.
+> **Pre-alpha, not yet released.** Only the Phase 0 MVP commands (`init`, `new`, `start`, `status`, `done`) exist so far. This README and [`docs/spec.md`](docs/spec.md) describe what shoal is being built to do. Screenshots are mockups. Everything below is **planned** unless the [Roadmap](#roadmap) says otherwise.
 
 ## What is shoal
 
@@ -191,16 +191,16 @@ All planned.
 | Phase | Scope | Status |
 |-------|-------|--------|
 | Design | Spec, README, mockups | **Done** |
-| 0: MVP | `init`, `new`, `start`, `status`, `done`, report render | Planned |
-| 1: Claims + queue | File claims, overlap prompt, merge queue | Planned |
-| 2: Memory + hooks | Lessons, decisions, bugs, FTS5, hooks, `why`, `recall` | Planned |
-| 3: Lanes + QA | Full/light lanes, QA subagent, escalation | Planned |
+| 0: MVP | `init`, `new`, `start`, `status`, `done`, baseline test run, report render | **Built** (not yet released) |
+| 1: Agent team + merge gate | `shoal-*` agents, messages, contracts, QA loop, scope matrix, hotfix backport, zero-regression merge gate, serialized `merge` | Planned |
+| 2: Claims + queue | Cross-task file claims, overlap prompt, per-target merge queue, `doctor` | Planned |
+| 3: Memory + hooks | Lessons, decisions, bugs, FTS5, injecting hooks, `why`, `recall` | Planned |
 | 4: Conventions | Convention lifecycle, lesson promotion, managed CLAUDE.md block | Planned |
 | 5: Publish | `export`/`purge`/`uninstall`, releases, Homebrew tap | Planned |
 
 ## Contributing
 
-shoal is at the design stage. [Issues](https://github.com/kennethsolomon/shoalctl/issues) and discussion on the [spec](docs/spec.md) are welcome. Code contributions will open once Phase 0 lands.
+shoal is pre-alpha. [Issues](https://github.com/kennethsolomon/shoalctl/issues) and discussion on the [spec](docs/spec.md) are welcome. Code contributions will open once the first release is tagged.
 
 ## License
 
