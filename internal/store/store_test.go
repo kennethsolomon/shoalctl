@@ -12,7 +12,9 @@ import (
 	"time"
 )
 
-func testOpts() Options { return Options{Create: true, Migrate: true, BusyTimeout: time.Second, Retries: 2} }
+func testOpts() Options {
+	return Options{Create: true, Migrate: true, BusyTimeout: time.Second, Retries: 2}
+}
 
 func openTest(t *testing.T) (*Store, string) {
 	t.Helper()
