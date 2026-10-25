@@ -224,7 +224,7 @@ The DB does **not** store diffs, authors, commit messages, blame, or transcripts
 
 ### 4.6 Hooks
 
-Inject only what matches the file being touched, and only once per session. The MVP registers only `SessionStart` and `Stop`, as heartbeats with no output (§15.1); the injecting handlers below arrive in Phase 2.
+Inject only what matches the file being touched, and only once per session. The MVP registers only `SessionStart` and `Stop`, as heartbeats with no output (§15.1); the injecting handlers below arrive in Phase 3.
 
 | Hook | Trigger | Injects (via `additionalContext`) | Budget |
 |------|---------|-----------------------------------|--------|
@@ -790,9 +790,9 @@ Every feature in this spec lands in exactly one phase. Commands not yet built ar
 |-------|-------|-----------|------|
 | **Spikes (done)** | Go skeleton, modernc FTS5 spike, hook loading in outside worktrees, startup timing ([phase-0-results.md](phase-0-results.md)) | All four spikes recorded | done |
 | **0: MVP** | Exactly: `init` (stealth; installs hooks by option 1), `new` (lane `feature\|bugfix\|hotfix`), `start` (worktree + tmux window + `claude` launched with the task brief, default model `claude-opus-5-5`, configurable), `status`, `done` (rendered report). Tables `schema_migrations`, `tasks`, `summaries`, `test_runs`, `test_results`. The baseline test run (§8.2) wired into `start`. Full build spec in §15.1 | The acceptance checks in §15.1 pass on a real project | 3-4 days |
-| **1: Claims, queue, zero-regression gate** | `plan` with `file_claims` and the one-keypress overlap prompt; per-target merge queue and `needs-rebase`; the merge gate (§8.5) with `--accept-regression` and `regression_overrides`; `repro red\|green` and `regression_proofs` (§8.3); flaky re-runs and `test_quarantine` (§8.7); coverage comparison and `coverage_files`; "Untested areas" (§8.8); `test` command; hotfixes merging into the production branch; `merge.lock`, optimistic locking on claims, stale-claim expiry, and `doctor` (§10) | The Bug A / Bug B scenario works end to end; breaking a baseline-passing test blocks `merge` with exit 9; `--accept-regression` lets it through and the report shows it; a test made flaky on purpose is quarantined and listed; `doctor --fix` recovers a task killed mid-`start` | 5-7 days |
-| **2: Memory + hooks** | `bugs`, `decisions`, `lessons`, `qa`, FTS5; `SessionStart` brief, `PreToolUse` and `PostToolUse` handlers; staleness pre-check; `why`, `recall`; lesson hit counting | Brief < 1k tokens measured; a lesson is injected on a matching file touch | 3-4 days |
-| **3: Agent team + QA loop** | `agents install` (stealth and `--commit`), the eight `shoal-*` definitions (§7); `messages`, `message_reads`, `msg`; `contracts` and `contract freeze`; per-agent `claim`/`release`; `qa` with the 3-round cap and escalation; feature behaviour rule (§8.4); user scope matrix, `scope add\|show\|review\|check`, `new --scope` (§8.6); hotfix minimal-diff check and automatic backport task (§6.3) | One feature runs through the feature lane with backend and frontend agents and a frozen contract; an "also test X" item blocks `done` until every row is green or waived; a finished hotfix creates its backport task | 4-5 days |
+| **1: Agent team, QA loop, zero-regression merge gate** | `agents install` (stealth and `--commit`), the eight `shoal-*` definitions (§7); `messages`, `message_reads`, `msg`; `contracts` and `contract freeze`; per-agent `claim`/`release` inside one task (the `file_claims` table); `qa` with the 3-round cap and escalation; feature behaviour rule (§8.4); user scope matrix, `scope add\|show\|review\|check`, `new --scope` (§8.6); hotfix minimal-diff check and automatic backport task (§6.3). The merge gate (§8.5) with `--accept-regression` and `regression_overrides`; `repro red\|green` and `regression_proofs` (§8.3); flaky re-runs and `test_quarantine` (§8.7); coverage comparison and `coverage_files`; "Untested areas" (§8.8); `test` command; hotfixes merging into the production branch; a simple serialized `merge` that takes `done` tasks oldest first, one at a time, under `merge.lock`. Warnings that need `PreToolUse`/`PostToolUse` (writes outside claims, contract edits by non-leads) arrive with those hooks in Phase 3 | One feature runs through the feature lane with backend and frontend agents and a frozen contract; an "also test X" item blocks `done` until every row is green or waived; a bugfix without a red/green proof is refused by `done`; breaking a baseline-passing test blocks `merge` with exit 9, and `--accept-regression` lets it through with the override in the report; a test made flaky on purpose is quarantined and listed; a finished hotfix merges into the production branch and creates its backport task | 7-9 days |
+| **2: Claims + queue** | `plan` with expected `file_claims` across tasks and the one-keypress overlap prompt (§9.2); `merge_queue` per target branch and `needs-rebase` for tasks whose claims overlap a merge (§9.4); optimistic locking on claims; stale-claim expiry; `doctor [--fix]` (§10.4) | The Bug A / Bug B scenario works end to end; two concurrent `plan` runs can't both win one path; `doctor --fix` recovers a task killed mid-`start` and releases a stale claim | 3-4 days |
+| **3: Memory + hooks** | `bugs`, `decisions`, `lessons`, `qa`, FTS5; `SessionStart` brief, `PreToolUse` and `PostToolUse` handlers (including the claim and contract warnings from Phase 1); staleness pre-check; `why`, `recall`; lesson hit counting | Brief < 1k tokens measured; a lesson is injected on a matching file touch; a write outside an agent's claims prints a one-line warning | 3-4 days |
 | **4: Conventions + promotion** | Convention lifecycle, brainstorm-first brief, lesson promotion proposed after 3 repeats, non-stealth mode (`[install].stealth = false`, managed CLAUDE.md block), conflict detection | "Strategy pattern" example works end to end | 1-2 days |
 | **5: Publish** | `export`/`purge`/`uninstall`, `gc`, release CI guard, FTS5 test run on every target, Homebrew tap, cross-compiled releases | Installed on a project with zero repo footprint | 2 days |
 
@@ -920,7 +920,7 @@ summary.json:
 #### Hooks in the MVP
 - `hook session-start`: guard (§4.6); then set `tasks.session_id` from the hook input and `last_seen_at`. No output; the brief already arrives as the first prompt.
 - `hook stop`: guard; then set `last_seen_at`. No output.
-- Both fail open. `PreToolUse` and `PostToolUse` entries are added by `init` in Phase 2.
+- Both fail open. `PreToolUse` and `PostToolUse` entries are added by `init` in Phase 3.
 
 #### `shoalctl status [--json]`
 One row per task not older than 14 days after `done`, newest first:
@@ -1043,7 +1043,7 @@ CREATE TABLE summaries (
 All timestamps are RFC 3339 UTC text. Columns other phases need (`qa_round`, `merged_sha`, `blocked_by`, `parent_task_id`, and so on) arrive in later numbered migrations.
 
 #### Concurrency in the MVP
-WAL, `busy_timeout`, `BEGIN IMMEDIATE` per state change, and the `tasks.version` check (§10.1, §10.2) are in from day one, as is `git.lock` around `git worktree add`. `merge.lock`, claims, and `doctor` come in Phase 1.
+WAL, `busy_timeout`, `BEGIN IMMEDIATE` per state change, and the `tasks.version` check (§10.1, §10.2) are in from day one, as is `git.lock` around `git worktree add`. `merge.lock` and per-agent claims come in Phase 1; cross-task claims and `doctor` in Phase 2.
 
 #### Acceptance checks
 1. `init` on a real project, twice: the second run changes no file (compare checksums of `settings.local.json` and `info/exclude`).
