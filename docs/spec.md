@@ -42,13 +42,13 @@ Locked design choices:
 
 | Reason | Detail |
 |--------|--------|
-| Startup latency | Hooks fire on every file read and edit. A Go binary starts in roughly 5 ms; a Python interpreter with imports is roughly 50-100 ms or more per call |
+| Startup latency | Hooks fire on every file read and edit. Measured in Phase 0 (Apple M2 Max, median of 300 runs, process spawn included): the bare binary takes about 5-10 ms, and a hook-shaped call (open `memory.db`, one FTS5 query) about 8-12 ms (p95 under 20 ms). `python3 -c "import sqlite3"` alone takes about 40-65 ms. See [phase-0-results.md](phase-0-results.md) |
 | Zero runtime deps | One binary. No Python or Node install needed on the machine |
 | Cross-compile | macOS, Linux, Windows from one build |
 | Distribution | Binary `shoalctl`. GitHub Releases, a Homebrew tap (`kennethsolomon/tap/shoalctl`, planned), and `go install github.com/kennethsolomon/shoalctl/cmd/shoalctl@latest`. Repo: `github.com/kennethsolomon/shoalctl` |
 | SQLite | [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite): a CGo-free translation of C SQLite, so cross-compiling needs no C toolchain |
 
-> FTS5 note: the modernc package documentation references FTS5 internals, and the package is built with FTS5 enabled. Phase 0 includes a spike test that creates an FTS5 virtual table on every release target before anything else depends on it.
+> FTS5 note: confirmed in Phase 0. `modernc.org/sqlite` v1.61.0 creates, fills, and `MATCH`-queries an FTS5 table with `CGO_ENABLED=0` (`internal/spike/fts5_test.go`). The test passed on darwin/arm64 and darwin/amd64. It cross-compiles for linux/amd64, linux/arm64, and windows/amd64, but has not run there yet; release CI (Phase 5) must run it on every target.
 
 Cost: the MVP is estimated at about one extra day compared with a Python prototype.
 
@@ -202,7 +202,8 @@ shoal never rewrites your content.
 ### 5.2 Stealth mode (default)
 - The committed `CLAUDE.md` is not touched at all.
 - Context arrives through hooks registered in `.claude/settings.local.json`: `SessionStart` for the brief, file-scoped `PreToolUse`/`PostToolUse` for everything else.
-- Claude Code adds `settings.local.json` to your global git excludes only when Claude Code itself creates the file. shoal may create it first, so shoal adds it to `.git/info/exclude`. It never edits the committed `.gitignore`. `.git/info/exclude` lives in the shared git dir, so it covers every worktree.
+- Claude Code adds `settings.local.json` to your global git excludes only when Claude Code itself creates the file. shoal may create it first, so shoal adds it to `.git/info/exclude`. It never edits the committed `.gitignore`. `.git/info/exclude` lives in the shared git dir, so it covers every worktree (confirmed in Phase 0).
+- Hooks in worktrees outside the repo (confirmed in Phase 0, Claude Code 2.1.310, headless): a worktree under `~/.shoal/` loads its own `.claude/settings.local.json`, **and it also loads the main checkout's `.claude/settings.local.json`**. If both files contain the hook, it fires twice. So shoal registers each hook in exactly one place. `CLAUDE_PROJECT_DIR` is the worktree path in both cases.
 - Optional: a `CLAUDE.local.md` containing the import line, also added to `.git/info/exclude`. A gitignored `CLAUDE.local.md` only exists in the worktree where it was created, so `shoalctl start` writes one into each task worktree it creates.
 
 ### 5.3 Existing rules win

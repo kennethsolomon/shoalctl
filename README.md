@@ -106,7 +106,7 @@ flowchart LR
 ```
 
 - Sessions never talk to each other. They coordinate through one SQLite file in WAL mode.
-- Claude Code hooks (`SessionStart`, `PreToolUse`, `PostToolUse`, `Stop`) call the shoalctl binary, which is why it's written in Go: hooks fire on every file touch, so startup time matters.
+- Claude Code hooks (`SessionStart`, `PreToolUse`, `PostToolUse`, `Stop`) call the shoalctl binary, which is why it's written in Go: hooks fire on every file touch, so startup time matters. A hook-shaped call (open the DB, run one FTS5 query) measured about 8-12 ms, against about 40-65 ms for Python just to import `sqlite3` ([Phase 0 results](docs/phase-0-results.md)).
 - Everything shoal stores lives in `~/.shoal/projects/<id>/`, where `<id>` is a hash of the git remote URL (falling back to the repo path).
 
 ## Installing into an existing project
