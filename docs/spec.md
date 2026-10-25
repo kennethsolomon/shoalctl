@@ -79,9 +79,12 @@ Most of the machinery already exists. shoal is mostly glue plus a SQLite file.
 ```
 ~/.shoal/                                   # never inside the repo
   config.toml                               # global: default model, report sink, privacy defaults
+  logs/hooks.log                            # hook warnings (§4.6)
   projects/
     <project-id>/                           # id = hash of the canonical git remote URL (fallback: repo root path)
-      memory.db                             # SQLite + FTS5
+      memory.db                             # SQLite + FTS5, WAL mode (memory.db-wal, memory.db-shm)
+      locks/                                # merge.lock, git.lock (§10.3)
+      runs/<run-id>/                        # raw test output and JUnit copies for each test run
       context.md                            # promoted rules + active conventions, imported by CLAUDE.md
       config.toml                           # project config when the repo runs in stealth mode
       reports/                              # rendered markdown reports (default sink)
@@ -139,6 +142,9 @@ production_ref = "production"    # branch name, tag name, or "tag:<glob>" for th
 backport = true                  # create a backport task to [merge].base when the hotfix is done
 max_diff_lines = 100             # minimal-diff rule: added + removed lines, excluding test files
 
+[claims]
+stale_after = "2h"               # a claim with no heartbeat for this long, and no live tmux window, is stale
+
 [reports]
 sink = "local"                   # local | notes | both
 notes_path = ""                  # your notes folder, only used when sink includes notes
@@ -174,6 +180,7 @@ deny_globs = [".env*", "storage/**"]
 | `shoalctl recall <query \| --file path>` | FTS5 search over decisions, lessons, conventions, and bugs |
 | `shoalctl why <file \| sha \| bug-id>` | Shows the stored WHY together with live `git log` for that file or SHA |
 | `shoalctl convention propose\|agree\|retire` | Manages the convention lifecycle |
+| `shoalctl doctor [--fix]` | Checks DB integrity, migrations, stuck stages and runs, worktrees, tmux windows, hook registration, stale claims; repairs what is safe (§10.4) |
 | `shoalctl gc` | Removes merged worktrees, closes tmux windows, flags stale records |
 | `shoalctl export <id>` / `shoalctl purge <id>` | Offboarding. `purge` asks for confirmation |
 | `shoalctl uninstall` | Removes hook entries and the managed CLAUDE.md block, nothing else |
@@ -184,14 +191,15 @@ Store the reasons. Point at git for everything else.
 
 | Table | Key columns | Notes |
 |-------|-------------|-------|
-| `tasks` | `id, slug, lane(feature\|bugfix\|hotfix), title, ask, stage, qa_round, branch, worktree, tmux_window, base_ref, base_sha, baseline_run_id, merged_sha, blocked_by, parent_task_id, created_at, closed_at` | One row per task. `parent_task_id` links a backport to its hotfix |
-| `file_claims` | `task_id, agent, path_glob, kind(expected\|actual), released_at` | Planning claims. `agent` lets subagents in one worktree own separate files |
+| `tasks` | `id, slug, lane(feature\|bugfix\|hotfix), title, ask, stage, qa_round, branch, worktree, tmux_window, base_ref, base_sha, baseline_run_id, merged_sha, blocked_by, parent_task_id, session_id, last_seen_at, version, created_at, updated_at, closed_at` | One row per task. `parent_task_id` links a backport to its hotfix |
+| `file_claims` | `id, task_id, agent, path_glob, kind(expected\|actual), expires_at, released_at, version` | Planning claims. `agent` lets subagents in one worktree own separate files |
 | `summaries` | `task_id, decision, alternatives_rejected, why, verification, risks, followups, commits(json), files(json), true_at_sha` | **The report.** Single source of truth |
 | `bugs` | `id, task_id, symptom, root_cause, fix_sha, files(json), regression_test, true_at_sha, stale` | Regression lookups |
 | `decisions` | `id, task_id, topic, choice, rationale, files(json), true_at_sha, stale, superseded_by` | ADR-lite |
 | `lessons` | `id, pattern, fix, stack, path_glob, hits, last_hit_at, promoted, true_at_sha, stale` | One row per QA failure |
 | `conventions` | `id, rule, scope_glob, status(proposed\|active\|retired), proposed_at, agreed_at, source_task_id` | e.g. "use the strategy pattern from now on" |
 | `qa` | `id, question, answer, files(json), task_id, true_at_sha` | Questions you answered during work |
+| `schema_migrations` | `version, name, checksum, applied_at` | Applied migrations; `PRAGMA user_version` mirrors the max (§10.6) |
 | `merge_queue` | `task_id, position, state(waiting\|rebasing\|testing\|merged\|failed)` | Serial merge |
 | `messages` | `id, task_id, from_agent, to_agent, kind, subject, body, reply_to, created_at` | Agent-to-agent notes inside one task (§7.4). `to_agent = '*'` is a broadcast |
 | `message_reads` | `message_id, agent, read_at` | Per-recipient read state, so a broadcast is read once by each agent |
@@ -250,9 +258,10 @@ Every command uses the same codes. Hooks are the exception: they always exit 0 (
 | 5 | Invalid state: the task is in a stage that doesn't allow the command, uncommitted changes, or a destructive step that needs confirmation and no terminal is attached |
 | 6 | Baseline could not be recorded |
 | 7 | Missing dependency: `git`, `tmux`, or `claude` not on `PATH`, or older than the minimum version |
-| 8 | Busy: a lock is held by another process, or an optimistic-lock conflict persisted after retries |
+| 8 | Busy: a lock file is held, the DB stayed locked past retries, or an optimistic-lock conflict persisted after 3 retries |
 | 9 | Gate blocked |
 | 10 | `done` refused |
+| 11 | `doctor` found problems it did not fix |
 
 ---
 
@@ -557,13 +566,15 @@ Sessions don't talk to each other. They read and write one SQLite file. Overlap 
 shoal never resolves an overlap silently. Overlap found late (from actual claims) warns both tasks, and the later one is queued behind the earlier one at merge time.
 
 ### 9.3 Concurrency safety
-- SQLite runs in WAL mode. Claims are taken inside `BEGIN IMMEDIATE`, so two `plan` runs can't both win the same path
+- Claims are taken inside `BEGIN IMMEDIATE`, so two `plan` runs can't both win the same path. The full rules are in §10
 - Nobody writes to the base branch except `shoalctl merge`
 
 ### 9.4 Merge queue
+There is one queue per target branch: `[merge].base`, plus the production branch for hotfixes. `merge` holds the merge lock (§10.3) for its whole run.
+
 1. Take the first `waiting` task
 2. Rebase onto base and run the merge gate (§8.5) plus lint and build
-3. Pass: fast-forward base, record `merged_sha`, release claims
+3. Pass: fast-forward the target branch (§10.5), record `merged_sha`, release claims
 4. Fail: back to `qa` with the round count kept. Only `--accept-regression` overrides a blocking row
 5. Other open tasks whose claims overlap the merged files are marked `needs-rebase`; their next `qa` rebases and re-runs tests
 
@@ -571,32 +582,106 @@ shoal never resolves an overlap silently. Overlap found late (from actual claims
 
 ---
 
-## 10. Memory and Staleness Rules
+## 10. Multi-Agent Concurrency in One Project
+
+Many sessions, many subagents, and the human all run `shoalctl` against the same project at once. Each process opens `memory.db` itself; there is no daemon. These rules keep that safe.
+
+### 10.1 SQLite settings
+Every connection runs, in order:
+```sql
+PRAGMA journal_mode = WAL;      -- readers never block the writer
+PRAGMA busy_timeout = 5000;     -- wait up to 5 s for the write lock instead of failing
+PRAGMA foreign_keys = ON;
+PRAGMA synchronous = NORMAL;    -- safe with WAL; a power cut can lose the last commit, never corrupt
+```
+- **Every state change runs in one transaction**, opened with `BEGIN IMMEDIATE` so the write lock is taken up front. A command that changes several rows (a stage change plus a claim release, for example) changes them all or none.
+- No transaction stays open across a slow step: a test run, a git command, a tmux call, or a prompt. Read, do the slow work, then write in a short transaction guarded by §10.2.
+- Writers retry `SQLITE_BUSY` after `busy_timeout` twice with jitter (50-200 ms), then exit 8.
+- Hooks use a 1-second `busy_timeout` and fail open (§4.6).
+
+### 10.2 Optimistic locking
+`tasks`, `file_claims`, and `scope_cases` have `version INTEGER NOT NULL DEFAULT 1`.
+- Every update is `UPDATE ... SET ..., version = version + 1, updated_at = ? WHERE id = ? AND version = ?`, using the version read before the slow step.
+- Zero rows changed means another process got there first. The command re-reads the row, checks the change is still valid (for example, the task is still in the stage it expected), and retries up to 3 times. After that it exits 8 and names the row and both versions.
+- Stage changes also check the current stage in the `WHERE` clause, so an illegal transition can't win a race.
+
+### 10.3 Lock files
+Some work can't be one SQLite transaction. It uses advisory lock files under `$SHOAL_HOME/projects/<id>/locks/`:
+
+| Lock | Held by | Wait | On contention |
+|------|---------|------|---------------|
+| `merge.lock` | `shoalctl merge`, for the whole queue run | none | exit 8: "merge already running (pid N, started T)" |
+| `git.lock` | Any command that changes shared git state: `worktree add/remove`, branch create, rebase, ref update, `worktree prune` | up to 30 s | exit 8 |
+
+- Locks use `flock(2)` (`LockFileEx` on Windows), so the OS releases them when a process dies. A crashed process never leaves a lock stuck.
+- The holder writes `{"pid", "command", "task", "started_at"}` into the file for `status` and `doctor` to show. The content is informational; the OS lock is the truth.
+- Lock order is always `merge.lock` then `git.lock`, never the reverse, so they can't deadlock.
+- Git commands that only read (`rev-parse`, `diff`, `log`, `status`) take no lock.
+
+### 10.4 Crash recovery
+Commands that span several steps record a transient stage first (`starting`, `rebasing`, `merging`) and the final stage last. A crash leaves the transient stage behind, which `doctor` can see.
+
+- **Heartbeat.** Hooks update `tasks.last_seen_at`. Claims carry `expires_at = last_seen_at + [claims].stale_after` (default `2h`).
+- **Stale claims.** An open claim past `expires_at` whose tmux window no longer exists is stale. Stale claims don't block `plan`; the overlap prompt shows them marked `stale`. `doctor --fix` releases them.
+- **`shoalctl doctor [--fix]`** checks, and with `--fix` repairs what is safe to repair:
+
+| Check | Safe fix (`--fix`) |
+|-------|--------------------|
+| `PRAGMA integrity_check` and `foreign_key_check` | none: reports and exits 11 |
+| Migrations: applied checksums match the binary's | none: reports |
+| Task in a transient stage with no live lock holder | roll back to the previous stage |
+| `test_runs` stuck at `running` with a dead `pid` | mark `error` |
+| Merge queue row at `rebasing` with no `merge.lock` holder | asks, then `git rebase --abort` in that worktree and resets the row to `waiting` |
+| Worktree recorded in the DB but missing on disk | mark the task `worktree-missing`; the human decides |
+| Directory under `worktrees/` with no task row | report only; never deleted |
+| `git worktree list` entries whose path is gone | `git worktree prune` |
+| tmux window recorded but gone | clear `tmux_window` |
+| Hook entries duplicated, or present in a worktree's settings | remove the extra entries |
+| Stale claims | release |
+
+`doctor` exits 0 when everything is healthy or fixed, and 11 when a problem remains.
+
+### 10.5 Git safety
+- Git operations that change shared state are serialized per repo with `git.lock`.
+- **Never without explicit confirmation:** `reset --hard`, `push --force` (and any push: shoal never pushes), branch deletion (`branch -d` or `-D`), `worktree remove --force`, `clean`, `checkout -- <path>`, `restore`, or `stash drop`. The prompt names the branch, worktree, and commits affected. With no terminal attached, the command exits 5 instead of asking.
+- A rebase that conflicts is always aborted (`git rebase --abort`), which returns the branch to its pre-rebase commit. shoal never resolves conflicts itself.
+- **Fast-forwarding a target branch:** if the branch is not checked out anywhere, shoal uses `git update-ref refs/heads/<branch> <new> <old>`, which fails if the branch moved. If it is checked out in the main checkout, shoal runs `git merge --ff-only` there only when that checkout is clean; otherwise `merge` exits 5 and asks you to commit or stash.
+
+### 10.6 Schema migrations
+Versioned from the first release.
+- Migrations are numbered SQL files embedded in the binary (`internal/store/migrations/0001_init.sql`, `0002_...`). They are append-only: an applied migration is never edited.
+- Table `schema_migrations(version INTEGER PRIMARY KEY, name TEXT NOT NULL, checksum TEXT NOT NULL, applied_at TEXT NOT NULL)`. `checksum` is the SHA-256 of the file.
+- `PRAGMA user_version` mirrors the highest applied version, so a version check needs no table read.
+- On every open, under `BEGIN IMMEDIATE`: read `user_version`; apply each newer migration in order, each in its own transaction that also inserts its `schema_migrations` row and sets `user_version`. Two processes opening at once can't both apply one migration.
+- If `user_version` is higher than the newest migration the binary knows, the command exits 3: "memory.db is schema N; this shoalctl knows M. Upgrade shoalctl." It never downgrades.
+- Before applying any migration to a non-empty DB, shoal copies it to `memory.db.bak-<version>` with `VACUUM INTO`.
+
+## 11. Memory and Staleness Rules
 
 A record holds what was true at a specific commit. The code is what's true now.
 
-### 10.1 Code over record
+### 11.1 Code over record
 - Every record stores `true_at_sha` and `files`
 - Every injected record carries: *"Recorded at `<sha>`. Verify against current code before relying on it."*
 - When code disagrees with a record, **the code wins**. The agent runs `shoalctl flag-stale <id> "<reason>"`. The record stays for history but is no longer injected
 
-### 10.2 Cheap staleness pre-check (no LLM)
+### 11.2 Cheap staleness pre-check (no LLM)
 - Before injecting, run `git diff --quiet <true_at_sha> HEAD -- <files>`
 - Unchanged: inject as-is. Changed: inject with a `[files changed since record]` tag
 
-### 10.3 Regression lookup ("the bug came back")
+### 11.3 Regression lookup ("the bug came back")
 1. `shoalctl why bug:<id>` returns root cause, `fix_sha`, files, regression test
 2. shoal runs `git log <fix_sha>..HEAD -- <files>` live
 3. Output shows the commits that touched those files after the fix, author and SHA straight from git
 4. Then checks whether the regression test still exists and still passes
 
-### 10.4 Lessons
+### 11.4 Lessons
 - **Recorded** on every QA failure: pattern, fix, stack, path_glob
 - **Injected** only when a touched file matches `path_glob` or the stack matches
 - **Proposed for CLAUDE.md** once `hits >= 3` across different tasks. **You approve every promotion.** On approval the rule goes into `context.md` (imported by the managed block, or injected by hook in stealth mode), `promoted = 1`, and the per-file injection stops
 - **Decay**: not hit in 90 days, no longer injected. Still searchable
 
-### 10.5 Conventions
+### 11.5 Conventions
 1. You say "use the strategy pattern from now on". The agent saves it as `proposed` with a scope glob
 2. The next session opens with a brainstorm: the brief lists proposed conventions, and the agent discusses scope and exceptions **before doing anything else**
 3. Once agreed it becomes `active` and is injected when files in scope are touched
@@ -604,7 +689,7 @@ A record holds what was true at a specific commit. The code is what's true now.
 
 ---
 
-## 11. Task Report
+## 12. Task Report
 
 Written once, to the `summaries` row. Markdown is just a rendering.
 
@@ -657,7 +742,7 @@ Reports land in `~/.shoal/projects/<id>/reports/` by default. Setting `sink = "n
 
 ---
 
-## 12. Privacy
+## 13. Privacy
 
 Nothing from a project is shipped, committed, or copied elsewhere by default.
 
@@ -669,7 +754,7 @@ Nothing from a project is shipped, committed, or copied elsewhere by default.
 
 ---
 
-## 13. Worked Example (generic app)
+## 14. Worked Example (generic app)
 
 Four tasks arrive on the same day in a Laravel + Vue app.
 
@@ -691,7 +776,7 @@ Four tasks arrive on the same day in a Laravel + Vue app.
 
 ---
 
-## 14. Phased Build Plan
+## 15. Phased Build Plan
 
 | Phase | Scope | Done when | Est. |
 |-------|-------|-----------|------|
@@ -706,7 +791,7 @@ If Phase 0 doesn't save time on a real week of work, stop and rethink before Pha
 
 ---
 
-## 15. Resolved Decisions
+## 16. Resolved Decisions
 
 | # | Question | Decision |
 |---|----------|----------|
@@ -725,3 +810,6 @@ If Phase 0 doesn't save time on a real week of work, stop and rethink before Pha
 | 13 | Zero regression | Per-test baseline at `start`; red/green proof for bugfix and hotfix; tests for every feature behaviour; merge gate blocks any baseline-pass test that now fails, is missing, skipped, or unstable, and any coverage drop on touched files. Only override: `merge --accept-regression <target> --reason`, recorded |
 | 14 | Test result format | JUnit XML as the universal format, `go test -json` natively, whole-suite exit code as a flagged reduced-fidelity fallback |
 | 15 | Flaky tests | Re-run up to `flaky_retries`. Flaky at baseline: quarantined and listed in every report. Flaky at the gate after a stable baseline pass: blocks |
+| 16 | Concurrency | SQLite WAL + `busy_timeout`, every state change in one `BEGIN IMMEDIATE` transaction, `version` columns for optimistic locking, `flock` lock files for the merge queue and git, `doctor` for crash recovery |
+| 17 | Destructive git | Never `reset --hard`, force-push, branch deletion, or forced worktree removal without explicit confirmation; shoal never pushes |
+| 18 | Schema migrations | Numbered, embedded, append-only; `schema_migrations` table plus `PRAGMA user_version`; never downgrade |
