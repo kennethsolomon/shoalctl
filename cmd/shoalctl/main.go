@@ -3,18 +3,20 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/kennethsolomon/shoalctl/internal/cli"
 )
 
 var version = "0.0.0-dev"
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] != "version" && os.Args[1] != "--version" {
-		fmt.Fprintf(os.Stderr, "shoalctl: unknown command %q\n", os.Args[1])
-		os.Exit(2)
+	env, err := cli.DefaultEnv()
+	if err != nil {
+		if len(os.Args) > 1 && os.Args[1] == "hook" {
+			os.Exit(0)
+		}
+		fmt.Fprintf(os.Stderr, "shoalctl: %v\n", err)
+		os.Exit(cli.ExitInternal)
 	}
-	if len(os.Args) > 2 {
-		fmt.Fprintf(os.Stderr, "shoalctl: %s takes no arguments, got %q\n", os.Args[1], os.Args[2:])
-		os.Exit(2)
-	}
-	fmt.Println("shoalctl " + version)
+	os.Exit(cli.Main(os.Args[1:], env, version))
 }

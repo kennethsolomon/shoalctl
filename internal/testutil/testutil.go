@@ -128,6 +128,13 @@ func Tmux(t *testing.T) []string {
 		t.Fatalf("random socket name: %v", err)
 	}
 	args := []string{"-L", "shoal-test-" + hex.EncodeToString(b)}
+	shell := filepath.Join(t.TempDir(), "idle-shell")
+	if err := os.WriteFile(shell, []byte("#!/bin/sh\nexec sleep 300\n"), 0o755); err != nil {
+		t.Fatalf("write idle shell: %v", err)
+	}
+	// The server's default shell would otherwise be the user's real shell,
+	// which writes history and rc files into the fake HOME.
+	t.Setenv("SHELL", shell)
 	t.Cleanup(func() {
 		_ = exec.Command("tmux", append(args, "kill-server")...).Run()
 	})
