@@ -1,6 +1,6 @@
 # shoal: Design Spec
 
-> Status: **pre-alpha, design stage.** Nothing in this document is implemented yet. It describes what shoal is meant to do.
+> Status: **pre-alpha, Spec v2.** The Phase 0 de-risk spikes are done ([phase-0-results.md](phase-0-results.md)). None of the commands below are implemented yet. §15.1 is the build spec for the MVP.
 
 shoal is a lightweight CLI for running several Claude Code sessions on one repo at the same time without them stepping on each other, and for keeping the reasons behind changes around after a session ends.
 
@@ -10,6 +10,7 @@ Locked design choices:
 - tmux is the terminal manager. shoal only launches and tracks windows in it.
 - Works with any stack. Each project's config declares its test/lint/build commands.
 - Written in Go, shipped as a single static binary.
+- Zero regression: a test that passed before a task started can't fail when it merges unless a human accepts it by name (§8).
 
 ---
 
@@ -93,6 +94,7 @@ Most of the machinery already exists. shoal is mostly glue plus a SQLite file.
           .shoal/                           # per-task files, listed in .git/info/exclude, never committed
             task.json                       # {"project_id", "task_id", "slug"}: marks this as a shoal worktree
             brief.md                        # task brief passed to claude at start
+            summary.json                    # written by the session before `done`
             todo.md                         # execution surface
             contract.md                     # API contract owned by shoal-lead (feature lane)
 
@@ -130,6 +132,9 @@ coverage_path = ""               # coverage report path, relative to the worktre
 [session]
 model = "claude-opus-5-5"        # model for sessions shoalctl launches; agent definitions inherit it
 
+[install]
+stealth = true                   # true: no CLAUDE.md edits, agents in ~/.claude/agents/. false: managed block (Phase 4)
+
 [lanes]
 qa_max_rounds = 3                # same cap in every lane
 
@@ -157,11 +162,12 @@ deny_globs = [".env*", "storage/**"]
 
 | Command | What it does |
 |---------|--------------|
-| `shoalctl init [--commit-config]` | Registers the project, creates `~/.shoal/projects/<id>/`, wires hooks (stealth by default) |
+| `shoalctl init [--commit-config] [--rebind]` | Registers the project, creates `~/.shoal/projects/<id>/`, applies migrations, wires hooks once in the main checkout (§4.6). Stealth by default |
 | `shoalctl brief` | Prints the session-start brief (<1k tokens). Also run by the `SessionStart` hook |
-| `shoalctl new <lane> "<title>"` | Creates the task record in lane `feature`, `bugfix`, or `hotfix` |
+| `shoalctl new <lane> "<title>" [--ask "<text>"] [--scope "<text>"]...` | Creates the task record in lane `feature`, `bugfix`, or `hotfix` |
 | `shoalctl plan <task>` | Agent writes `todo.md` plus file claims. Runs the overlap check |
-| `shoalctl start <task>` | Creates the branch and worktree, opens a tmux window, launches `claude` with the scoped context |
+| `shoalctl start <task> [--model <model>]` | Creates the branch and worktree, records the baseline test run (§8.2), opens a tmux window, launches `claude` with the task brief (§15.1) |
+| `shoalctl hook <event>` | Internal: the hook handlers Claude Code calls. Always exit 0 |
 | `shoalctl status` | Board of tasks: lane, stage, QA round, claims, blocked-by |
 | `shoalctl qa <task>` | Runs the gates and the adversarial QA subagent. Increments the round. Escalates after 3 |
 | `shoalctl done <task>` | Writes the summary record, renders the report, enqueues the task for merge |
@@ -218,7 +224,7 @@ The DB does **not** store diffs, authors, commit messages, blame, or transcripts
 
 ### 4.6 Hooks
 
-Inject only what matches the file being touched, and only once per session.
+Inject only what matches the file being touched, and only once per session. The MVP registers only `SessionStart` and `Stop`, as heartbeats with no output (§15.1); the injecting handlers below arrive in Phase 2.
 
 | Hook | Trigger | Injects (via `additionalContext`) | Budget |
 |------|---------|-----------------------------------|--------|
@@ -778,16 +784,275 @@ Four tasks arrive on the same day in a Laravel + Vue app.
 
 ## 15. Phased Build Plan
 
+Every feature in this spec lands in exactly one phase. Commands not yet built are unknown commands (exit 2) until their phase ships.
+
 | Phase | Scope | Done when | Est. |
 |-------|-------|-----------|------|
-| **0: MVP** | Go skeleton, modernc FTS5 spike, `init` (stealth), `new`, `start`, `status`, `done` with report render, `tasks` + `summaries` | Two tasks run in parallel on a real project, two reports produced | 2-3 days |
-| **1: Claims + queue** | `plan` with claims, one-keypress overlap prompt, `merge` queue, `needs-rebase` | The Bug A / Bug B scenario works end to end | 2-3 days |
-| **2: Memory + hooks** | `bugs`, `decisions`, `lessons`, FTS5, `SessionStart` + `PreToolUse`, staleness pre-check, `why`, `recall` | Brief < 1k tokens measured; a lesson is injected on a matching file touch | 3-4 days |
-| **3: Lanes + QA loop** | Lane templates, QA subagent, 3-round cap, escalation | One feature runs through the feature lane | 2-3 days |
-| **4: Conventions + promotion** | Convention lifecycle, brainstorm-first brief, managed CLAUDE.md block, conflict detection | "Strategy pattern" example works end to end | 1-2 days |
-| **5: Publish** | `export`/`purge`/`uninstall`, release CI guard, Homebrew tap, cross-compiled releases | Installed on a project with zero repo footprint | 2 days |
+| **Spikes (done)** | Go skeleton, modernc FTS5 spike, hook loading in outside worktrees, startup timing ([phase-0-results.md](phase-0-results.md)) | All four spikes recorded | done |
+| **0: MVP** | Exactly: `init` (stealth; installs hooks by option 1), `new` (lane `feature\|bugfix\|hotfix`), `start` (worktree + tmux window + `claude` launched with the task brief, default model `claude-opus-5-5`, configurable), `status`, `done` (rendered report). Tables `schema_migrations`, `tasks`, `summaries`, `test_runs`, `test_results`. The baseline test run (§8.2) wired into `start`. Full build spec in §15.1 | The acceptance checks in §15.1 pass on a real project | 3-4 days |
+| **1: Claims, queue, zero-regression gate** | `plan` with `file_claims` and the one-keypress overlap prompt; per-target merge queue and `needs-rebase`; the merge gate (§8.5) with `--accept-regression` and `regression_overrides`; `repro red\|green` and `regression_proofs` (§8.3); flaky re-runs and `test_quarantine` (§8.7); coverage comparison and `coverage_files`; "Untested areas" (§8.8); `test` command; hotfixes merging into the production branch; `merge.lock`, optimistic locking on claims, stale-claim expiry, and `doctor` (§10) | The Bug A / Bug B scenario works end to end; breaking a baseline-passing test blocks `merge` with exit 9; `--accept-regression` lets it through and the report shows it; a test made flaky on purpose is quarantined and listed; `doctor --fix` recovers a task killed mid-`start` | 5-7 days |
+| **2: Memory + hooks** | `bugs`, `decisions`, `lessons`, `qa`, FTS5; `SessionStart` brief, `PreToolUse` and `PostToolUse` handlers; staleness pre-check; `why`, `recall`; lesson hit counting | Brief < 1k tokens measured; a lesson is injected on a matching file touch | 3-4 days |
+| **3: Agent team + QA loop** | `agents install` (stealth and `--commit`), the eight `shoal-*` definitions (§7); `messages`, `message_reads`, `msg`; `contracts` and `contract freeze`; per-agent `claim`/`release`; `qa` with the 3-round cap and escalation; feature behaviour rule (§8.4); user scope matrix, `scope add\|show\|review\|check`, `new --scope` (§8.6); hotfix minimal-diff check and automatic backport task (§6.3) | One feature runs through the feature lane with backend and frontend agents and a frozen contract; an "also test X" item blocks `done` until every row is green or waived; a finished hotfix creates its backport task | 4-5 days |
+| **4: Conventions + promotion** | Convention lifecycle, brainstorm-first brief, lesson promotion proposed after 3 repeats, non-stealth mode (`[install].stealth = false`, managed CLAUDE.md block), conflict detection | "Strategy pattern" example works end to end | 1-2 days |
+| **5: Publish** | `export`/`purge`/`uninstall`, `gc`, release CI guard, FTS5 test run on every target, Homebrew tap, cross-compiled releases | Installed on a project with zero repo footprint | 2 days |
 
 If Phase 0 doesn't save time on a real week of work, stop and rethink before Phase 1.
+
+### 15.1 Phase 0 MVP: build spec
+This subsection is the contract for the MVP. Where it is more specific than the rest of the document, it wins for Phase 0.
+
+#### Requirements
+- `git` 2.31 or newer (`rev-parse --path-format`), `tmux` 3.2 or newer, `claude` on `PATH` (`claude --version` must exit 0). A missing or older tool: exit 7, naming the tool and the version found.
+- macOS and Linux. Windows is not supported in the MVP (tmux).
+
+#### Paths
+| What | Path |
+|------|------|
+| Home | `$SHOAL_HOME`, default `~/.shoal`. Directories are created `0700`, files `0600` |
+| DB | `$SHOAL_HOME/projects/<id>/memory.db` |
+| Project metadata | `$SHOAL_HOME/projects/<id>/project.json`: `{"id", "remote", "root", "created_at"}` |
+| Project config (stealth) | `$SHOAL_HOME/projects/<id>/config.toml` |
+| Worktree | `$SHOAL_HOME/projects/<id>/worktrees/<slug>/` |
+| Task files | `<worktree>/.shoal/` (`task.json`, `brief.md`, `summary.json`) |
+| Test run output | `$SHOAL_HOME/projects/<id>/runs/<run-id>/` (`output.log`, `junit.xml` copies) |
+| Reports | `$SHOAL_HOME/projects/<id>/reports/<slug>.md` |
+| Hook log | `$SHOAL_HOME/logs/hooks.log` |
+| Git lock | `$SHOAL_HOME/projects/<id>/locks/git.lock` |
+
+#### Project id
+1. Remote: `remote.origin.url`; if there is no `origin`, the alphabetically first remote; if there are none, the absolute path of the main checkout.
+2. Canonical form of a URL: drop the scheme, any `user@` and port; turn `host:owner/repo` (scp style) into `host/owner/repo`; lowercase the host; strip a trailing `/` and `.git`. So `https://github.com/acme/app.git` and `git@github.com:acme/app` both become `github.com/acme/app`.
+3. `id` = the first 12 hex characters of SHA-256 of the canonical form.
+
+The main checkout is the parent of `git rev-parse --path-format=absolute --git-common-dir`. Bare repos are rejected (exit 3).
+
+#### Config keys used by the MVP
+Lookup: `<repo>/.shoal.toml` if it exists, otherwise `$SHOAL_HOME/projects/<id>/config.toml`. Both at once is a config error (exit 3). Precedence for each key: command flag, then project config, then `$SHOAL_HOME/config.toml`, then the default. Unknown keys are a config error, so typos surface.
+
+| Key | Type | Default | Notes |
+|-----|------|---------|-------|
+| `[session].model` | string | `"claude-opus-5-5"` | Overridden by `start --model` |
+| `[install].stealth` | bool | `true` | `false` is rejected with exit 3 until Phase 4 |
+| `[tests].command` | string | none | Required unless `format = "none"`. Run with `sh -c` in the worktree |
+| `[tests].format` | enum | `"junit"` | `junit`, `go-json`, `exit-code`, `none` |
+| `[tests].junit_path` | string | `"{junit}"` | Used when `format = "junit"` |
+| `[tests].timeout` | duration | `"30m"` | Process group killed on timeout |
+| `[tests].flaky_retries` | int ≥ 0 | `2` | Validated in the MVP, applied from Phase 1 |
+| `[merge].base` | string | `"main"` | Must resolve to a local branch |
+| `[hotfix].production_ref` | string | `""` | Required to `start` a hotfix; resolution in §6.3 |
+| `[stack].lint`, `[stack].build` | string | `""` | Run by `done` when set; results are informational |
+| `[reports].sink`, `[reports].notes_path` | string | `"local"`, `""` | `notes` or `both` also copies the report to `notes_path` |
+
+Other keys in §4.3 are parsed and validated but have no effect until their phase.
+
+#### Task stages in the MVP
+`new` → `starting` → `in-progress` → `done`, with `baseline-failed` as a resumable side stage of `starting`. Stage is a plain `TEXT` column validated in code, so later phases add stages without rebuilding the table.
+
+#### `shoalctl init [--commit-config] [--rebind]`
+1. Resolve the main checkout and project id. Not a git repo or a bare repo: exit 3.
+2. If `project.json` exists with a different `root`, exit 3 ("project <id> is registered at <root>"), unless `--rebind`, which updates `root`.
+3. Create the directories, open `memory.db`, apply migrations (§10.6).
+4. If no config exists, write a commented template: to `<repo>/.shoal.toml` with `--commit-config` (shoal does not commit it), otherwise to the stealth path. If `go.mod` exists at the root, the template sets `command = "go test -json ./..."` and `format = "go-json"`; otherwise `command` is empty and `init` prints the file to edit.
+5. Merge hook entries into `<main checkout>/.claude/settings.local.json` (§4.6): create the file if missing; refuse with exit 3 if it is not valid JSON, never overwriting it; keep all other keys; add `SessionStart` and `Stop` entries running `<abs path>/shoalctl hook session-start|stop` with `"timeout": 10` only if they are not already present; write through a temp file and rename.
+6. Append `/.claude/settings.local.json` and `/.shoal/` to `<git-common-dir>/info/exclude` if missing.
+7. Print the project id, DB path, config path, and the hook file. Exit 0.
+
+Running `init` twice changes nothing the second time. Exit codes: 0, 3, 7, 8.
+
+#### `shoalctl new <feature|bugfix|hotfix> "<title>" [--ask "<text>" | --ask-file <path>]`
+- Title: 1-120 characters. `ask` defaults to the title.
+- Inserts a `tasks` row at stage `new` and prints the slug.
+- Slug: `<id>-<words>`, where `<words>` is the title lowercased, runs of anything outside `[a-z0-9]` replaced by `-`, trimmed of `-`, and cut to at most 40 characters at a `-` boundary (`task` if empty). Example: `7-users-page-sort-broken`.
+- Exit codes: 0, 2 (bad lane or title), 3.
+
+Commands take a task as its slug or its numeric id.
+
+#### `shoalctl start <task> [--model <model>]`
+Allowed from `new` (fresh) or `starting` / `baseline-failed` (resume). Any other stage: exit 5.
+
+1. Check dependencies (exit 7) and config (exit 3; empty `tests.command` with a format other than `none` is a config error).
+2. Resolve the base: `[merge].base` for feature and bugfix, `[hotfix].production_ref` for hotfix. Record `base_ref` and `base_sha`. Set stage `starting` (optimistic update, §10.2).
+3. Under `git.lock`: if the worktree doesn't exist yet, `git worktree add -b <lane>/<slug> <worktree> <base_sha>`. If the branch already exists and the worktree doesn't, exit 5; shoal never reuses or deletes a branch it didn't create in this run.
+4. Write `<worktree>/.shoal/task.json` and `brief.md`.
+5. **Baseline** (§8.2): reuse a completed baseline for the same `base_sha` and `command_hash`, or run the suite now in the worktree, printing progress. Store `tasks.baseline_run_id`. On `error` or `timeout`: stage `baseline-failed`, print the run's `output.log` path, exit 6.
+6. Open the tmux window (below) and record `tmux_session`, `tmux_window` (the `#{window_id}`, for example `@12`), `model`, `started_at`.
+7. Set stage `in-progress`. Print the window and, if shoal created the tmux session, the attach command. Exit 0.
+
+**tmux launch.** Inside tmux (`$TMUX` set), shoal uses the current session. Otherwise it uses session `shoal-<first 8 of id>`, creating it detached if needed (`tmux new-session -d -s <name> -n shoal`). Then:
+```
+tmux new-window -d -t <session> -n <slug> -c <worktree> -P -F '#{window_id}' -- \
+  claude --model <model> "Read .shoal/brief.md first. It is your task brief. Follow it."
+tmux set-option -w -t <window_id> remain-on-exit on
+```
+Arguments are passed as an argv list, never through a shell string. On first launch in a new worktree, Claude Code may show its workspace trust prompt (open item from Phase 0); accepting it once per worktree is expected.
+
+**Brief file** (`<worktree>/.shoal/brief.md`), written from a template, at most about 1k tokens:
+```markdown
+# Task <slug>: <title>
+Lane: <lane> · Branch: <lane>/<slug> · Base: <base_ref> @ <base_sha short>
+
+## Ask
+<ask>
+
+## Baseline (<fidelity>)
+<passed> pass, <failed> fail, <skipped> skip at <base_sha short>.
+Pre-existing failures (not yours to fix unless the ask says so):
+- <test id> (up to 20, then "and N more")
+
+## Rules for this lane
+<feature: write an automated test for every new behaviour you add.>
+<bugfix: write a test that reproduces the bug and fails first, commit it, then fix.>
+<hotfix: same as bugfix, plus: smallest possible diff, no refactors, no dependency changes.>
+- Do not break any test listed as passing at baseline.
+- Test command: `<tests.command>`
+
+## When you finish
+1. Commit all work on this branch. Do not push. Do not merge.
+2. Write `.shoal/summary.json` (format below).
+3. Tell the human to run `shoalctl done <slug>`.
+
+summary.json:
+{"decision": "...", "alternatives_rejected": [{"option": "...", "why": "..."}],
+ "why": "...", "risks": ["..."], "followups": ["..."],
+ "changed": [{"path": "...", "note": "one line"}]}
+```
+
+#### Hooks in the MVP
+- `hook session-start`: guard (§4.6); then set `tasks.session_id` from the hook input and `last_seen_at`. No output; the brief already arrives as the first prompt.
+- `hook stop`: guard; then set `last_seen_at`. No output.
+- Both fail open. `PreToolUse` and `PostToolUse` entries are added by `init` in Phase 2.
+
+#### `shoalctl status [--json]`
+One row per task not older than 14 days after `done`, newest first:
+```
+SLUG                     LANE     STAGE        BASE            BASELINE        WINDOW  LAST SEEN
+7-users-page-sort-broken bugfix   in-progress  main@3f2a1c9    412/3F/2S       alive   4m ago
+6-dropbox-integration    feature  done         main@3f2a1c9    412/3F/2S       gone    2h ago
+```
+- `BASELINE` is pass/fail/skip, `(suite) pass|fail` for `exit-code`, `none` for `format = "none"`, `-` before start.
+- `WINDOW` is `alive` if `tmux_window` appears in `tmux list-windows -a -F '#{window_id}'`, otherwise `gone`. No tmux server counts as `gone`.
+- A last line warns when `hooks.log` has new lines since the previous `status`.
+- `--json` prints an array of objects with the same fields, snake_case, plus `id` and `worktree`.
+- Exit codes: 0, 3.
+
+#### `shoalctl done <task>`
+Allowed only from `in-progress` (exit 5 otherwise).
+1. The worktree must be clean (`git status --porcelain` empty; `.shoal/` is excluded) and have at least one commit after `base_sha`. Otherwise exit 5.
+2. Read `.shoal/summary.json`. Missing, invalid JSON, unknown keys, or empty `decision` or `why`: exit 5, printing the path and the expected shape.
+3. Run the suite on `HEAD` (`kind = 'final'`) and compare it with the baseline using the classes in §8.5. **In the MVP this comparison is informational:** it is reported, never blocking. The blocking gate arrives in Phase 1. A final run that errors is reported as such and does not stop `done`.
+4. Run `[stack].lint` and `[stack].build` if set; record pass or fail.
+5. In one transaction: insert the `summaries` row (`commits` from `git rev-list --reverse base_sha..HEAD`, `files` from `git diff --name-status base_sha...HEAD`, `true_at_sha = HEAD`), set `final_run_id`, stage `done`, `closed_at`.
+6. Render the report to `reports/<slug>.md` (and to `notes_path` if the sink says so). Print its path. The tmux window is left open. Exit 0.
+
+**Report sections**, in this order:
+1. Frontmatter: `task`, `lane`, `status: done`, `branch`, `base` (`<ref>@<sha>`), `commits`, `date`
+2. `# <title>`
+3. `## Asked`: the ask
+4. `## Decision`: the decision, then `Rejected: <option> (<why>)` for each alternative
+5. `## Why`
+6. `## Changed`: one line per file from `git diff --name-status`, with the agent's note when `changed` has one
+7. `## Verified`: baseline counts, final run counts, lint and build results
+8. `## Regression check (informational)`: counts per class, then the test ids for `regression`, `missing`, `newly-skipped`, `new-failure`, and `fixed`
+9. `## Pre-existing failures`: baseline failures, not blamed on the task
+10. `## Risks / Follow-ups`
+11. `## Fidelity and limits`: the reduced-fidelity line when it applies; "Coverage and untested areas are not computed in this version"; "Flaky re-runs are not applied in this version"
+
+#### Migration `0001_init.sql`
+```sql
+CREATE TABLE schema_migrations (
+  version    INTEGER PRIMARY KEY,
+  name       TEXT NOT NULL,
+  checksum   TEXT NOT NULL,
+  applied_at TEXT NOT NULL
+);
+
+CREATE TABLE tasks (
+  id              INTEGER PRIMARY KEY,
+  slug            TEXT NOT NULL UNIQUE,
+  lane            TEXT NOT NULL CHECK (lane IN ('feature','bugfix','hotfix')),
+  title           TEXT NOT NULL,
+  ask             TEXT NOT NULL,
+  stage           TEXT NOT NULL DEFAULT 'new',
+  base_ref        TEXT,
+  base_sha        TEXT,
+  branch          TEXT,
+  worktree        TEXT,
+  tmux_session    TEXT,
+  tmux_window     TEXT,
+  model           TEXT,
+  baseline_run_id INTEGER REFERENCES test_runs(id),
+  final_run_id    INTEGER REFERENCES test_runs(id),
+  session_id      TEXT,
+  last_seen_at    TEXT,
+  version         INTEGER NOT NULL DEFAULT 1,
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL,
+  started_at      TEXT,
+  closed_at       TEXT
+);
+
+CREATE TABLE test_runs (
+  id           INTEGER PRIMARY KEY,
+  task_id      INTEGER REFERENCES tasks(id),   -- task that triggered it; baselines are shared by sha
+  kind         TEXT NOT NULL,                  -- baseline | final (MVP); gate | qa | repro later
+  sha          TEXT NOT NULL,
+  command      TEXT NOT NULL,
+  command_hash TEXT NOT NULL,
+  format       TEXT NOT NULL,
+  fidelity     TEXT NOT NULL,                  -- per-test | suite | none
+  status       TEXT NOT NULL,                  -- running | completed | error | timeout
+  exit_code    INTEGER,
+  attempts     INTEGER NOT NULL DEFAULT 1,
+  total        INTEGER NOT NULL DEFAULT 0,
+  passed       INTEGER NOT NULL DEFAULT 0,
+  failed       INTEGER NOT NULL DEFAULT 0,
+  skipped      INTEGER NOT NULL DEFAULT 0,
+  output_path  TEXT NOT NULL,
+  pid          INTEGER,
+  started_at   TEXT NOT NULL,
+  finished_at  TEXT
+);
+CREATE INDEX test_runs_reuse ON test_runs (sha, command_hash, kind, status);
+
+CREATE TABLE test_results (
+  run_id      INTEGER NOT NULL REFERENCES test_runs(id) ON DELETE CASCADE,
+  test_id     TEXT NOT NULL,
+  attempt     INTEGER NOT NULL DEFAULT 1,
+  status      TEXT NOT NULL CHECK (status IN ('pass','fail','skip')),
+  duration_ms INTEGER,
+  message     TEXT,
+  PRIMARY KEY (run_id, test_id, attempt)
+) WITHOUT ROWID;
+
+CREATE TABLE summaries (
+  task_id               INTEGER PRIMARY KEY REFERENCES tasks(id),
+  decision              TEXT NOT NULL,
+  alternatives_rejected TEXT NOT NULL DEFAULT '[]',  -- JSON
+  why                   TEXT NOT NULL,
+  verification          TEXT NOT NULL,               -- JSON: baseline + final counts, classes, lint, build
+  risks                 TEXT NOT NULL DEFAULT '[]',  -- JSON
+  followups             TEXT NOT NULL DEFAULT '[]',  -- JSON
+  changed_notes         TEXT NOT NULL DEFAULT '[]',  -- JSON
+  commits               TEXT NOT NULL,               -- JSON array of SHAs
+  files                 TEXT NOT NULL,               -- JSON array of {status, path}
+  true_at_sha           TEXT NOT NULL,
+  report_path           TEXT NOT NULL,
+  created_at            TEXT NOT NULL
+);
+```
+All timestamps are RFC 3339 UTC text. Columns other phases need (`qa_round`, `merged_sha`, `blocked_by`, `parent_task_id`, and so on) arrive in later numbered migrations.
+
+#### Concurrency in the MVP
+WAL, `busy_timeout`, `BEGIN IMMEDIATE` per state change, and the `tasks.version` check (§10.1, §10.2) are in from day one, as is `git.lock` around `git worktree add`. `merge.lock`, claims, and `doctor` come in Phase 1.
+
+#### Acceptance checks
+1. `init` on a real project, twice: the second run changes no file (compare checksums of `settings.local.json` and `info/exclude`).
+2. Two tasks (one feature, one bugfix) are created and started back to back from the same base. Both get a tmux window running `claude --model claude-opus-5-5`; the second reuses the first's baseline (one `baseline` row).
+3. Each session finishes, writes `summary.json`, and `done` produces a report with all 11 sections.
+4. A Claude session opened in the main checkout produces no shoal output and writes nothing to `memory.db`.
+5. With `memory.db` renamed away, a hook inside a task worktree exits 0, prints nothing, and adds one line to `hooks.log`.
+6. A test command that exits non-zero without writing JUnit makes `start` exit 6 and leaves the task at `baseline-failed`; fixing the command and re-running `start` resumes it.
+7. `start --model <other>` launches that model and records it on the task.
 
 ---
 
@@ -813,3 +1078,8 @@ If Phase 0 doesn't save time on a real week of work, stop and rethink before Pha
 | 16 | Concurrency | SQLite WAL + `busy_timeout`, every state change in one `BEGIN IMMEDIATE` transaction, `version` columns for optimistic locking, `flock` lock files for the merge queue and git, `doctor` for crash recovery |
 | 17 | Destructive git | Never `reset --hard`, force-push, branch deletion, or forced worktree removal without explicit confirmation; shoal never pushes |
 | 18 | Schema migrations | Numbered, embedded, append-only; `schema_migrations` table plus `PRAGMA user_version`; never downgrade |
+| 19 | Default model | `claude-opus-5-5` for every session shoalctl launches, set by `[session].model` and overridable with `start --model`. Agent definitions use `model: inherit` |
+| 20 | QA cap | 3 rounds in every lane, then `escalated` |
+| 21 | MVP scope | `init`, `new`, `start`, `status`, `done`; tables `schema_migrations`, `tasks`, `summaries`, `test_runs`, `test_results`; baseline wired into `start`. The rest of the zero-regression gate is Phase 1 |
+| 22 | Test command | Required. A project without tests must say so with `format = "none"`, and every report then states the protocol is inactive |
+| 23 | Task files | Live in `<worktree>/.shoal/`, excluded through `info/exclude`. The brief is passed to `claude` as a one-line first prompt pointing at `.shoal/brief.md` |
