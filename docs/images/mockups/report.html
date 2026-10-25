@@ -1,0 +1,33 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="term.css"></head><body>
+<div class="win"><div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">~/code/acme-app  (zsh)</span></div>
+<pre><span class="p">~/code/acme-app</span> <span class="c">main</span> <span class="m">$</span> shoal done bug-users-name
+
+<span class="p">✓</span> summary saved  <span class="m">·</span>  report → <span class="c">~/.shoal/projects/a91f3c/reports/2026-10-25-bug-users-name.md</span>
+<span class="p">✓</span> enqueued for merge <span class="m">(#1)</span>
+
+<span class="m">───────────────────────────────────────────────────────────────────────────</span>
+<span class="h"># Users page shows wrong display name</span>
+<span class="m">bugfix · light lane · commits 7c2e1f0, 91ab44d</span>
+
+<span class="c b">## Asked</span>
+Users with no first name show their email instead of their full name.
+
+<span class="c b">## Decision</span>
+Fall back to last_name, then email, inside User::displayName.
+<span class="m">Rejected:</span> fix in the Vue component <span class="m">(list and detail would diverge again)</span>
+
+<span class="c b">## Changed</span>
+- <span class="v">app/Models/User.php</span>                  displayName fallback order
+- <span class="v">resources/js/users/UserList.vue</span>      read display_name, not name
+- <span class="v">tests/Unit/UserDisplayNameTest.php</span>   regression test
+
+<span class="c b">## Verified</span>
+- Gates: test <span class="p">PASS</span> · lint <span class="p">PASS</span> · build <span class="p">PASS</span>
+- QA rounds: 2/3. Round 1 <span class="e">failed</span>: list view used old accessor. Lesson #12 recorded
+- Regression test: tests/Unit/UserDisplayNameTest.php
+
+<span class="c b">## Risks / Follow-ups</span>
+- CSV export still reads <span class="v">name</span> directly</pre>
+</div>
+<div class="cap">Mockup, design preview. shoal is pre-alpha; this output is illustrative.</div>
+</body></html>
