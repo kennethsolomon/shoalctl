@@ -184,6 +184,22 @@ Inject only what matches the file being touched, and only once per session.
 
 Claude Code caps a hook's `additionalContext` at 10,000 characters; shoal's own budgets sit well below that.
 
+**Where hooks are registered (decided).** Every hook is registered exactly once, in the **main checkout's** `.claude/settings.local.json`. shoal never writes hook entries into a task worktree's settings. Phase 0 showed that a worktree under `~/.shoal/` loads the main checkout's local settings as well as its own, so a second registration would fire every hook twice. With one registration, every task worktree gets the hooks for free.
+
+**Guard: exit early outside shoal worktrees.** Because the hooks live in the main checkout, they also fire in Claude sessions you run there without shoal. Each handler starts with the same check:
+
+1. Read `CLAUDE_PROJECT_DIR` (Phase 0: it is the worktree path, not the main checkout). If unset, use the `cwd` field of the hook input.
+2. Resolve symlinks. The directory is a shoal worktree only if it sits directly under `$SHOAL_HOME/projects/<id>/worktrees/` (`$SHOAL_HOME` defaults to `~/.shoal`) **and** contains `.shoal/task.json`.
+3. If not, exit 0 with no stdout and no stderr. The session behaves as if shoal were not installed.
+
+**Fail open.** A shoal hook must never break or block your Claude session.
+- On any internal error (DB locked past `busy_timeout`, missing task row, bad JSON input, panic), the handler appends one warning line to `$SHOAL_HOME/logs/hooks.log` (time, event, project dir, error) and exits 0 with no output.
+- Handlers never exit 2 (Claude Code treats exit 2 as "block").
+- Each handler has an internal 2-second deadline, below the `timeout` set on the hook entry. On deadline it logs and exits 0.
+- `shoalctl status` shows a warning when `hooks.log` has new lines since the last `status`, so failures stay visible without touching the session.
+
+**Entry shape.** Each entry calls the absolute path of the binary captured at `init`, for example `"/usr/local/bin/shoalctl hook session-start"`, with `"timeout": 10`. `uninstall` finds shoal's entries by matching a command whose program basename is `shoalctl` and whose first argument is `hook`. Re-running `init` (for example after upgrading the binary) rewrites only those entries.
+
 ---
 
 ## 5. Installing into a project that already has a CLAUDE.md
@@ -203,9 +219,9 @@ shoal never rewrites your content.
 
 ### 5.2 Stealth mode (default)
 - The committed `CLAUDE.md` is not touched at all.
-- Context arrives through hooks registered in `.claude/settings.local.json`: `SessionStart` for the brief, file-scoped `PreToolUse`/`PostToolUse` for everything else.
+- Context arrives through hooks registered once in the main checkout's `.claude/settings.local.json` (§4.6): `SessionStart` for the brief, file-scoped `PreToolUse`/`PostToolUse` for everything else.
 - Claude Code adds `settings.local.json` to your global git excludes only when Claude Code itself creates the file. shoal may create it first, so shoal adds it to `.git/info/exclude`. It never edits the committed `.gitignore`. `.git/info/exclude` lives in the shared git dir, so it covers every worktree (confirmed in Phase 0).
-- Hooks in worktrees outside the repo (confirmed in Phase 0, Claude Code 2.1.310, headless): a worktree under `~/.shoal/` loads its own `.claude/settings.local.json`, **and it also loads the main checkout's `.claude/settings.local.json`**. If both files contain the hook, it fires twice. So shoal registers each hook in exactly one place. `CLAUDE_PROJECT_DIR` is the worktree path in both cases.
+- Hooks in worktrees outside the repo (confirmed in Phase 0, Claude Code 2.1.310, headless): a worktree under `~/.shoal/` loads its own `.claude/settings.local.json`, **and it also loads the main checkout's `.claude/settings.local.json`**. If both files contain the hook, it fires twice. So shoal registers each hook in exactly one place, the main checkout (§4.6). `CLAUDE_PROJECT_DIR` is the worktree path in both cases, which is what the hook guard uses.
 - Optional: a `CLAUDE.local.md` containing the import line, also added to `.git/info/exclude`. A gitignored `CLAUDE.local.md` only exists in the worktree where it was created, so `shoalctl start` writes one into each task worktree it creates.
 
 ### 5.3 Existing rules win
@@ -215,7 +231,7 @@ shoal never rewrites your content.
 ### 5.4 Existing hooks are merged, never replaced
 - shoal reads `.claude/settings.json` and `.claude/settings.local.json` before writing, and adds its entries alongside any existing ones.
 - Claude Code itself merges hook entries across user, project, and local settings, so a shoalctl hook in the local file runs next to a team hook in the committed file.
-- Each shoal entry is tagged with a `shoalctl hook` command prefix, which is how `uninstall` finds and removes only its own entries.
+- Each shoal entry runs `<abs path>/shoalctl hook <event>`, which is how `uninstall` finds and removes only its own entries (§4.6).
 
 ---
 
@@ -443,11 +459,13 @@ If Phase 0 doesn't save time on a real week of work, stop and rethink before Pha
 |---|----------|----------|
 | 1 | Runtime | Go, single static binary, `modernc.org/sqlite` |
 | 2 | Repo footprint | Commit nothing by default (stealth). Committing `.shoal.toml` is opt-in per project |
-| 3 | Overlap resolution | Always ask, one keypress |
+| 3 | Overlap resolution | Always ask, one keypress (`s`/`m`/`p`/`?`) |
 | 4 | Parallel subagents in the feature lane | One shared worktree per feature; each agent claims its own files |
 | 5 | Lesson promotion | Proposed after 3 repeats across tasks; you approve every time |
-| 6 | Project identity | Hash of the git remote URL, fallback to repo path |
+| 6 | Project identity | Hash of the canonical git remote URL, fallback to repo path |
 | 7 | Worktree location | `~/.shoal/projects/<id>/worktrees/` |
 | 8 | Lanes | Three lanes: feature, bugfix, hotfix. The old full/light split is gone |
 | 9 | Hotfix start point | `[hotfix].production_ref` in `.shoal.toml`: a branch, a tag, or `tag:<glob>` |
 | 10 | Hotfix diff and QA | Minimal-diff rule with a line budget; full QA, no shortcuts; a backport task to the base branch is created on `done` |
+| 11 | Hook registration | Option 1: once, in the main checkout's `.claude/settings.local.json`. Handlers exit 0 silently when `CLAUDE_PROJECT_DIR` is not a shoal worktree, so nothing double-fires |
+| 12 | Hook failure mode | Fail open: on internal error, log a warning to `$SHOAL_HOME/logs/hooks.log` and exit 0. Never exit 2 |
