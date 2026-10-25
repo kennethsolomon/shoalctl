@@ -38,7 +38,7 @@ Implication for design: these headless runs suggest (inferred, not confirmed) th
 1. Main checkout only. Every task worktree inherits the hooks for free, but they also fire in sessions you run in the main checkout without shoal. The hook can exit early when `CLAUDE_PROJECT_DIR` is not a shoal worktree.
 2. Worktree only, written by `shoalctl start`. This requires that the main checkout's local file has no shoal hooks.
 
-Not covered by this test: interactive sessions. `-p` skips the workspace trust dialog. In an interactive session, a never-opened directory under `~/.shoal/` may show the trust prompt before any hooks run. 2-minute manual check:
+Not covered by this test: interactive sessions (since checked; see "Workspace trust in outside worktrees" below). `-p` skips the workspace trust dialog. In an interactive session, a never-opened directory under `~/.shoal/` may show the trust prompt before any hooks run. 2-minute manual check:
 
 1. `git worktree add ~/.shoal/worktrees/trust-check -b trust-check` in any throwaway repo, then add a `SessionStart` hook (`touch /tmp/shoal-trust-marker`) to that worktree's `.claude/settings.local.json`.
 2. `cd ~/.shoal/worktrees/trust-check && claude`, and note whether a trust prompt appears.
@@ -59,8 +59,36 @@ Not covered by this test: interactive sessions. `-p` skips the workspace trust d
 
 The earlier claim of "roughly 5 ms" holds for the bare binary only. A real hook that opens the DB costs about 8-12 ms, which is still about 4-6x faster than Python before Python does any work. The spec and README now cite these numbers.
 
+## Workspace trust in outside worktrees
+
+Closes the open item from Spike B. Date: 2026-10-25, Claude Code 2.1.310, macOS, interactive `claude --model <model>` in a detached 200x50 tmux session. The pane was read with `tmux capture-pane -p`; no prompts were sent to the model. Dialogs were dismissed with `Esc`, or accepted only in throwaway directories. Trust state was read from `~/.claude.json` -> `projects["<abs path>"].hasTrustDialogAccepted`.
+
+| # | Directory | Trust beforehand | Result |
+|---|-----------|------------------|--------|
+| 1 | Worktree of a real repo at `~/.shoal/projects/trustcheck/worktrees/t1` (the main checkout has no entry of its own; a parent folder of it is trusted) | none | Trust dialog shown |
+| 2 | Plain non-git dir `~/.shoal/projects/trustcheck/plain` | none | Trust dialog shown |
+| 3 | Same worktree as 1, after trusting the non-git parent `~/.shoal/projects/trustcheck` | parent trusted | Trust dialog shown: parent trust does not cross a git repo boundary |
+| 4 | Plain dir from 2, after trusting `~/.shoal/projects/trustcheck` | parent trusted | No dialog: non-git dirs inherit trust from a trusted ancestor |
+| 5 | The real repo's main checkout (parent folder trusted) | parent trusted, no own entry | Trust dialog shown |
+| 6 | Throwaway repo main checkout `~/.shoal/projects/trustcheck/repo`, trust accepted | accepted in this run | Entry `hasTrustDialogAccepted: true` written for that exact path |
+| 7 | Subdir `repo/sub` of the trusted throwaway repo | repo root trusted | No dialog |
+| 8 | **Worktree of the trusted throwaway repo** at `~/.shoal/projects/trustcheck/worktrees/t2`, outside the repo | main checkout trusted, worktree has no entry | **No dialog**: straight to the input prompt |
+
+The dialog (cases 1, 2, 3, 5) lists `No, exit` first and pre-selected, then `Yes, I trust this folder`, with "Enter to confirm · Esc to cancel". A second, environment-dependent dialog can follow once trust is accepted: "New MCP server found in this project: <name>", for an MCP server configured outside the project, defaulting to "Continue without using this MCP server".
+
+Conclusions:
+1. Trust carries over from the main checkout to its worktrees, even when they live outside it. Inside a git repo, trust appears to be resolved against the main checkout (common git dir), not the worktree path.
+2. For git repos, trust is not inherited from a folder above the repo. A trusted `~/code` does not make `~/code/myrepo` trusted.
+3. Non-git directories do inherit trust from a trusted ancestor.
+4. The default selection is "No, exit", so a blind `Enter` from automation quits claude.
+5. `-p` (non-TTY) skips the dialog; no flag skips it in interactive mode.
+
+Decision (spec §15.1 `start` step 1, §16 row 24): `start` reads `~/.claude.json` read-only and requires `hasTrustDialogAccepted: true` for the main checkout, exiting 12 with the fix ("run `claude` once in the main checkout and trust it") otherwise. shoal never writes trust entries (the file is undocumented internal state that running claude processes rewrite, and auto-trust bypasses a deliberate security gate) and never answers the dialog with `send-keys`.
+
+Caveat: this is observed behaviour of 2.1.310, not a documented contract. Re-run the check after upgrading Claude Code.
+
 ## Out of scope / still open
 
-- The spec's Phase 0 MVP commands (`init`, `new`, `start`, `status`, `done`) were not started. This pass covered only the de-risk spikes.
-- FTS5 has not been executed on linux and windows.
-- The interactive trust-dialog behaviour in outside worktrees (manual check above).
+- The spec's Phase 0 MVP commands (`init`, `new`, `start`, `status`, `done`) were not part of this spike pass; they were built afterwards.
+- FTS5 has not been executed on linux and windows locally; CI runs it on all three (`.github/workflows/ci.yml`).
+- The interactive trust-dialog behaviour in outside worktrees is settled: see "Workspace trust in outside worktrees" above.
