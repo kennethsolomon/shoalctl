@@ -177,8 +177,9 @@ func TestCommandHash(t *testing.T) {
 	if CommandHash("ab", "c", "") == CommandHash("a", "bc", "") {
 		t.Fatal("hash must separate fields")
 	}
-	if CommandHash("x", "junit", "") != CommandHash("x", "junit", "") {
-		t.Fatal("hash must be deterministic")
+	first, second := CommandHash("x", "junit", ""), CommandHash("x", "junit", "")
+	if first != second || len(first) != 64 {
+		t.Fatalf("hash must be a deterministic SHA-256 hex digest, got %q and %q", first, second)
 	}
 }
 
