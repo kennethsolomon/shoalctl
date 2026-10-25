@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -127,7 +128,13 @@ func Tmux(t *testing.T) []string {
 	if _, err := rand.Read(b); err != nil {
 		t.Fatalf("random socket name: %v", err)
 	}
-	args := []string{"-L", "shoal-test-" + hex.EncodeToString(b)}
+	name := "shoal-test-" + hex.EncodeToString(b)
+	args := []string{"-L", name}
+	tmpDir := os.Getenv("TMUX_TMPDIR")
+	if tmpDir == "" {
+		tmpDir = "/tmp"
+	}
+	socket := filepath.Join(tmpDir, "tmux-"+strconv.Itoa(os.Getuid()), name)
 	shell := filepath.Join(t.TempDir(), "idle-shell")
 	if err := os.WriteFile(shell, []byte("#!/bin/sh\nexec sleep 300\n"), 0o755); err != nil {
 		t.Fatalf("write idle shell: %v", err)
@@ -137,6 +144,9 @@ func Tmux(t *testing.T) []string {
 	t.Setenv("SHELL", shell)
 	t.Cleanup(func() {
 		_ = exec.Command("tmux", append(args, "kill-server")...).Run()
+		if err := os.Remove(socket); err != nil && !os.IsNotExist(err) {
+			t.Errorf("remove tmux socket %s: %v", socket, err)
+		}
 	})
 	return args
 }
