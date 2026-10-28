@@ -457,3 +457,28 @@ func TestInitRefusesSymlinkedLocalSettings(t *testing.T) {
 		t.Errorf("tracked file modified:\n%s", status)
 	}
 }
+
+// TestInitRefusesSymlinkedClaudeDir reproduces a .claude directory that is a
+// symlink to a tracked directory: hooks written through it would dirty git.
+func TestInitRefusesSymlinkedClaudeDir(t *testing.T) {
+	h := newHarness(t)
+	shared := filepath.Join(h.repo, "cfg", "claude", "settings.local.json")
+	const body = `{"a": 1}`
+	testutil.WriteFile(t, shared, body)
+	testutil.Git(t, h.repo, "add", "cfg")
+	testutil.Git(t, h.repo, "commit", "-q", "-m", "shared claude config")
+	if err := os.Symlink(filepath.Join("cfg", "claude"), filepath.Join(h.repo, ".claude")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	errOut := h.expectCode(ExitConfig, "init")
+	if !strings.Contains(errOut, "symlink") {
+		t.Errorf("stderr lacks %q: %s", "symlink", errOut)
+	}
+	if got := readFile(t, shared); got != body {
+		t.Errorf("cfg/claude/settings.local.json changed: %s", got)
+	}
+	if status := testutil.Git(t, h.repo, "status", "--porcelain"); strings.Contains(status, " M cfg/claude/settings.local.json") {
+		t.Errorf("tracked file modified:\n%s", status)
+	}
+}

@@ -416,7 +416,7 @@ func hookPreflight(ctx context.Context, root string) error {
 		return fail(ExitConfig, "%s is tracked by git, so shoal's hook entries would show up as a change in git status (stealth mode adds it to info/exclude, which does not apply to tracked files). "+
 			"Untrack it with `git rm --cached %s` and commit, or move its contents to .claude/settings.json, then run shoalctl init again. Nothing was changed", filepath.Join(root, local), local)
 	}
-	if err := refuseSymlinkedSettings(filepath.Join(root, local)); err != nil {
+	if err := refuseSymlinkedSettings(root); err != nil {
 		return err
 	}
 	committed := filepath.Join(root, ".claude", "settings.json")
@@ -430,18 +430,23 @@ func hookPreflight(ctx context.Context, root string) error {
 	return nil
 }
 
-// refuseSymlinkedSettings refuses a settings.local.json that is a symlink:
-// its target may be a tracked file, which shoal's hooks would then dirty.
-func refuseSymlinkedSettings(path string) error {
-	info, err := os.Lstat(path)
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		return nil
-	case err != nil:
-		return fmt.Errorf("stat %s: %w", path, err)
-	case info.Mode()&fs.ModeSymlink != 0:
-		return fail(ExitConfig, "%s is a symlink; shoal will not write hooks through it, since its target may be tracked by git. "+
-			"Replace it with a regular file (copy the target's contents in), then run shoalctl again. Nothing was changed", path)
+// refuseSymlinkedSettings refuses a settings.local.json reached through a
+// symlink (the file itself or its .claude directory): the target may be
+// tracked, and shoal's hooks would then dirty it.
+func refuseSymlinkedSettings(root string) error {
+	path := root
+	for _, part := range []string{".claude", "settings.local.json"} {
+		path = filepath.Join(path, part)
+		info, err := os.Lstat(path)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			return nil
+		case err != nil:
+			return fmt.Errorf("stat %s: %w", path, err)
+		case info.Mode()&fs.ModeSymlink != 0:
+			return fail(ExitConfig, "%s is a symlink; shoal will not write hooks through it, since its target may be tracked by git. "+
+				"Replace it with a regular file or directory (copy the target's contents in), then run shoalctl again. Nothing was changed", path)
+		}
 	}
 	return nil
 }
@@ -452,7 +457,7 @@ func refuseSymlinkedSettings(path string) error {
 // backup. The write is atomic and keeps the file's mode.
 func installHooks(root, exe, bakPath string) (string, bool, error) {
 	path := filepath.Join(root, ".claude", "settings.local.json")
-	if err := refuseSymlinkedSettings(path); err != nil {
+	if err := refuseSymlinkedSettings(root); err != nil {
 		return "", false, err
 	}
 	data, err := os.ReadFile(path)
