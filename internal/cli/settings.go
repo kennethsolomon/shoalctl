@@ -37,6 +37,12 @@ func hookCommand(exe, arg string) string { return hookCommandFor(runtime.GOOS, e
 // on macOS and Linux (its default), PowerShell on Windows, where the entry
 // pins "shell": "powershell" because the default there depends on whether
 // Git Bash is installed.
+//
+// The shell also maps every exit status to 0 ("|| true", "; exit 0"). The
+// binary never exits 2 on purpose, but a Go runtime fatal error exits 2, and
+// a crash, a kill, or a moved binary (127) are not the binary's to decide.
+// Claude Code reads exit 2 as "block", so the wrapper is what makes hooks
+// fail open in every case (§4.6).
 func hookCommandFor(goos, exe, arg string) string {
 	if goos == "windows" {
 		var b strings.Builder
@@ -46,13 +52,13 @@ func hookCommandFor(goos, exe, arg string) string {
 			}
 			b.WriteRune(r)
 		}
-		return "& '" + b.String() + "' hook " + arg
+		return "& '" + b.String() + "' hook " + arg + "; exit 0"
 	}
 	prog := exe
 	if !posixPlain.MatchString(exe) {
 		prog = "'" + strings.ReplaceAll(exe, "'", `'\''`) + "'"
 	}
-	return prog + " hook " + arg
+	return prog + " hook " + arg + " || true"
 }
 
 func entryFor(goos, exe, arg string) hookEntry {

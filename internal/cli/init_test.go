@@ -54,20 +54,20 @@ func TestIsShoalCommand(t *testing.T) {
 			t.Errorf("isShoalCommand(%q) = %v, want %v", tt.cmd, got, tt.want)
 		}
 	}
-	if got := hookCommand("/my bins/shoalctl", "stop"); got != "'/my bins/shoalctl' hook stop" || !isShoalCommand(got) {
+	if got := hookCommand("/my bins/shoalctl", "stop"); got != "'/my bins/shoalctl' hook stop || true" || !isShoalCommand(got) {
 		t.Errorf("hookCommand with a space = %q", got)
 	}
 }
 
 func TestHookCommandQuotingWindows(t *testing.T) {
 	tests := []struct{ exe, want string }{
-		{`C:\tools\shoalctl.exe`, `& 'C:\tools\shoalctl.exe' hook stop`},
-		{`C:\Program Files\shoal\shoalctl.exe`, `& 'C:\Program Files\shoal\shoalctl.exe' hook stop`},
-		{`C:\Program Files (x86)\shoal\shoalctl.exe`, `& 'C:\Program Files (x86)\shoal\shoalctl.exe' hook stop`},
-		{`D:\Users\O'Brien\bin\shoalctl.exe`, `& 'D:\Users\O''Brien\bin\shoalctl.exe' hook stop`},
-		{`C:\100%\$env:X\` + "`n" + `\shoalctl.exe`, `& 'C:\100%\$env:X\` + "`n" + `\shoalctl.exe' hook stop`},
-		{`C:\it’s\shoalctl.exe`, `& 'C:\it’’s\shoalctl.exe' hook stop`},
-		{`\\server\share\shoalctl.exe`, `& '\\server\share\shoalctl.exe' hook stop`},
+		{`C:\tools\shoalctl.exe`, `& 'C:\tools\shoalctl.exe' hook stop; exit 0`},
+		{`C:\Program Files\shoal\shoalctl.exe`, `& 'C:\Program Files\shoal\shoalctl.exe' hook stop; exit 0`},
+		{`C:\Program Files (x86)\shoal\shoalctl.exe`, `& 'C:\Program Files (x86)\shoal\shoalctl.exe' hook stop; exit 0`},
+		{`D:\Users\O'Brien\bin\shoalctl.exe`, `& 'D:\Users\O''Brien\bin\shoalctl.exe' hook stop; exit 0`},
+		{`C:\100%\$env:X\` + "`n" + `\shoalctl.exe`, `& 'C:\100%\$env:X\` + "`n" + `\shoalctl.exe' hook stop; exit 0`},
+		{`C:\it’s\shoalctl.exe`, `& 'C:\it’’s\shoalctl.exe' hook stop; exit 0`},
+		{`\\server\share\shoalctl.exe`, `& '\\server\share\shoalctl.exe' hook stop; exit 0`},
 	}
 	for _, tt := range tests {
 		got := hookCommandFor("windows", tt.exe, "stop")
@@ -88,11 +88,11 @@ func TestHookCommandQuotingWindows(t *testing.T) {
 
 func TestHookCommandQuotingPOSIX(t *testing.T) {
 	tests := []struct{ exe, want string }{
-		{"/usr/local/bin/shoalctl", "/usr/local/bin/shoalctl hook stop"},
-		{"/my bins/shoalctl", "'/my bins/shoalctl' hook stop"},
-		{`/odd\dir/shoalctl`, `'/odd\dir/shoalctl' hook stop`},
-		{"/it's/shoalctl", `'/it'\''s/shoalctl' hook stop`},
-		{"/a$b/`x`/shoalctl", "'/a$b/`x`/shoalctl' hook stop"},
+		{"/usr/local/bin/shoalctl", "/usr/local/bin/shoalctl hook stop || true"},
+		{"/my bins/shoalctl", "'/my bins/shoalctl' hook stop || true"},
+		{`/odd\dir/shoalctl`, `'/odd\dir/shoalctl' hook stop || true`},
+		{"/it's/shoalctl", `'/it'\''s/shoalctl' hook stop || true`},
+		{"/a$b/`x`/shoalctl", "'/a$b/`x`/shoalctl' hook stop || true"},
 	}
 	for _, tt := range tests {
 		got := hookCommandFor("linux", tt.exe, "stop")
@@ -135,8 +135,8 @@ func hookCommands(t *testing.T, data []byte) map[string][]string {
 
 func TestMergeHooks(t *testing.T) {
 	exe := "/bin/shoalctl"
-	start := "/bin/shoalctl hook session-start|10|"
-	stop := "/bin/shoalctl hook stop|10|"
+	start := "/bin/shoalctl hook session-start || true|10|"
+	stop := "/bin/shoalctl hook stop || true|10|"
 	tests := []struct {
 		name  string
 		in    string
@@ -217,7 +217,7 @@ func TestInitIsIdempotent(t *testing.T) {
 	}
 
 	got := hookCommands(t, []byte(readFile(t, settings)))
-	if fmt.Sprint(got["Stop"]) != fmt.Sprint([]string{"say done|0|", fakeExe + " hook stop|10|"}) {
+	if fmt.Sprint(got["Stop"]) != fmt.Sprint([]string{"say done|0|", fakeExe + " hook stop || true|10|"}) {
 		t.Errorf("Stop hooks = %v", got["Stop"])
 	}
 	if !strings.Contains(readFile(t, settings), `"keep-me"`) {

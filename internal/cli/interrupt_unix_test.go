@@ -4,10 +4,8 @@ package cli
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -64,17 +62,6 @@ func lastRunStatus(t *testing.T, p *project) string {
 		t.Fatal(err)
 	}
 	return status
-}
-
-func exitCode(err error) int {
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		return ee.ExitCode()
-	}
-	if err != nil {
-		return -1
-	}
-	return 0
 }
 
 func TestStartInterruptStopsBaseline(t *testing.T) {
