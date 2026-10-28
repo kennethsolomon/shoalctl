@@ -162,7 +162,7 @@ func TestInstallHooksAtomicKeepsModeAndOneBackup(t *testing.T) {
 	}
 }
 
-func TestInstallHooksFollowsSymlinkedSettings(t *testing.T) {
+func TestInstallHooksRefusesSymlinkedSettings(t *testing.T) {
 	root := t.TempDir()
 	real := filepath.Join(t.TempDir(), "shared-settings.json")
 	testutil.WriteFile(t, real, `{"a":1}`)
@@ -173,13 +173,10 @@ func TestInstallHooksFollowsSymlinkedSettings(t *testing.T) {
 	if err := os.Symlink(real, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if _, _, err := installHooks(root, "/bin/shoalctl", filepath.Join(t.TempDir(), "x.bak")); err != nil {
-		t.Fatal(err)
+	if _, _, err := installHooks(root, "/bin/shoalctl", filepath.Join(t.TempDir(), "x.bak")); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("installHooks through a symlink: %v, want a symlink error", err)
 	}
-	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("the symlink was replaced by a file: %v %v", info.Mode(), err)
-	}
-	if !strings.Contains(readFile(t, real), "hook stop") {
-		t.Fatalf("hooks not written to the symlink target:\n%s", readFile(t, real))
+	if got := readFile(t, real); got != `{"a":1}` {
+		t.Fatalf("symlink target changed:\n%s", got)
 	}
 }

@@ -428,3 +428,32 @@ func TestStatusEmptyAndJSON(t *testing.T) {
 		t.Fatalf("status table:\n%s", out)
 	}
 }
+
+// TestInitRefusesSymlinkedLocalSettings reproduces settings.local.json linked
+// to a tracked file: the tracked-file check passed and hooks were written
+// into the tracked target.
+func TestInitRefusesSymlinkedLocalSettings(t *testing.T) {
+	h := newHarness(t)
+	shared := filepath.Join(h.repo, "shared.json")
+	const body = `{"a": 1}`
+	testutil.WriteFile(t, shared, body)
+	testutil.Git(t, h.repo, "add", "shared.json")
+	testutil.Git(t, h.repo, "commit", "-q", "-m", "shared settings")
+	if err := os.MkdirAll(filepath.Join(h.repo, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", "shared.json"), filepath.Join(h.repo, ".claude", "settings.local.json")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	errOut := h.expectCode(ExitConfig, "init")
+	if !strings.Contains(errOut, "symlink") {
+		t.Errorf("stderr lacks %q: %s", "symlink", errOut)
+	}
+	if got := readFile(t, shared); got != body {
+		t.Errorf("shared.json changed: %s", got)
+	}
+	if status := testutil.Git(t, h.repo, "status", "--porcelain"); strings.Contains(status, " M shared.json") {
+		t.Errorf("tracked file modified:\n%s", status)
+	}
+}

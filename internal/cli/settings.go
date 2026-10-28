@@ -416,6 +416,9 @@ func hookPreflight(ctx context.Context, root string) error {
 		return fail(ExitConfig, "%s is tracked by git, so shoal's hook entries would show up as a change in git status (stealth mode adds it to info/exclude, which does not apply to tracked files). "+
 			"Untrack it with `git rm --cached %s` and commit, or move its contents to .claude/settings.json, then run shoalctl init again. Nothing was changed", filepath.Join(root, local), local)
 	}
+	if err := refuseSymlinkedSettings(filepath.Join(root, local)); err != nil {
+		return err
+	}
 	committed := filepath.Join(root, ".claude", "settings.json")
 	if data, err := os.ReadFile(committed); err == nil {
 		if found, err := hasShoalHooks(data); err == nil && found {
@@ -427,32 +430,45 @@ func hookPreflight(ctx context.Context, root string) error {
 	return nil
 }
 
-// installHooks merges shoal's entries into <root>/.claude/settings.local.json
-// (its target, when that is a symlink). The first time it changes an existing
-// file it keeps the original bytes at bakPath; later runs never overwrite
-// that backup. The write is atomic and keeps the file's mode.
+// refuseSymlinkedSettings refuses a settings.local.json that is a symlink:
+// its target may be a tracked file, which shoal's hooks would then dirty.
+func refuseSymlinkedSettings(path string) error {
+	info, err := os.Lstat(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return fmt.Errorf("stat %s: %w", path, err)
+	case info.Mode()&fs.ModeSymlink != 0:
+		return fail(ExitConfig, "%s is a symlink; shoal will not write hooks through it, since its target may be tracked by git. "+
+			"Replace it with a regular file (copy the target's contents in), then run shoalctl again. Nothing was changed", path)
+	}
+	return nil
+}
+
+// installHooks merges shoal's entries into <root>/.claude/settings.local.json,
+// refusing a symlinked file. The first time it changes an existing file it
+// keeps the original bytes at bakPath; later runs never overwrite that
+// backup. The write is atomic and keeps the file's mode.
 func installHooks(root, exe, bakPath string) (string, bool, error) {
 	path := filepath.Join(root, ".claude", "settings.local.json")
-	target := path
-	if info, err := os.Lstat(path); err == nil && info.Mode()&fs.ModeSymlink != 0 {
-		if target, err = filepath.EvalSymlinks(path); err != nil {
-			return "", false, fail(ExitConfig, "%s is a symlink shoal cannot follow: %v", path, err)
-		}
+	if err := refuseSymlinkedSettings(path); err != nil {
+		return "", false, err
 	}
-	data, err := os.ReadFile(target)
+	data, err := os.ReadFile(path)
 	existed := err == nil
 	perm := fs.FileMode(0o600)
 	switch {
 	case existed:
-		info, serr := os.Stat(target)
+		info, serr := os.Stat(path)
 		if serr != nil {
-			return "", false, fmt.Errorf("stat %s: %w", target, serr)
+			return "", false, fmt.Errorf("stat %s: %w", path, serr)
 		}
 		perm = info.Mode().Perm()
 	case errors.Is(err, fs.ErrNotExist):
 		data = nil
 	default:
-		return "", false, fmt.Errorf("read %s: %w", target, err)
+		return "", false, fmt.Errorf("read %s: %w", path, err)
 	}
 	out, changed, err := mergeHooks(data, exe)
 	if err != nil {
@@ -464,16 +480,16 @@ func installHooks(root, exe, bakPath string) (string, bool, error) {
 	if existed {
 		if _, err := os.Stat(bakPath); errors.Is(err, fs.ErrNotExist) {
 			if err := writePrivate(bakPath, data); err != nil {
-				return "", false, fmt.Errorf("back up %s: %w", target, err)
+				return "", false, fmt.Errorf("back up %s: %w", path, err)
 			}
 		} else if err != nil {
 			return "", false, fmt.Errorf("stat backup %s: %w", bakPath, err)
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return "", false, fmt.Errorf("create %s: %w", filepath.Dir(target), err)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", false, fmt.Errorf("create %s: %w", filepath.Dir(path), err)
 	}
-	return path, true, writeFileAtomic(target, out, perm)
+	return path, true, writeFileAtomic(path, out, perm)
 }
 
 // ensureExclude appends missing lines to <git-common-dir>/info/exclude.
