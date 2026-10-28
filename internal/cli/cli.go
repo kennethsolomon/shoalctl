@@ -127,10 +127,10 @@ func Main(args []string, env Env, version string) int {
 		fmt.Fprint(env.Stderr, usage)
 		return ExitUsage
 	}
-	// SIGINT and SIGTERM cancel ctx instead of killing shoalctl, so a running
-	// suite is stopped and recorded as cancelled (testrun forwards the signal
-	// to the suite's process group).
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// SIGINT, SIGTERM and SIGHUP (the terminal closed) cancel ctx instead of
+	// killing shoalctl, so a running suite is stopped and recorded as
+	// cancelled (testrun forwards the signal to the suite's process group).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	var err error
 	switch args[0] {

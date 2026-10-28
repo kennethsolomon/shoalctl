@@ -66,7 +66,7 @@ func lastRunStatus(t *testing.T, p *project) string {
 }
 
 func TestStartInterruptStopsBaseline(t *testing.T) {
-	for _, sig := range []os.Signal{os.Interrupt, syscall.SIGTERM} {
+	for _, sig := range []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP} {
 		t.Run(sig.String(), func(t *testing.T) {
 			h := newHarness(t).withSession()
 			pids := t.TempDir()
