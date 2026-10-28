@@ -259,6 +259,45 @@ func TestStartRefusesUnconfirmedLiveSuite(t *testing.T) {
 	})
 }
 
+// TestStartRefusesUnparseableStartTime covers a live process group whose
+// recorded pid_start cannot be parsed: shoal cannot tell whether the pid was
+// reused, so start must refuse rather than run a second suite.
+func TestStartRefusesUnparseableStartTime(t *testing.T) {
+	for _, start := range []string{"garbage-not-a-date", " "} {
+		t.Run(strconv.Quote(start), func(t *testing.T) {
+			h := newHarness(t).withSession()
+			p := h.initWith(quickSuite)
+			h.mustRun("new", "feature", "Unparseable start")
+			old := exec.Command("sleep", "30")
+			old.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			if err := old.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { old.Process.Kill(); old.Wait() })
+
+			db := openRaw(t, p.dbPath())
+			_, err := db.Exec(`INSERT INTO test_runs (task_id, kind, sha, command, command_hash, format, fidelity, status,
+				output_path, pid, pid_start, started_at) VALUES (?, 'baseline', 'abc', 'true', 'h', 'exit-code', 'suite', 'running', ?, ?, ?, '2026-01-01T00:00:00Z')`,
+				h.task("1").ID, filepath.Join(t.TempDir(), "output.log"), old.Process.Pid, start)
+			db.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			errOut := h.expectCode(ExitBusy, "start", "1")
+			if strings.Contains(errOut, "pid was reused") {
+				t.Errorf("start treated an unparseable start time as a reused pid:\n%s", errOut)
+			}
+			if n := countRows(t, p, `SELECT count(*) FROM test_runs`); n != 1 {
+				t.Fatalf("a second suite was started next to the live group: %d runs", n)
+			}
+			if !alive(old.Process.Pid) {
+				t.Fatal("the live process was killed")
+			}
+		})
+	}
+}
+
 // TestStartTreatsReusedPIDAsStale reproduces a running run whose recorded pid
 // now leads an unrelated process group (say, after a reboot): start must not
 // block on it or tell the user to kill that group.

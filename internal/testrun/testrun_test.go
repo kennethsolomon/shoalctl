@@ -557,7 +557,9 @@ func TestSameStart(t *testing.T) {
 		{"windows 1s apart", "133000000000000000", "133000001000000000", true},
 		{"windows 3s apart", "133000000000000000", "133000003000000000", false},
 		{"unparsable but equal", "x", "x", true},
-		{"unparsable and different", "x", "y", false},
+		{"unparsable and different", "x", "y", true},
+		{"recorded unparsable", "garbage-not-a-date", "Wed Oct 28 10:11:12 2026", true},
+		{"live unparsable", "Wed Oct 28 10:11:12 2026", " ", true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := SameStart(tt.recorded, tt.live); got != tt.want {

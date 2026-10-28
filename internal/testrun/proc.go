@@ -9,8 +9,10 @@ import (
 // clock (Linux ps computes it from boot time, which an NTP step shifts).
 const startTolerance = 2 * time.Second
 
-// SameStart reports whether two ProcessStart values name the same process:
-// equal, or within startTolerance of each other.
+// SameStart reports whether two ProcessStart values may name the same
+// process: equal, within startTolerance of each other, or not comparable
+// because either fails to parse (a reused pid cannot be proven, so the
+// caller must treat it as the same process).
 func SameStart(recorded, live string) bool {
 	if recorded == live {
 		return true
@@ -18,7 +20,7 @@ func SameStart(recorded, live string) bool {
 	a, aok := parseStart(recorded)
 	b, bok := parseStart(live)
 	if !aok || !bok {
-		return false
+		return true
 	}
 	d := a.Sub(b)
 	return d >= -startTolerance && d <= startTolerance
