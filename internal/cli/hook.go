@@ -14,41 +14,63 @@ import (
 	"github.com/kennethsolomon/shoalctl/internal/store"
 )
 
-const hookDeadline = 2 * time.Second
+// hookDeadline bounds a whole hook process, logging included. The handler
+// gets hookDeadline - logBudget; failure logging gets whatever is left.
+const (
+	hookDeadline = 2 * time.Second
+	logBudget    = 300 * time.Millisecond
+)
 
-type hookInput struct {
-	SessionID string `json:"session_id"`
-	Cwd       string `json:"cwd"`
-}
+// logHook writes one hooks.log line; tests replace it.
+var logHook = logHookFailure
 
-// runHook is the entry point Claude Code calls. It always returns 0 and never
-// writes to stdout or stderr: failures go to $SHOAL_HOME/logs/hooks.log (§4.6).
+// runHook is the entry point Claude Code calls. It always returns 0 within
+// hookDeadline and never writes to stdout or stderr: failures go to
+// $SHOAL_HOME/logs/hooks.log (§4.6). Everything that can block (the handler,
+// and on failure even resolving where to log) runs on other goroutines, so a
+// hung filesystem can only cost a log line, never the deadline.
 func runHook(args []string, env Env) int {
+	deadline := time.Now().Add(hookDeadline)
 	event := strings.Join(args, " ")
 	done := make(chan hookResult, 1)
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				done <- unguarded(fmt.Errorf("panic: %v", r))
+				done <- hookResult{err: fmt.Errorf("panic: %v", r), unresolved: true}
 			}
 		}()
-		done <- env.hook(args)
+		done <- env.hook(args, deadline.Add(-logBudget))
 	}()
 	var res hookResult
 	select {
 	case res = <-done:
-	case <-time.After(hookDeadline):
-		res = unguarded(fmt.Errorf("deadline of %s exceeded", hookDeadline))
+	case <-time.After(time.Until(deadline.Add(-logBudget))):
+		res = hookResult{err: fmt.Errorf("deadline of %s exceeded", hookDeadline-logBudget), unresolved: true}
 	}
-	if res.err != nil && res.shoal {
-		logHookFailure(event, res.dir, res.err)
+	if res.err == nil {
+		return ExitOK
+	}
+	logged := make(chan struct{})
+	go func() {
+		defer close(logged)
+		defer func() { _ = recover() }()
+		if res.unresolved {
+			res = resolveFailure(res.err)
+		}
+		if res.shoal {
+			logHook(event, res.dir, res.err)
+		}
+	}()
+	select {
+	case <-logged:
+	case <-time.After(time.Until(deadline)):
 	}
 	return ExitOK
 }
 
-// unguarded builds the result for a failure that happened before or outside
-// the guard, logging it only when CLAUDE_PROJECT_DIR is a shoal worktree.
-func unguarded(err error) hookResult {
+// resolveFailure finds where a failure that happened before or outside the
+// guard belongs, logging it only when CLAUDE_PROJECT_DIR is a shoal worktree.
+func resolveFailure(err error) hookResult {
 	home, herr := shoalHome()
 	if herr != nil {
 		return hookResult{}
@@ -57,14 +79,20 @@ func unguarded(err error) hookResult {
 	return hookResult{err: err, dir: wt, shoal: ok}
 }
 
-type hookResult struct {
-	err   error
-	dir   string
-	shoal bool // the session runs in a shoal worktree, so failures are worth logging
+type hookInput struct {
+	SessionID string `json:"session_id"`
+	Cwd       string `json:"cwd"`
 }
 
-func (env Env) hook(args []string) hookResult {
-	ctx, cancel := context.WithTimeout(context.Background(), hookDeadline)
+type hookResult struct {
+	err        error
+	dir        string
+	shoal      bool // the session runs in a shoal worktree, so failures are worth logging
+	unresolved bool // dir and shoal are not known yet
+}
+
+func (env Env) hook(args []string, deadline time.Time) hookResult {
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 
 	var in hookInput

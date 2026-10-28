@@ -231,3 +231,60 @@ func TestStatusWarnsAboutNewHookFailures(t *testing.T) {
 		t.Fatalf("third status stderr: %q", errOut)
 	}
 }
+
+// blockLogWriter makes every hooks.log write hang, as on a stuck network
+// filesystem, until the test ends.
+func blockLogWriter(t *testing.T) {
+	t.Helper()
+	release := make(chan struct{})
+	orig := logHook
+	logHook = func(string, string, error) { <-release }
+	t.Cleanup(func() {
+		close(release)
+		logHook = orig
+	})
+}
+
+// hookWithin runs a hook and fails unless it returns 0 silently within limit.
+func hookWithin(t *testing.T, h *harness, limit time.Duration, stdin io.Reader, event string) {
+	t.Helper()
+	type result struct {
+		code     int
+		out, err string
+	}
+	ch := make(chan result, 1)
+	start := time.Now()
+	go func() {
+		code, out, errOut := h.hook(stdin, event)
+		ch <- result{code, out, errOut}
+	}()
+	select {
+	case r := <-ch:
+		if r.code != 0 || r.out != "" || r.err != "" {
+			t.Fatalf("code %d stdout %q stderr %q", r.code, r.out, r.err)
+		}
+		if took := time.Since(start); took > limit {
+			t.Fatalf("hook took %s, limit %s", took, limit)
+		}
+	case <-time.After(limit + 2*time.Second):
+		t.Fatalf("hook still running after %s: the post-deadline path is unbounded", limit+2*time.Second)
+	}
+}
+
+func TestHookDeadlineBoundedWithBlockedLogWriter(t *testing.T) {
+	h := newHarness(t)
+	wt, _ := fakeWorktree(t, h)
+	t.Setenv("CLAUDE_PROJECT_DIR", wt)
+	blockLogWriter(t)
+	r, w := io.Pipe()
+	defer w.Close()
+	hookWithin(t, h, hookDeadline+200*time.Millisecond, r, "stop")
+}
+
+func TestHookErrorBoundedWithBlockedLogWriter(t *testing.T) {
+	h := newHarness(t)
+	wt, _ := fakeWorktree(t, h)
+	t.Setenv("CLAUDE_PROJECT_DIR", wt)
+	blockLogWriter(t)
+	hookWithin(t, h, hookDeadline+200*time.Millisecond, strings.NewReader(`{"session_id": `), "stop")
+}

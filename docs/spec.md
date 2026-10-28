@@ -246,7 +246,7 @@ Claude Code caps a hook's `additionalContext` at 10,000 characters; shoal's own 
 **Fail open.** A shoal hook must never break or block your Claude session.
 - On any internal error (DB locked past `busy_timeout`, missing task row, bad JSON input, panic), the handler appends one warning line to `$SHOAL_HOME/logs/hooks.log` (time, event, project dir, error) and exits 0 with no output.
 - Handlers never exit 2 (Claude Code treats exit 2 as "block").
-- Each handler has an internal 2-second deadline, below the `timeout` set on the hook entry. On deadline it logs and exits 0.
+- Each hook process has a hard 2-second deadline, below the `timeout` set on the hook entry, and it covers logging too: the handler gets 1.7 s, and the failure log line (written on another goroutine, along with any filesystem work to find where it goes) gets what is left. A log write that cannot finish in time is dropped. The process exits 0 within 2 s whatever the filesystem or database does.
 - `shoalctl status` shows a warning when `hooks.log` has new lines since the last `status`, so failures stay visible without touching the session.
 
 **Entry shape.** Each entry calls the absolute path of the binary captured at `init`, for example `"/usr/local/bin/shoalctl hook session-start"`, with `"timeout": 10`. `uninstall` finds shoal's entries by matching a command whose program basename is `shoalctl` and whose first argument is `hook`. Re-running `init` (for example after upgrading the binary) rewrites only those entries.
