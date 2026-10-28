@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/kennethsolomon/shoalctl/internal/gitx"
@@ -22,41 +23,149 @@ var hookEvents = []struct{ event, arg string }{
 	{"Stop", "stop"},
 }
 
-var plainWord = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./\\-]+$`)
+// posixPlain is a path bash reads as one literal word without quotes.
+var posixPlain = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
 
-func hookCommand(exe, arg string) string {
+// psQuotes are the characters PowerShell accepts as single quotes; inside a
+// single-quoted string each is escaped by doubling it.
+const psQuotes = "'\u2018\u2019\u201a\u201b"
+
+// hookCommand is the hook command for this OS.
+func hookCommand(exe, arg string) string { return hookCommandFor(runtime.GOOS, exe, arg) }
+
+// hookCommandFor quotes exe for the shell Claude Code runs the hook in: bash
+// on macOS and Linux (its default), PowerShell on Windows, where the entry
+// pins "shell": "powershell" because the default there depends on whether
+// Git Bash is installed.
+func hookCommandFor(goos, exe, arg string) string {
+	if goos == "windows" {
+		var b strings.Builder
+		for _, r := range exe {
+			if strings.ContainsRune(psQuotes, r) {
+				b.WriteRune(r)
+			}
+			b.WriteRune(r)
+		}
+		return "& '" + b.String() + "' hook " + arg
+	}
 	prog := exe
-	if !plainWord.MatchString(exe) {
+	if !posixPlain.MatchString(exe) {
 		prog = "'" + strings.ReplaceAll(exe, "'", `'\''`) + "'"
 	}
 	return prog + " hook " + arg
 }
 
-// firstWord splits off the first shell word, honouring simple quotes.
-func firstWord(s string) (string, string) {
-	s = strings.TrimLeft(s, " \t")
-	if s == "" {
-		return "", ""
+func entryFor(goos, exe, arg string) hookEntry {
+	e := hookEntry{Type: "command", Command: hookCommandFor(goos, exe, arg), Timeout: hookTimeoutSeconds}
+	if goos == "windows" {
+		e.Shell = "powershell"
 	}
-	if q := s[0]; q == '\'' || q == '"' {
-		if end := strings.IndexByte(s[1:], q); end >= 0 {
-			return s[1 : end+1], s[end+2:]
+	return e
+}
+
+// commandProgram splits a hook command into its program and the rest. It
+// reads both forms shoal writes (bash words, and PowerShell's "& '<path>'")
+// and, leniently, an unquoted word with backslashes as a Windows path.
+func commandProgram(cmd string) (string, string) {
+	s := strings.TrimLeft(cmd, " \t")
+	if rest, ok := strings.CutPrefix(s, "&"); ok {
+		return psWord(strings.TrimLeft(rest, " \t"))
+	}
+	return shWord(s)
+}
+
+func psWord(s string) (string, string) {
+	r := []rune(s)
+	if len(r) == 0 || !strings.ContainsRune(psQuotes, r[0]) {
+		return shWord(s)
+	}
+	var b strings.Builder
+	for i := 1; i < len(r); i++ {
+		if !strings.ContainsRune(psQuotes, r[i]) {
+			b.WriteRune(r[i])
+			continue
 		}
-		return s[1:], ""
+		if i+1 < len(r) && strings.ContainsRune(psQuotes, r[i+1]) {
+			b.WriteRune(r[i])
+			i++
+			continue
+		}
+		return b.String(), string(r[i+1:])
 	}
-	if i := strings.IndexAny(s, " \t"); i >= 0 {
-		return s[:i], s[i:]
+	return b.String(), ""
+}
+
+// shWord reads one bash word. A word with no quotes is taken as written, so
+// a bare Windows path keeps its backslashes.
+func shWord(s string) (string, string) {
+	s = strings.TrimLeft(s, " \t")
+	end, quoted := 0, false
+	for end < len(s) && s[end] != ' ' && s[end] != '\t' {
+		switch s[end] {
+		case '\'':
+			quoted = true
+			if j := strings.IndexByte(s[end+1:], '\''); j >= 0 {
+				end += j + 1
+			} else {
+				end = len(s) - 1
+			}
+		case '"':
+			quoted = true
+			for end++; end < len(s) && s[end] != '"'; end++ {
+				if s[end] == '\\' {
+					end++
+				}
+			}
+		case '\\':
+			end++
+		}
+		end++
 	}
-	return s, ""
+	if end > len(s) {
+		end = len(s)
+	}
+	word, rest := s[:end], s[end:]
+	if !quoted {
+		return word, rest
+	}
+	var b strings.Builder
+	for i := 0; i < len(word); i++ {
+		switch c := word[i]; c {
+		case '\'':
+			j := strings.IndexByte(word[i+1:], '\'')
+			if j < 0 {
+				j = len(word) - i - 1
+			}
+			b.WriteString(word[i+1 : i+1+j])
+			i += j + 1
+		case '"':
+			for i++; i < len(word) && word[i] != '"'; i++ {
+				if word[i] == '\\' && i+1 < len(word) && strings.IndexByte("\"\\$`", word[i+1]) >= 0 {
+					i++
+				}
+				b.WriteByte(word[i])
+			}
+		case '\\':
+			if i+1 < len(word) {
+				i++
+				b.WriteByte(word[i])
+			}
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String(), rest
 }
 
 // isShoalCommand matches a hook command whose program basename is shoalctl
 // and whose first argument is hook (§4.6).
 func isShoalCommand(cmd string) bool {
-	prog, rest := firstWord(cmd)
+	prog, rest := commandProgram(cmd)
 	base := prog[strings.LastIndexAny(prog, `/\`)+1:]
-	base = strings.TrimSuffix(base, ".exe")
-	arg, _ := firstWord(rest)
+	if len(base) > 4 && strings.EqualFold(base[len(base)-4:], ".exe") {
+		base = base[:len(base)-4]
+	}
+	arg, _ := shWord(rest)
 	return base == "shoalctl" && arg == "hook"
 }
 
@@ -83,6 +192,7 @@ func groupEntries(g hookGroup) ([]map[string]json.RawMessage, error) {
 // hookEntry is the entry shoal registers, in the key order it is written.
 type hookEntry struct {
 	Type    string `json:"type"`
+	Shell   string `json:"shell,omitempty"`
 	Command string `json:"command"`
 	Timeout int    `json:"timeout"`
 }
@@ -91,9 +201,7 @@ type hookGroupOut struct {
 	Hooks []hookEntry `json:"hooks"`
 }
 
-func wantEntry(exe, arg string) hookEntry {
-	return hookEntry{Type: "command", Command: hookCommand(exe, arg), Timeout: hookTimeoutSeconds}
-}
+func wantEntry(exe, arg string) hookEntry { return entryFor(runtime.GOOS, exe, arg) }
 
 // entryIs reports whether an existing entry is exactly want, with no other keys.
 func entryIs(e map[string]json.RawMessage, want hookEntry) bool {

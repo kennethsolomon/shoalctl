@@ -59,6 +59,55 @@ func TestIsShoalCommand(t *testing.T) {
 	}
 }
 
+func TestHookCommandQuotingWindows(t *testing.T) {
+	tests := []struct{ exe, want string }{
+		{`C:\tools\shoalctl.exe`, `& 'C:\tools\shoalctl.exe' hook stop`},
+		{`C:\Program Files\shoal\shoalctl.exe`, `& 'C:\Program Files\shoal\shoalctl.exe' hook stop`},
+		{`C:\Program Files (x86)\shoal\shoalctl.exe`, `& 'C:\Program Files (x86)\shoal\shoalctl.exe' hook stop`},
+		{`D:\Users\O'Brien\bin\shoalctl.exe`, `& 'D:\Users\O''Brien\bin\shoalctl.exe' hook stop`},
+		{`C:\100%\$env:X\` + "`n" + `\shoalctl.exe`, `& 'C:\100%\$env:X\` + "`n" + `\shoalctl.exe' hook stop`},
+		{`C:\it’s\shoalctl.exe`, `& 'C:\it’’s\shoalctl.exe' hook stop`},
+		{`\\server\share\shoalctl.exe`, `& '\\server\share\shoalctl.exe' hook stop`},
+	}
+	for _, tt := range tests {
+		got := hookCommandFor("windows", tt.exe, "stop")
+		if got != tt.want {
+			t.Errorf("hookCommandFor(windows, %q)\n got %s\nwant %s", tt.exe, got, tt.want)
+		}
+		if !isShoalCommand(got) {
+			t.Errorf("isShoalCommand does not recognise %s", got)
+		}
+		if prog, _ := commandProgram(got); prog != tt.exe {
+			t.Errorf("commandProgram(%s) = %q, want %q", got, prog, tt.exe)
+		}
+		if e := entryFor("windows", tt.exe, "stop"); e.Shell != "powershell" {
+			t.Errorf("windows entry must pin shell powershell, got %+v", e)
+		}
+	}
+}
+
+func TestHookCommandQuotingPOSIX(t *testing.T) {
+	tests := []struct{ exe, want string }{
+		{"/usr/local/bin/shoalctl", "/usr/local/bin/shoalctl hook stop"},
+		{"/my bins/shoalctl", "'/my bins/shoalctl' hook stop"},
+		{`/odd\dir/shoalctl`, `'/odd\dir/shoalctl' hook stop`},
+		{"/it's/shoalctl", `'/it'\''s/shoalctl' hook stop`},
+		{"/a$b/`x`/shoalctl", "'/a$b/`x`/shoalctl' hook stop"},
+	}
+	for _, tt := range tests {
+		got := hookCommandFor("linux", tt.exe, "stop")
+		if got != tt.want {
+			t.Errorf("hookCommandFor(linux, %q)\n got %s\nwant %s", tt.exe, got, tt.want)
+		}
+		if prog, _ := commandProgram(got); prog != tt.exe || !isShoalCommand(got) {
+			t.Errorf("commandProgram(%s) = %q, want %q", got, prog, tt.exe)
+		}
+		if e := entryFor("darwin", tt.exe, "stop"); e.Shell != "" {
+			t.Errorf("POSIX entry must use Claude Code's default shell, got %+v", e)
+		}
+	}
+}
+
 func hookCommands(t *testing.T, data []byte) map[string][]string {
 	t.Helper()
 	var top struct {
