@@ -129,28 +129,31 @@ Details in [spec section 5](docs/spec.md#5-installing-into-a-project-that-alread
 
 ## Configuration
 
-Stealth projects keep config in `~/.shoal/projects/<id>/config.toml`. Teams that want shared config can opt in to a committed `.shoal.toml`:
+Stealth projects keep config in `~/.shoal/projects/<id>/config.toml`. Teams that want shared config can opt in to a committed `.shoal.toml` (`shoalctl init --commit-config`). Unknown keys are an error, so typos surface. A full example (a test keeps it valid against the loader):
 
 ```toml
+[tests]
+command = "php artisan test --log-junit {junit}"   # {junit}: the file shoal reads results from
+format  = "junit"                                   # junit | go-json | exit-code | none
+timeout = "30m"
+
 [stack]
 name  = "laravel"
-test  = "php artisan test"
-lint  = "vendor/bin/pint --test"
+lint  = "vendor/bin/pint --test"   # run by done, informational
 build = "npm run build"
 
-[lanes]
-feature = "full"
-bugfix  = "light"
-hotfix  = "light"
-qa_max_rounds = 3
+[session]
+model = "claude-opus-5-5"
 
 [merge]
 base = "main"
-strategy = "rebase"
+
+[hotfix]
+production_ref = "production"      # branch, tag, or "tag:<glob>"
 
 [reports]
 sink = "local"        # local | notes | both
-notes_path = ""       # your notes folder, only if sink includes notes
+notes_path = ""       # absolute path to your notes folder, only if sink includes notes
 
 [privacy]
 deny_globs = [".env*"]
