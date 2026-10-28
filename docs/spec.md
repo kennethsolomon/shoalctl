@@ -947,7 +947,7 @@ Allowed only from `in-progress` (exit 5 otherwise).
 2. Read `.shoal/summary.json`. Missing, invalid JSON, unknown keys, or empty `decision` or `why`: exit 5, printing the path and the expected shape.
 3. Run the suite on `HEAD` (`kind = 'final'`) and compare it with the baseline using the classes in §8.5. **In the MVP this comparison is informational:** it is reported, never blocking. The blocking gate arrives in Phase 1. A final run that errors is reported as such and does not stop `done`.
 4. Run `[stack].lint` and `[stack].build` if set; record pass or fail.
-5. In one transaction: insert the `summaries` row (`commits` from `git rev-list --reverse base_sha..HEAD`, `files` from `git diff --name-status base_sha...HEAD`, `true_at_sha = HEAD`), set `final_run_id`, stage `done`, `closed_at`.
+5. In one transaction: insert the `summaries` row (`commits` from `git rev-list --reverse base_sha..HEAD`, `files` from `git diff --name-status -z base_sha...HEAD`, so unicode, spaces, tabs and renames survive byte-exact, `true_at_sha = HEAD`), set `final_run_id`, stage `done`, `closed_at`.
 6. Render the report to `reports/<slug>.md` (and to `notes_path` if the sink says so). Print its path. The tmux window is left open. Exit 0.
 
 **Report sections**, in this order:

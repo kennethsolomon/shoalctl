@@ -136,11 +136,10 @@ func (env Env) cmdDone(ctx context.Context, args []string) error {
 		return err
 	}
 	commits := strings.Fields(commitsOut)
-	nameStatus, err := gitx.Run(ctx, wt, "diff", "--name-status", t.BaseSHA+"...HEAD")
+	files, err := changedFiles(ctx, wt, t.BaseSHA)
 	if err != nil {
 		return err
 	}
-	files := parseNameStatus(nameStatus)
 
 	base, err := p.db.GetRun(ctx, t.BaselineRunID)
 	if err != nil {
@@ -229,18 +228,40 @@ func (env Env) step(ctx context.Context, p *project, wt, name, command, runDir s
 	return fmt.Sprintf("FAIL (exit %d; %s)", *out.ExitCode, out.OutputPath)
 }
 
-func parseNameStatus(out string) []changedFile {
-	var files []changedFile
-	for _, line := range strings.Split(out, "\n") {
-		parts := strings.Split(line, "\t")
-		switch {
-		case len(parts) == 2:
-			files = append(files, changedFile{Status: parts[0], Path: parts[1]})
-		case len(parts) == 3:
-			files = append(files, changedFile{Status: parts[0], From: parts[1], Path: parts[2]})
-		}
+// changedFiles lists the files changed on the branch since base. -z keeps
+// paths byte-exact: no quoting of unicode, tabs or quotes, and renames and
+// copies come as status, source, destination.
+func changedFiles(ctx context.Context, wt, base string) ([]changedFile, error) {
+	out, err := gitx.Run(ctx, wt, "diff", "--name-status", "-z", base+"...HEAD")
+	if err != nil {
+		return nil, err
 	}
-	return files
+	return parseNameStatusZ(out)
+}
+
+func parseNameStatusZ(out string) ([]changedFile, error) {
+	var files []changedFile
+	fields := strings.Split(strings.TrimSuffix(out, "\x00"), "\x00")
+	if out == "" {
+		return files, nil
+	}
+	for i := 0; i < len(fields); {
+		status := fields[i]
+		n := 2
+		if strings.HasPrefix(status, "R") || strings.HasPrefix(status, "C") {
+			n = 3
+		}
+		if i+n > len(fields) {
+			return nil, fmt.Errorf("parse git diff --name-status -z: truncated entry at %q", status)
+		}
+		f := changedFile{Status: status, Path: fields[i+n-1]}
+		if n == 3 {
+			f.From = fields[i+1]
+		}
+		files = append(files, f)
+		i += n
+	}
+	return files, nil
 }
 
 func statusMap(rs []store.Result) map[string]string {

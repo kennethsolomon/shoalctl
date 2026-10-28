@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -196,5 +197,40 @@ func TestReportFidelityLines(t *testing.T) {
 	assertSections(t, r)
 	if !strings.Contains(r, "# X\n\n> "+protocolInactive) || strings.Count(r, protocolInactive) != 2 {
 		t.Errorf("none report must state the inactive protocol first and in limits:\n%s", r)
+	}
+}
+
+func TestChangedFilesKeepsUnicodeSpacesAndRenames(t *testing.T) {
+	testutil.Isolate(t)
+	repo := testutil.Repo(t)
+	testutil.WriteFile(t, filepath.Join(repo, "old name.txt"), strings.Repeat("same content\n", 20))
+	testutil.Git(t, repo, "add", "-A")
+	testutil.Git(t, repo, "commit", "-q", "-m", "base")
+	base := testutil.Git(t, repo, "rev-parse", "HEAD")
+
+	testutil.Git(t, repo, "mv", "old name.txt", "new näme.txt")
+	testutil.WriteFile(t, filepath.Join(repo, "dir ü", "naïve file ✓.go"), "package x\n")
+	testutil.WriteFile(t, filepath.Join(repo, "tab\there.txt"), "x\n")
+	testutil.Git(t, repo, "add", "-A")
+	testutil.Git(t, repo, "commit", "-q", "-m", "change")
+
+	files, err := changedFiles(context.Background(), repo, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]changedFile{}
+	for _, f := range files {
+		got[f.Path] = f
+	}
+	if f, ok := got["new näme.txt"]; !ok || !strings.HasPrefix(f.Status, "R") || f.From != "old name.txt" {
+		t.Errorf("rename = %+v (all: %+v)", f, files)
+	}
+	for _, path := range []string{"dir ü/naïve file ✓.go", "tab\there.txt"} {
+		if f, ok := got[path]; !ok || f.Status != "A" {
+			t.Errorf("%q = %+v (all: %+v)", path, f, files)
+		}
+	}
+	if len(files) != 3 {
+		t.Errorf("want 3 changed files, got %+v", files)
 	}
 }
