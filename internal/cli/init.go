@@ -83,7 +83,7 @@ func (env Env) cmdInit(ctx context.Context, args []string) error {
 		return err
 	}
 
-	hookFile, _, err := installHooks(p.root, env.Exe)
+	hookFile, _, err := installHooks(p.root, env.Exe, filepath.Join(p.dir, "backups", "settings.local.json.bak"))
 	if err != nil {
 		return err
 	}

@@ -80,110 +80,194 @@ func groupEntries(g hookGroup) ([]map[string]json.RawMessage, error) {
 	return entries, nil
 }
 
-// mergeHooks returns settings with exactly one shoal entry per event, keeping
-// every other key and entry. It reports changed=false, and returns data
-// untouched, when the entries are already exactly right.
-func mergeHooks(data []byte, exe string) ([]byte, bool, error) {
-	top := map[string]json.RawMessage{}
-	if len(bytes.TrimSpace(data)) > 0 {
-		if err := json.Unmarshal(data, &top); err != nil || top == nil {
-			return nil, false, fmt.Errorf("not a JSON object: %v", err)
+// hookEntry is the entry shoal registers, in the key order it is written.
+type hookEntry struct {
+	Type    string `json:"type"`
+	Command string `json:"command"`
+	Timeout int    `json:"timeout"`
+}
+
+type hookGroupOut struct {
+	Hooks []hookEntry `json:"hooks"`
+}
+
+func wantEntry(exe, arg string) hookEntry {
+	return hookEntry{Type: "command", Command: hookCommand(exe, arg), Timeout: hookTimeoutSeconds}
+}
+
+// entryIs reports whether an existing entry is exactly want, with no other keys.
+func entryIs(e map[string]json.RawMessage, want hookEntry) bool {
+	raw, err := json.Marshal(want)
+	if err != nil {
+		return false
+	}
+	var w map[string]json.RawMessage
+	if json.Unmarshal(raw, &w) != nil || len(w) != len(e) {
+		return false
+	}
+	for k, v := range w {
+		if !jsonEqual(e[k], v) {
+			return false
 		}
 	}
-	hooks := map[string]json.RawMessage{}
-	if raw, ok := top["hooks"]; ok {
-		if err := json.Unmarshal(raw, &hooks); err != nil || hooks == nil {
-			return nil, false, fmt.Errorf("\"hooks\" is not a JSON object: %v", err)
-		}
+	return true
+}
+
+func jsonEqual(a, b json.RawMessage) bool {
+	var x, y any
+	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
+		return false
 	}
-	changed := false
+	return fmt.Sprint(x) == fmt.Sprint(y)
+}
+
+// decodeHooks validates the settings shape shoal edits and returns the groups
+// of each event.
+func decodeHooks(data []byte) (map[string][]hookGroup, error) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil || top == nil {
+		return nil, fmt.Errorf("not a JSON object: %v", err)
+	}
+	out := map[string][]hookGroup{}
+	raw, ok := top["hooks"]
+	if !ok {
+		return out, nil
+	}
+	var hooks map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &hooks); err != nil || hooks == nil {
+		return nil, fmt.Errorf("\"hooks\" is not a JSON object: %v", err)
+	}
 	for _, h := range hookEvents {
+		raw, ok := hooks[h.event]
+		if !ok {
+			continue
+		}
 		var groups []hookGroup
-		if raw, ok := hooks[h.event]; ok {
-			if err := json.Unmarshal(raw, &groups); err != nil {
-				return nil, false, fmt.Errorf("hooks.%s is not an array of objects: %w", h.event, err)
+		if err := json.Unmarshal(raw, &groups); err != nil || !bytes.HasPrefix(bytes.TrimSpace(raw), []byte("[")) {
+			return nil, fmt.Errorf("hooks.%s is not an array of objects: %v", h.event, err)
+		}
+		for _, g := range groups {
+			if _, err := groupEntries(g); err != nil {
+				return nil, fmt.Errorf("hooks.%s: %w", h.event, err)
 			}
 		}
-		next, same, err := ensureEntry(groups, hookCommand(exe, h.arg))
-		if err != nil {
-			return nil, false, fmt.Errorf("hooks.%s: %w", h.event, err)
+		out[h.event] = groups
+	}
+	return out, nil
+}
+
+// exactlyOne reports whether groups hold exactly one shoal entry, equal to
+// want and alone in its group.
+func exactlyOne(groups []hookGroup, want hookEntry) bool {
+	shoal, exact := 0, false
+	for _, g := range groups {
+		entries, _ := groupEntries(g)
+		for _, e := range entries {
+			if isShoalCommand(entryCommand(e)) {
+				shoal++
+				exact = len(entries) == 1 && entryIs(e, want)
+			}
 		}
-		if same {
+	}
+	return shoal == 1 && exact
+}
+
+// mergeHooks returns settings with exactly one shoal entry per event. It edits
+// only shoal's own entries in place, so every other byte of the file (key
+// order, escapes, unicode, indentation, line endings, final newline) stays as
+// it was. It reports changed=false, and returns data untouched, when the
+// entries are already exactly right.
+func mergeHooks(data []byte, exe string) ([]byte, bool, error) {
+	doc := data
+	if len(bytes.TrimSpace(data)) == 0 {
+		doc = []byte("{\n}\n")
+	}
+	events, err := decodeHooks(doc)
+	if err != nil {
+		return nil, false, err
+	}
+	st := detectStyle(doc)
+	changed := false
+	for _, h := range hookEvents {
+		want := wantEntry(exe, h.arg)
+		if exactlyOne(events[h.event], want) {
 			continue
 		}
 		changed = true
-		if hooks[h.event], err = json.Marshal(next); err != nil {
-			return nil, false, err
-		}
+		doc = removeShoalEntries(doc, h.event)
+		doc = appendGroup(doc, h.event, hookGroupOut{Hooks: []hookEntry{want}}, st)
 	}
 	if !changed {
 		return data, false, nil
 	}
-	var err error
-	if top["hooks"], err = json.Marshal(hooks); err != nil {
-		return nil, false, err
-	}
-	out, err := json.MarshalIndent(top, "", "  ")
-	if err != nil {
-		return nil, false, err
-	}
-	return append(out, '\n'), true, nil
+	return doc, true, nil
 }
 
-func ensureEntry(groups []hookGroup, want string) ([]hookGroup, bool, error) {
-	var shoal int
-	exact := false
-	for _, g := range groups {
-		entries, err := groupEntries(g)
-		if err != nil {
-			return nil, false, err
+// eventArray finds hooks.<event> in doc.
+func eventArray(doc []byte, event string) (span, bool) {
+	hooks, ok := member(doc, topValue(doc), "hooks")
+	if !ok {
+		return span{}, false
+	}
+	ev, ok := member(doc, hooks.val, event)
+	if !ok {
+		return span{}, false
+	}
+	return ev.val, true
+}
+
+// removeShoalEntries deletes every shoal entry under hooks.<event>, and any
+// group left without entries.
+func removeShoalEntries(doc []byte, event string) []byte {
+	for {
+		arr, ok := eventArray(doc, event)
+		if !ok {
+			return doc
 		}
-		for _, e := range entries {
-			if !isShoalCommand(entryCommand(e)) {
+		next, removed := removeFirstShoalEntry(doc, arr)
+		if !removed {
+			return doc
+		}
+		doc = next
+	}
+}
+
+func removeFirstShoalEntry(doc []byte, arr span) ([]byte, bool) {
+	groups := arrayElements(doc, arr)
+	for gi, g := range groups {
+		hm, ok := member(doc, g, "hooks")
+		if !ok || doc[hm.val.start] != '[' {
+			continue
+		}
+		entries := arrayElements(doc, hm.val)
+		for ei, e := range entries {
+			var entry map[string]json.RawMessage
+			if json.Unmarshal(doc[e.start:e.end], &entry) != nil || !isShoalCommand(entryCommand(entry)) {
 				continue
 			}
-			shoal++
-			var timeout int
-			_ = json.Unmarshal(e["timeout"], &timeout)
-			exact = len(entries) == 1 && entryCommand(e) == want && timeout == hookTimeoutSeconds && string(e["type"]) == `"command"`
-		}
-	}
-	if shoal == 1 && exact {
-		return groups, true, nil
-	}
-
-	var out []hookGroup
-	for _, g := range groups {
-		entries, _ := groupEntries(g)
-		var kept []map[string]json.RawMessage
-		for _, e := range entries {
-			if !isShoalCommand(entryCommand(e)) {
-				kept = append(kept, e)
+			if len(entries) == 1 {
+				return removeItem(doc, arr, groups, gi), true
 			}
+			return removeItem(doc, hm.val, entries, ei), true
 		}
-		if len(kept) == len(entries) {
-			out = append(out, g)
-			continue
-		}
-		if len(kept) == 0 {
-			continue
-		}
-		raw, err := json.Marshal(kept)
-		if err != nil {
-			return nil, false, err
-		}
-		copied := hookGroup{}
-		for k, v := range g {
-			copied[k] = v
-		}
-		copied["hooks"] = raw
-		out = append(out, copied)
 	}
-	entry, err := json.Marshal([]map[string]any{{"type": "command", "command": want, "timeout": hookTimeoutSeconds}})
-	if err != nil {
-		return nil, false, err
+	return doc, false
+}
+
+// appendGroup adds group as the last group of hooks.<event>, creating the
+// "hooks" object and the event array when missing.
+func appendGroup(doc []byte, event string, group hookGroupOut, st jsonStyle) []byte {
+	top := topValue(doc)
+	hooks, ok := member(doc, top, "hooks")
+	if !ok {
+		doc = appendMember(doc, top, "hooks", "{}", st)
+		hooks, _ = member(doc, topValue(doc), "hooks")
 	}
-	return append(out, hookGroup{"hooks": entry}), false, nil
+	if _, ok := member(doc, hooks.val, event); !ok {
+		doc = appendMember(doc, hooks.val, event, "[]", st)
+	}
+	arr, _ := eventArray(doc, event)
+	return appendItem(doc, arr, arrayElements(doc, arr), st, func(ind string) string { return render(group, ind, st) })
 }
 
 // hasShoalHooks reports whether settings data registers any shoal hook.
@@ -229,20 +313,32 @@ func hookPreflight(ctx context.Context, root string) error {
 	return nil
 }
 
-// installHooks merges shoal's entries into <root>/.claude/settings.local.json.
-func installHooks(root, exe string) (string, bool, error) {
+// installHooks merges shoal's entries into <root>/.claude/settings.local.json
+// (its target, when that is a symlink). The first time it changes an existing
+// file it keeps the original bytes at bakPath; later runs never overwrite
+// that backup. The write is atomic and keeps the file's mode.
+func installHooks(root, exe, bakPath string) (string, bool, error) {
 	path := filepath.Join(root, ".claude", "settings.local.json")
-	data, err := os.ReadFile(path)
+	target := path
+	if info, err := os.Lstat(path); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+		if target, err = filepath.EvalSymlinks(path); err != nil {
+			return "", false, fail(ExitConfig, "%s is a symlink shoal cannot follow: %v", path, err)
+		}
+	}
+	data, err := os.ReadFile(target)
+	existed := err == nil
 	perm := fs.FileMode(0o600)
 	switch {
-	case err == nil:
-		if info, serr := os.Stat(path); serr == nil {
-			perm = info.Mode().Perm()
+	case existed:
+		info, serr := os.Stat(target)
+		if serr != nil {
+			return "", false, fmt.Errorf("stat %s: %w", target, serr)
 		}
+		perm = info.Mode().Perm()
 	case errors.Is(err, fs.ErrNotExist):
 		data = nil
 	default:
-		return "", false, fmt.Errorf("read %s: %w", path, err)
+		return "", false, fmt.Errorf("read %s: %w", target, err)
 	}
 	out, changed, err := mergeHooks(data, exe)
 	if err != nil {
@@ -251,10 +347,19 @@ func installHooks(root, exe string) (string, bool, error) {
 	if !changed {
 		return path, false, nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", false, fmt.Errorf("create %s: %w", filepath.Dir(path), err)
+	if existed {
+		if _, err := os.Stat(bakPath); errors.Is(err, fs.ErrNotExist) {
+			if err := writePrivate(bakPath, data); err != nil {
+				return "", false, fmt.Errorf("back up %s: %w", target, err)
+			}
+		} else if err != nil {
+			return "", false, fmt.Errorf("stat backup %s: %w", bakPath, err)
+		}
 	}
-	return path, true, writeFileAtomic(path, out, perm)
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return "", false, fmt.Errorf("create %s: %w", filepath.Dir(target), err)
+	}
+	return path, true, writeFileAtomic(target, out, perm)
 }
 
 // ensureExclude appends missing lines to <git-common-dir>/info/exclude.

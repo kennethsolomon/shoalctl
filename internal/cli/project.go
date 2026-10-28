@@ -164,7 +164,8 @@ func (p *project) lockTask(t store.Task, command string) (*lockfile.Lock, error)
 	return l, err
 }
 
-// writeFileAtomic writes through a temp file in the same dir and renames it.
+// writeFileAtomic writes through a temp file in the same dir, fsyncs it, sets
+// perm, and renames it over path, so readers see the old or the new file.
 func writeFileAtomic(path string, data []byte, perm fs.FileMode) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
@@ -174,6 +175,10 @@ func writeFileAtomic(path string, data []byte, perm fs.FileMode) error {
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("sync %s: %w", path, err)
 	}
 	if err := tmp.Chmod(perm); err != nil {
 		tmp.Close()
