@@ -293,7 +293,7 @@ func (env Env) reapAbandoned(ctx context.Context, p *project, t store.Task) erro
 	for _, r := range runs {
 		if testrun.GroupAlive(r.PID) {
 			live, err := testrun.ProcessStart(r.PID)
-			if r.PIDStart == "" || err != nil || live == r.PIDStart {
+			if r.PIDStart == "" || err != nil || testrun.SameStart(r.PIDStart, live) {
 				return fail(ExitBusy, "%s run %d of task %s is still running (pid %d) although the shoalctl that started it exited; "+
 					"stop it (on unix: kill -TERM -- -%d), then retry", r.Kind, r.ID, t.Slug, r.PID, r.PID)
 			}
