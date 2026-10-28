@@ -258,6 +258,86 @@ func TestRunTimeoutKillsProcessGroup(t *testing.T) {
 	}
 }
 
+// pidsGone waits until every pid in the files has exited.
+func pidsGone(t *testing.T, within time.Duration, files ...string) {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for _, f := range files {
+		pid, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("pid file: %v", err)
+		}
+		for exec.Command("kill", "-0", strings.TrimSpace(string(pid))).Run() == nil {
+			if time.Now().After(deadline) {
+				t.Fatalf("process %s from %s survived the interrupt", strings.TrimSpace(string(pid)), filepath.Base(f))
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+}
+
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if data, err := os.ReadFile(path); err == nil && len(strings.TrimSpace(string(data))) > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s never appeared", path)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestRunCancelStopsProcessGroup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh and kill; the Windows job object is covered by compile checks")
+	}
+	tests := []struct{ name, command string }{
+		{"polite suite", "echo $$ > sh.pid; sleep 30 & echo $! > child.pid; wait"},
+		{"child ignores SIGTERM", `echo $$ > sh.pid; sh -c 'trap "" TERM; echo $$ > child.pid; while :; do sleep 1; done' & wait`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec, dir := runSpec(t, "exit-code", tt.command)
+			var started int
+			spec.OnStart = func(pid int) { started = pid }
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan Outcome, 1)
+			go func() { done <- Run(ctx, spec) }()
+			waitForFile(t, filepath.Join(dir, "child.pid"))
+			begin := time.Now()
+			cancel()
+			out := <-done
+			if out.Status != StatusCancelled {
+				t.Fatalf("status = %s (%s), want cancelled", out.Status, out.Problem)
+			}
+			if took := time.Since(begin); took > killGrace+3*time.Second {
+				t.Fatalf("cancel took %s", took)
+			}
+			if started == 0 {
+				t.Fatal("OnStart was not called with the suite pid")
+			}
+			pidsGone(t, 2*time.Second, filepath.Join(dir, "sh.pid"), filepath.Join(dir, "child.pid"))
+			if GroupAlive(started) {
+				t.Fatalf("process group %d still alive", started)
+			}
+		})
+	}
+}
+
+func TestRunKillsLeftoverProcessesAfterSuiteExits(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh and kill")
+	}
+	spec, dir := runSpec(t, "exit-code", "sleep 30 & echo $! > child.pid; exit 0")
+	if out := Run(context.Background(), spec); out.Status != StatusCompleted {
+		t.Fatalf("status %s: %s", out.Status, out.Problem)
+	}
+	pidsGone(t, 2*time.Second, filepath.Join(dir, "child.pid"))
+}
+
 func TestRunDeletesStaleUntrackedReports(t *testing.T) {
 	testutil.Isolate(t)
 	repo := testutil.Repo(t)

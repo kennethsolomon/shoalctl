@@ -102,13 +102,20 @@ func (env Env) cmdStart(ctx context.Context, args []string) error {
 		return err
 	}
 
+	if err := env.reapAbandoned(ctx, p, t); err != nil {
+		return err
+	}
 	base, err := env.baseline(ctx, p, t, wt)
 	if err != nil {
 		return err
 	}
 	if base.Status != testrun.StatusCompleted {
-		if _, uerr := p.db.Update(ctx, t, []string{store.StageStarting}, "stage = ?", []any{store.StageBaselineFailed}, nil); uerr != nil {
+		// Recorded even after an interrupt, so the task shows as resumable.
+		if _, uerr := p.db.Update(context.WithoutCancel(ctx), t, []string{store.StageStarting}, "stage = ?", []any{store.StageBaselineFailed}, nil); uerr != nil {
 			return uerr
+		}
+		if base.Status == testrun.StatusCancelled {
+			return fail(ExitInterrupted, "interrupted: baseline run %d was cancelled and its processes stopped; run shoalctl start %s again to resume", base.ID, t.Slug)
 		}
 		return fail(ExitBaseline, "baseline run %d %s at %s; output: %s\nFix the test command or environment, then run shoalctl start %s again",
 			base.ID, base.Status, shortSHA(baseSHA), base.OutputPath, t.Slug)
@@ -246,8 +253,16 @@ func (env Env) runSuite(ctx context.Context, p *project, t store.Task, kind, sha
 	if err != nil {
 		return store.Run{}, err
 	}
+	// Bookkeeping writes outlive an interrupt, so the run is never left at
+	// running with no owner.
+	wctx := context.WithoutCancel(ctx)
+	var pidErr error
 	out := testrun.Run(ctx, testrun.Spec{Command: cfg.Command, Format: cfg.Format, JunitPath: cfg.JunitPath,
-		Timeout: p.cfg.TestTimeout(), Dir: wt, RunDir: p.runDir(run.ID)})
+		Timeout: p.cfg.TestTimeout(), Dir: wt, RunDir: p.runDir(run.ID),
+		OnStart: func(pid int) { pidErr = p.db.SetRunPID(wctx, run.ID, pid) }})
+	if pidErr != nil {
+		fmt.Fprintf(env.Stderr, "%s run %d: %v\n", kind, run.ID, pidErr)
+	}
 	if out.Problem != "" {
 		fmt.Fprintf(env.Stderr, "%s run %d: %s\n", kind, run.ID, out.Problem)
 	}
@@ -255,7 +270,33 @@ func (env Env) runSuite(ctx context.Context, p *project, t store.Task, kind, sha
 	for i, r := range out.Results {
 		results[i] = store.Result(r)
 	}
-	return p.db.FinishRun(ctx, run.ID, out.Status, out.ExitCode, results)
+	return p.db.FinishRun(wctx, run.ID, out.Status, out.ExitCode, results)
+}
+
+// reapAbandoned handles runs of this task still marked running. The caller
+// holds the task lock, so their owner has exited. A run whose suite is still
+// alive blocks the command: two suites must never share a worktree. A dead
+// one is marked error, with a note in its output.log.
+func (env Env) reapAbandoned(ctx context.Context, p *project, t store.Task) error {
+	runs, err := p.db.RunningRuns(ctx, t.ID)
+	if err != nil {
+		return err
+	}
+	for _, r := range runs {
+		if testrun.GroupAlive(r.PID) {
+			return fail(ExitBusy, "%s run %d of task %s is still running (pid %d) although the shoalctl that started it exited; "+
+				"stop it (on unix: kill -TERM -- -%d), then retry", r.Kind, r.ID, t.Slug, r.PID, r.PID)
+		}
+		if f, err := os.OpenFile(r.OutputPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600); err == nil {
+			fmt.Fprintf(f, "shoal: abandoned: the shoalctl that started this run exited before it finished; marked error at %s\n", nowUTC())
+			f.Close()
+		}
+		if _, err := p.db.FinishRun(ctx, r.ID, testrun.StatusError, nil, nil); err != nil {
+			return err
+		}
+		fmt.Fprintf(env.Stderr, "%s run %d of task %s was abandoned by an exited shoalctl; marked error\n", r.Kind, r.ID, t.Slug)
+	}
+	return nil
 }
 
 // launch opens a detached tmux window running claude in the worktree.

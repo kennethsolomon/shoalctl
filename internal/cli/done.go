@@ -114,13 +114,22 @@ func (env Env) cmdDone(ctx context.Context, args []string) error {
 		return err
 	}
 
+	if err := env.reapAbandoned(ctx, p, t); err != nil {
+		return err
+	}
 	fmt.Fprintf(env.Stdout, "final: running the test suite at %s ...\n", shortSHA(head))
 	final, err := env.runSuite(ctx, p, t, "final", head, wt)
 	if err != nil {
 		return err
 	}
+	if final.Status == testrun.StatusCancelled {
+		return fail(ExitInterrupted, "interrupted: final run %d was cancelled and its processes stopped; the task is still in-progress, run shoalctl done %s again", final.ID, t.Slug)
+	}
 	lint := env.step(ctx, p, wt, "lint", p.cfg.Stack.Lint, p.runDir(final.ID))
 	build := env.step(ctx, p, wt, "build", p.cfg.Stack.Build, p.runDir(final.ID))
+	if ctx.Err() != nil {
+		return fail(ExitInterrupted, "interrupted during lint or build; the task is still in-progress, run shoalctl done %s again", t.Slug)
+	}
 
 	commitsOut, err := gitx.Run(ctx, wt, "rev-list", "--reverse", t.BaseSHA+"..HEAD")
 	if err != nil {

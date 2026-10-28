@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/kennethsolomon/shoalctl/internal/gitx"
@@ -28,6 +30,8 @@ const (
 	ExitDependency = 7
 	ExitBusy       = 8
 	ExitUntrusted  = 12
+	// ExitInterrupted follows the shell convention of 128 + SIGINT.
+	ExitInterrupted = 130
 )
 
 // Env holds everything a command touches outside its arguments, so tests can
@@ -118,7 +122,11 @@ func Main(args []string, env Env, version string) int {
 		fmt.Fprint(env.Stderr, usage)
 		return ExitUsage
 	}
-	ctx := context.Background()
+	// SIGINT and SIGTERM cancel ctx instead of killing shoalctl, so a running
+	// suite is stopped and recorded as cancelled (testrun forwards the signal
+	// to the suite's process group).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	var err error
 	switch args[0] {
 	case "version", "--version":
@@ -147,6 +155,9 @@ func Main(args []string, env Env, version string) int {
 		return ExitOK
 	}
 	fmt.Fprintf(env.Stderr, "shoalctl %s: %v\n", args[0], err)
+	if ctx.Err() != nil {
+		return ExitInterrupted
+	}
 	return codeOf(err)
 }
 

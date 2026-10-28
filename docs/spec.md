@@ -210,7 +210,7 @@ Store the reasons. Point at git for everything else.
 | `messages` | `id, task_id, from_agent, to_agent, kind, subject, body, reply_to, created_at` | Agent-to-agent notes inside one task (§7.4). `to_agent = '*'` is a broadcast |
 | `message_reads` | `message_id, agent, read_at` | Per-recipient read state, so a broadcast is read once by each agent |
 | `contracts` | `task_id, version, sha256, frozen_at, frozen_by` | One row per frozen contract version |
-| `test_runs` | `id, task_id, kind(baseline\|gate\|qa\|repro\|final), sha, command, command_hash, format, fidelity(per-test\|suite), status(running\|completed\|error\|timeout), exit_code, attempts, total, passed, failed, skipped, output_path, pid, started_at, finished_at` | One row per suite run (§8.1) |
+| `test_runs` | `id, task_id, kind(baseline\|gate\|qa\|repro\|final), sha, command, command_hash, format, fidelity(per-test\|suite), status(running\|completed\|error\|timeout\|cancelled), exit_code, attempts, total, passed, failed, skipped, output_path, pid, started_at, finished_at` | One row per suite run (§8.1) |
 | `test_results` | `run_id, test_id, attempt, status(pass\|fail\|skip), duration_ms, message` | One row per test per attempt. PK `(run_id, test_id, attempt)` |
 | `test_quarantine` | `test_id, detected_run_id, reason, quarantined_at, released_at` | Flaky-at-baseline tests (§8.7) |
 | `coverage_files` | `run_id, path, lines_total, lines_covered` | Per-file coverage, when configured |
@@ -269,6 +269,7 @@ Every command uses the same codes. Hooks are the exception: they always exit 0 (
 | 10 | `done` refused |
 | 11 | `doctor` found problems it did not fix |
 | 12 | Claude Code has not trusted the main checkout, or its trust state can't be read (`start` preflight, §15.1) |
+| 130 | Interrupted by SIGINT or SIGTERM. A running suite was stopped and its run recorded as `cancelled` |
 
 ---
 
@@ -639,7 +640,7 @@ Commands that span several steps record a transient stage first (`starting`, `re
 | `PRAGMA integrity_check` and `foreign_key_check` | none: reports and exits 11 |
 | Migrations: applied checksums match the binary's | none: reports |
 | Task in a transient stage with no live lock holder | roll back to the previous stage |
-| `test_runs` stuck at `running` with a dead `pid` | mark `error` |
+| `test_runs` stuck at `running` with a dead `pid` | mark `error` (`start` and `done` already do this for their own task; a live `pid` blocks them with exit 8) |
 | Merge queue row at `rebasing` with no `merge.lock` holder | asks, then `git rebase --abort` in that worktree and resets the row to `waiting` |
 | Worktree recorded in the DB but missing on disk | mark the task `worktree-missing`; the human decides |
 | Directory under `worktrees/` with no task row | report only; never deleted |
@@ -877,9 +878,11 @@ Allowed from `new` (fresh) or `starting` / `baseline-failed` (resume). Any other
 2. Resolve the base: `[merge].base` for feature and bugfix, `[hotfix].production_ref` for hotfix. Record `base_ref` and `base_sha`. Set stage `starting` (optimistic update, §10.2).
 3. Under `git.lock`: if the worktree doesn't exist yet, `git worktree add -b <lane>/<slug> <worktree> <base_sha>`. If the branch already exists and the worktree doesn't, exit 5; shoal never reuses or deletes a branch it didn't create in this run.
 4. Write `<worktree>/.shoal/task.json` and `brief.md`.
-5. **Baseline** (§8.2): reuse a completed baseline for the same `base_sha` and `command_hash`, or run the suite now in the worktree, printing progress. Store `tasks.baseline_run_id`. On `error` or `timeout`: stage `baseline-failed`, print the run's `output.log` path, exit 6.
+5. **Baseline** (§8.2): reuse a completed baseline for the same `base_sha` and `command_hash`, or run the suite now in the worktree, printing progress. Store `tasks.baseline_run_id`. On `error` or `timeout`: stage `baseline-failed`, print the run's `output.log` path, exit 6. On SIGINT or SIGTERM: stage `baseline-failed`, run `cancelled`, exit 130 (see "Stopping a suite" below).
 6. Open the tmux window (below) and record `tmux_session`, `tmux_window` (the `#{window_id}`, for example `@12`), `model`, `started_at`.
 7. Set stage `in-progress`. Print the window and, if shoal created the tmux session, the attach command. Exit 0.
+
+**Stopping a suite.** Every suite (baseline, final, lint, build) runs in its own process group (a kill-on-close job object on Windows), and its pid is stored in `test_runs.pid`. On timeout, SIGINT, or SIGTERM, shoalctl sends SIGTERM to the whole group, then SIGKILL after 3 s, and records the run as `timeout` or `cancelled`; Ctrl-C at the terminal reaches shoalctl, which forwards it this way. Processes a suite leaves behind are killed when it exits. Before running a suite, `start` and `done` (holding the task lock, §10.3) look for runs of the task still marked `running`: their owner has exited, so a run whose process group is gone is marked `error` with a note in its `output.log`, and one whose suite is still alive (its shoalctl was SIGKILLed) makes the command exit 8 with the pid to stop. Two suites never run in one worktree at once.
 
 **tmux launch.** Inside tmux (`$TMUX` set), shoal uses the current session. Otherwise it uses session `shoal-<first 8 of id>`, creating it detached if needed (`tmux new-session -d -s <name> -n shoal`). Then:
 ```

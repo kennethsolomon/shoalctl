@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kennethsolomon/shoalctl/internal/gitx"
@@ -25,6 +26,7 @@ const (
 	StatusCompleted = "completed"
 	StatusError     = "error"
 	StatusTimeout   = "timeout"
+	StatusCancelled = "cancelled"
 
 	SuiteID     = "(suite)"
 	maxMessage  = 1000
@@ -38,7 +40,13 @@ type Spec struct {
 	Timeout   time.Duration
 	Dir       string // worktree the command runs in
 	RunDir    string // absolute dir for output.log and junit.xml
+	// OnStart, when set, receives the suite's pid (its process group id on
+	// unix) right after it starts.
+	OnStart func(pid int)
 }
+
+// killGrace is how long a suite gets to exit after SIGTERM before SIGKILL.
+const killGrace = 3 * time.Second
 
 type Result struct {
 	TestID     string
@@ -116,8 +124,7 @@ func Run(ctx context.Context, spec Spec) Outcome {
 	cmd := exec.CommandContext(runCtx, sh, "-c", command)
 	cmd.Dir = spec.Dir
 	cmd.Stderr = logf
-	cmd.WaitDelay = 5 * time.Second
-	setProcessGroup(cmd)
+	prepare(cmd)
 
 	var stdout *os.File
 	if spec.Format == "go-json" {
@@ -133,7 +140,16 @@ func Run(ctx context.Context, spec Spec) Outcome {
 		cmd.Stdout = logf
 	}
 
-	runErr := cmd.Run()
+	runErr, startErr := runInGroup(cmd, spec.OnStart)
+	if startErr != nil {
+		return note(fmt.Sprintf("test command could not start: %v", startErr))
+	}
+	if ctx.Err() != nil {
+		out.Status = StatusCancelled
+		out.Problem = "interrupted; the test command's processes were stopped"
+		fmt.Fprintf(logf, "shoal: %s\n", out.Problem)
+		return out
+	}
 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 		out.Status = StatusTimeout
 		out.Problem = fmt.Sprintf("test command ran past the %s timeout and was killed", spec.Timeout)
@@ -199,6 +215,51 @@ func Run(ctx context.Context, spec Spec) Outcome {
 	}
 	out.Status = StatusCompleted
 	return out
+}
+
+// runInGroup runs cmd in its own process group (a job object on Windows).
+// When cmd's context ends, the whole group gets SIGTERM, then SIGKILL after
+// killGrace. Processes the suite leaves behind are killed once it exits, so
+// no test process outlives the run.
+func runInGroup(cmd *exec.Cmd, onStart func(pid int)) (runErr, startErr error) {
+	var mu sync.Mutex
+	var grp *procGroup
+	var hardKill *time.Timer
+	cmd.Cancel = func() error {
+		mu.Lock()
+		defer mu.Unlock()
+		if grp == nil {
+			return cmd.Process.Kill()
+		}
+		g := grp
+		hardKill = time.AfterFunc(killGrace, func() { _ = g.kill() })
+		return g.terminate()
+	}
+	cmd.WaitDelay = killGrace + 2*time.Second
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	g, err := attach(cmd)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, err
+	}
+	mu.Lock()
+	grp = g
+	mu.Unlock()
+	if onStart != nil {
+		onStart(cmd.Process.Pid)
+	}
+	runErr = cmd.Wait()
+	mu.Lock()
+	if hardKill != nil {
+		hardKill.Stop()
+	}
+	mu.Unlock()
+	_ = g.kill()
+	g.close()
+	return runErr, nil
 }
 
 func (o Outcome) fail(problem string) Outcome {

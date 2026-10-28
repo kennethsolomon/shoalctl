@@ -23,6 +23,7 @@ type Run struct {
 	Failed      int
 	Skipped     int
 	OutputPath  string
+	PID         int // the suite's pid (its process group on unix), 0 until it starts
 	StartedAt   string
 	FinishedAt  string
 }
@@ -35,13 +36,13 @@ type Result struct {
 }
 
 const runColumns = `id, COALESCE(task_id, 0), kind, sha, command, command_hash, format, fidelity, status, exit_code,
-	total, passed, failed, skipped, output_path, started_at, COALESCE(finished_at, '')`
+	total, passed, failed, skipped, output_path, COALESCE(pid, 0), started_at, COALESCE(finished_at, '')`
 
 func scanRun(row interface{ Scan(...any) error }) (Run, error) {
 	var r Run
 	var exit sql.NullInt64
 	err := row.Scan(&r.ID, &r.TaskID, &r.Kind, &r.SHA, &r.Command, &r.CommandHash, &r.Format, &r.Fidelity, &r.Status,
-		&exit, &r.Total, &r.Passed, &r.Failed, &r.Skipped, &r.OutputPath, &r.StartedAt, &r.FinishedAt)
+		&exit, &r.Total, &r.Passed, &r.Failed, &r.Skipped, &r.OutputPath, &r.PID, &r.StartedAt, &r.FinishedAt)
 	if exit.Valid {
 		code := int(exit.Int64)
 		r.ExitCode = &code
@@ -72,6 +73,38 @@ func (s *Store) StartRun(ctx context.Context, r Run, outputPath func(id int64) s
 		return Run{}, err
 	}
 	return s.GetRun(ctx, id)
+}
+
+// SetRunPID records the pid of a running suite, so a later command can tell
+// whether a run its owner abandoned is still going.
+func (s *Store) SetRunPID(ctx context.Context, id int64, pid int) error {
+	return s.write(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE test_runs SET pid = ? WHERE id = ? AND status = 'running'`, pid, id); err != nil {
+			return fmt.Errorf("set pid of run %d: %w", id, err)
+		}
+		return nil
+	})
+}
+
+// RunningRuns returns a task's runs still marked running, oldest first.
+func (s *Store) RunningRuns(ctx context.Context, taskID int64) ([]Run, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+runColumns+` FROM test_runs WHERE task_id = ? AND status = 'running' ORDER BY id`, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("list running runs of task %d: %w", taskID, err)
+	}
+	defer rows.Close()
+	var out []Run
+	for rows.Next() {
+		r, err := scanRun(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan run of task %d: %w", taskID, err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list running runs of task %d: %w", taskID, err)
+	}
+	return out, nil
 }
 
 // FinishRun stores the outcome and per-test results of a run in one transaction.
