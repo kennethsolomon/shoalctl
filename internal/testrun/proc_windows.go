@@ -5,6 +5,7 @@ package testrun
 import (
 	"fmt"
 	"os/exec"
+	"strconv"
 	"syscall"
 	"unsafe"
 
@@ -71,4 +72,20 @@ func GroupAlive(pid int) bool {
 		return false
 	}
 	return code == 259 // STILL_ACTIVE
+}
+
+// ProcessStart returns the creation time of process pid. Together with the
+// pid it identifies a process, since a pid can be reused once its process
+// exits.
+func ProcessStart(pid int) (string, error) {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return "", fmt.Errorf("open process %d: %w", pid, err)
+	}
+	defer windows.CloseHandle(h)
+	var created, exited, kernel, user windows.Filetime
+	if err := windows.GetProcessTimes(h, &created, &exited, &kernel, &user); err != nil {
+		return "", fmt.Errorf("read start time of process %d: %w", pid, err)
+	}
+	return strconv.FormatInt(created.Nanoseconds(), 10), nil
 }

@@ -71,6 +71,10 @@ func TestOpenSettings(t *testing.T) {
 }
 
 func TestMigrateTwiceIsNoop(t *testing.T) {
+	migs, err := Migrations()
+	if err != nil {
+		t.Fatal(err)
+	}
 	s, path := openTest(t)
 	before := schemaSnapshot(t, s)
 	s.Close()
@@ -84,10 +88,10 @@ func TestMigrateTwiceIsNoop(t *testing.T) {
 		t.Fatalf("schema changed on second open:\n%s\nvs\n%s", before, after)
 	}
 	var n, v int
-	if err := s2.db.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&n); err != nil || n != 1 {
+	if err := s2.db.QueryRow("SELECT count(*) FROM schema_migrations").Scan(&n); err != nil || n != len(migs) {
 		t.Fatalf("schema_migrations rows = %d, %v", n, err)
 	}
-	if err := s2.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 1 {
+	if err := s2.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != len(migs) {
 		t.Fatalf("user_version = %d, %v", v, err)
 	}
 	if _, err := os.Stat(path + ".bak-1"); !errors.Is(err, os.ErrNotExist) {
@@ -96,6 +100,10 @@ func TestMigrateTwiceIsNoop(t *testing.T) {
 }
 
 func TestNewerSchemaRefused(t *testing.T) {
+	migs, err := Migrations()
+	if err != nil {
+		t.Fatal(err)
+	}
 	s, path := openTest(t)
 	if _, err := s.db.Exec("PRAGMA user_version = 99"); err != nil {
 		t.Fatal(err)
@@ -105,7 +113,7 @@ func TestNewerSchemaRefused(t *testing.T) {
 		opts := testOpts()
 		opts.Migrate = migrate
 		_, err := Open(context.Background(), path, opts)
-		if !errors.Is(err, ErrSchemaTooNew) || !strings.Contains(err.Error(), "schema 99; this shoalctl knows 1") {
+		if !errors.Is(err, ErrSchemaTooNew) || !strings.Contains(err.Error(), fmt.Sprintf("schema 99; this shoalctl knows %d", len(migs))) {
 			t.Fatalf("migrate=%v: got %v, want ErrSchemaTooNew", migrate, err)
 		}
 	}
@@ -119,18 +127,19 @@ func TestLaterMigrationBacksUpAndApplies(t *testing.T) {
 	s, path := openTest(t)
 	s.Close()
 
-	next := append(append([]Migration{}, migs...), Migration{Version: 2, Name: "extra", SQL: "CREATE TABLE extra (x INTEGER);"})
+	v := len(migs) + 1
+	next := append(append([]Migration{}, migs...), Migration{Version: v, Name: "extra", SQL: "CREATE TABLE extra (x INTEGER);"})
 	s2, err := open(context.Background(), path, testOpts(), next)
 	if err != nil {
-		t.Fatalf("migrate to 2: %v", err)
+		t.Fatalf("migrate to %d: %v", v, err)
 	}
 	defer s2.Close()
-	if _, err := os.Stat(path + ".bak-2"); err != nil {
-		t.Fatalf("backup before migration 2: %v", err)
+	if _, err := os.Stat(fmt.Sprintf("%s.bak-%d", path, v)); err != nil {
+		t.Fatalf("backup before migration %d: %v", v, err)
 	}
-	var v int
-	if err := s2.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 2 {
-		t.Fatalf("user_version = %d, %v", v, err)
+	var got int
+	if err := s2.db.QueryRow("PRAGMA user_version").Scan(&got); err != nil || got != v {
+		t.Fatalf("user_version = %d, %v", got, err)
 	}
 }
 
@@ -138,7 +147,7 @@ func TestFailedMigrationRollsBack(t *testing.T) {
 	migs, _ := Migrations()
 	s, path := openTest(t)
 	s.Close()
-	bad := append(append([]Migration{}, migs...), Migration{Version: 2, Name: "bad", SQL: "CREATE TABLE ok (x); CREATE TABLE tasks (x);"})
+	bad := append(append([]Migration{}, migs...), Migration{Version: len(migs) + 1, Name: "bad", SQL: "CREATE TABLE ok (x); CREATE TABLE tasks (x);"})
 	if _, err := open(context.Background(), path, testOpts(), bad); err == nil {
 		t.Fatal("want error from a failing migration")
 	}

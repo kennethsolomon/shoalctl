@@ -210,7 +210,7 @@ Store the reasons. Point at git for everything else.
 | `messages` | `id, task_id, from_agent, to_agent, kind, subject, body, reply_to, created_at` | Agent-to-agent notes inside one task (§7.4). `to_agent = '*'` is a broadcast |
 | `message_reads` | `message_id, agent, read_at` | Per-recipient read state, so a broadcast is read once by each agent |
 | `contracts` | `task_id, version, sha256, frozen_at, frozen_by` | One row per frozen contract version |
-| `test_runs` | `id, task_id, kind(baseline\|gate\|qa\|repro\|final), sha, command, command_hash, format, fidelity(per-test\|suite), status(running\|completed\|error\|timeout\|cancelled), exit_code, attempts, total, passed, failed, skipped, output_path, pid, started_at, finished_at` | One row per suite run (§8.1) |
+| `test_runs` | `id, task_id, kind(baseline\|gate\|qa\|repro\|final), sha, command, command_hash, format, fidelity(per-test\|suite), status(running\|completed\|error\|timeout\|cancelled), exit_code, attempts, total, passed, failed, skipped, output_path, pid, pid_start, started_at, finished_at` | One row per suite run (§8.1) |
 | `test_results` | `run_id, test_id, attempt, status(pass\|fail\|skip), duration_ms, message` | One row per test per attempt. PK `(run_id, test_id, attempt)` |
 | `test_quarantine` | `test_id, detected_run_id, reason, quarantined_at, released_at` | Flaky-at-baseline tests (§8.7) |
 | `coverage_files` | `run_id, path, lines_total, lines_covered` | Per-file coverage, when configured |
@@ -882,7 +882,7 @@ Allowed from `new` (fresh) or `starting` / `baseline-failed` (resume). Any other
 6. Open the tmux window (below) and record `tmux_session`, `tmux_window` (the `#{window_id}`, for example `@12`), `model`, `started_at`.
 7. Set stage `in-progress`. Print the window and, if shoal created the tmux session, the attach command. Exit 0.
 
-**Stopping a suite.** Every suite (baseline, final, lint, build) runs in its own process group (a kill-on-close job object on Windows), and its pid is stored in `test_runs.pid`. On timeout, SIGINT, or SIGTERM, shoalctl sends SIGTERM to the whole group, then SIGKILL after 3 s, and records the run as `timeout` or `cancelled`; Ctrl-C at the terminal reaches shoalctl, which forwards it this way. Processes a suite leaves behind are killed when it exits. Before running a suite, `start` and `done` (holding the task lock, §10.3) look for runs of the task still marked `running`: their owner has exited, so a run whose process group is gone is marked `error` with a note in its `output.log`, and one whose suite is still alive (its shoalctl was SIGKILLed) makes the command exit 8 with the pid to stop. Two suites never run in one worktree at once.
+**Stopping a suite.** Every suite (baseline, final, lint, build) runs in its own process group (a kill-on-close job object on Windows), and its pid is stored in `test_runs.pid` with that process's start time in `test_runs.pid_start` (`ps -o lstart=` on unix, the creation time on Windows). On timeout, SIGINT, or SIGTERM, shoalctl sends SIGTERM to the whole group, then SIGKILL after 3 s, and records the run as `timeout` or `cancelled`; Ctrl-C at the terminal reaches shoalctl, which forwards it this way. Processes a suite leaves behind are killed when it exits. Before running a suite, `start` and `done` (holding the task lock, §10.3) look for runs of the task still marked `running`: their owner has exited, so a run whose process group is gone is marked `error` with a note in its `output.log`, and one whose suite is still alive (its shoalctl was SIGKILLed) makes the command exit 8 with the pid to stop. A live pid counts as the suite only when its start time matches `pid_start`; otherwise (the pid was reused, for example after a reboot, or no start time was recorded) shoal says it could not confirm the process, leaves it alone, suggests no kill command, and marks the run `error`. Two suites never run in one worktree at once.
 
 **tmux launch.** Inside tmux (`$TMUX` set), shoal uses the current session. Otherwise it uses session `shoal-<first 8 of id>`, creating it detached if needed (`tmux new-session -d -s <name> -n shoal`). Then:
 ```
@@ -1029,6 +1029,7 @@ CREATE TABLE test_runs (
   skipped      INTEGER NOT NULL DEFAULT 0,
   output_path  TEXT NOT NULL,
   pid          INTEGER,
+  pid_start    TEXT,                           -- start time of the process at pid (migration 2)
   started_at   TEXT NOT NULL,
   finished_at  TEXT
 );

@@ -23,7 +23,8 @@ type Run struct {
 	Failed      int
 	Skipped     int
 	OutputPath  string
-	PID         int // the suite's pid (its process group on unix), 0 until it starts
+	PID         int    // the suite's pid (its process group on unix), 0 until it starts
+	PIDStart    string // the start time of the process at PID, "" when unknown
 	StartedAt   string
 	FinishedAt  string
 }
@@ -36,13 +37,13 @@ type Result struct {
 }
 
 const runColumns = `id, COALESCE(task_id, 0), kind, sha, command, command_hash, format, fidelity, status, exit_code,
-	total, passed, failed, skipped, output_path, COALESCE(pid, 0), started_at, COALESCE(finished_at, '')`
+	total, passed, failed, skipped, output_path, COALESCE(pid, 0), COALESCE(pid_start, ''), started_at, COALESCE(finished_at, '')`
 
 func scanRun(row interface{ Scan(...any) error }) (Run, error) {
 	var r Run
 	var exit sql.NullInt64
 	err := row.Scan(&r.ID, &r.TaskID, &r.Kind, &r.SHA, &r.Command, &r.CommandHash, &r.Format, &r.Fidelity, &r.Status,
-		&exit, &r.Total, &r.Passed, &r.Failed, &r.Skipped, &r.OutputPath, &r.PID, &r.StartedAt, &r.FinishedAt)
+		&exit, &r.Total, &r.Passed, &r.Failed, &r.Skipped, &r.OutputPath, &r.PID, &r.PIDStart, &r.StartedAt, &r.FinishedAt)
 	if exit.Valid {
 		code := int(exit.Int64)
 		r.ExitCode = &code
@@ -75,11 +76,12 @@ func (s *Store) StartRun(ctx context.Context, r Run, outputPath func(id int64) s
 	return s.GetRun(ctx, id)
 }
 
-// SetRunPID records the pid of a running suite, so a later command can tell
-// whether a run its owner abandoned is still going.
-func (s *Store) SetRunPID(ctx context.Context, id int64, pid int) error {
+// SetRunPID records the pid of a running suite and that process's start
+// time, so a later command can tell whether a run its owner abandoned is
+// still going and that the pid was not reused.
+func (s *Store) SetRunPID(ctx context.Context, id int64, pid int, start string) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `UPDATE test_runs SET pid = ? WHERE id = ? AND status = 'running'`, pid, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE test_runs SET pid = ?, pid_start = ? WHERE id = ? AND status = 'running'`, pid, start, id); err != nil {
 			return fmt.Errorf("set pid of run %d: %w", id, err)
 		}
 		return nil

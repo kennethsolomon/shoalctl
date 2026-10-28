@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -169,7 +170,7 @@ func TestStartRefusesWhileAbandonedSuiteRuns(t *testing.T) {
 	}
 
 	errOut := h.expectCode(ExitBusy, "start", "1")
-	for _, want := range []string{"still running", strconv.Itoa(sh)} {
+	for _, want := range []string{"still running", strconv.Itoa(sh), "kill -TERM -- -" + strconv.Itoa(sh)} {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("stderr lacks %q: %s", want, errOut)
 		}
@@ -191,6 +192,54 @@ func TestStartRefusesWhileAbandonedSuiteRuns(t *testing.T) {
 	log := readFile(t, filepath.Join(p.runDir(1), "output.log"))
 	if !strings.Contains(log, "abandoned") {
 		t.Errorf("output.log of the abandoned run should say so:\n%s", log)
+	}
+}
+
+// TestStartTreatsReusedPIDAsStale reproduces a running run whose recorded pid
+// now leads an unrelated process group (say, after a reboot): start must not
+// block on it or tell the user to kill that group.
+func TestStartTreatsReusedPIDAsStale(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		start any // recorded pid_start; nil is a row from before it was recorded
+	}{{"different start time", "Thu Jan  1 00:00:00 1970"}, {"no recorded identity", nil}} {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t).withSession()
+			p := h.initWith(quickSuite)
+			h.mustRun("new", "feature", "Reused pid")
+			other := exec.Command("sleep", "30")
+			other.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			if err := other.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { other.Process.Kill(); other.Wait() })
+
+			db := openRaw(t, p.dbPath())
+			_, err := db.Exec(`INSERT INTO test_runs (task_id, kind, sha, command, command_hash, format, fidelity, status,
+				output_path, pid, pid_start, started_at) VALUES (?, 'baseline', 'abc', 'true', 'h', 'exit-code', 'suite', 'running', ?, ?, ?, '2026-01-01T00:00:00Z')`,
+				h.task("1").ID, filepath.Join(t.TempDir(), "output.log"), other.Process.Pid, tt.start)
+			db.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, _, errOut := h.run("start", "1")
+			if strings.Contains(errOut, "kill -TERM") {
+				t.Errorf("start suggested killing an unconfirmed process group:\n%s", errOut)
+			}
+			if !strings.Contains(errOut, "could not confirm") {
+				t.Errorf("stderr should say the pid's identity could not be confirmed:\n%s", errOut)
+			}
+			raw := openRaw(t, p.dbPath())
+			defer raw.Close()
+			var status string
+			if err := raw.QueryRow(`SELECT status FROM test_runs WHERE id = 1`).Scan(&status); err != nil || status != "error" {
+				t.Fatalf("stale run status %q (%v), want error", status, err)
+			}
+			if !alive(other.Process.Pid) {
+				t.Fatal("the unrelated process was killed")
+			}
+		})
 	}
 }
 

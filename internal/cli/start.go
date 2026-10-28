@@ -259,7 +259,13 @@ func (env Env) runSuite(ctx context.Context, p *project, t store.Task, kind, sha
 	var pidErr error
 	out := testrun.Run(ctx, testrun.Spec{Command: cfg.Command, Format: cfg.Format, JunitPath: cfg.JunitPath,
 		Timeout: p.cfg.TestTimeout(), Dir: wt, RunDir: p.runDir(run.ID),
-		OnStart: func(pid int) { pidErr = p.db.SetRunPID(wctx, run.ID, pid) }})
+		OnStart: func(pid int) {
+			start, err := testrun.ProcessStart(pid)
+			if err != nil {
+				fmt.Fprintf(env.Stderr, "%s run %d: %v; a later command will not be able to confirm this suite is still running\n", kind, run.ID, err)
+			}
+			pidErr = p.db.SetRunPID(wctx, run.ID, pid, start)
+		}})
 	if pidErr != nil {
 		fmt.Fprintf(env.Stderr, "%s run %d: %v\n", kind, run.ID, pidErr)
 	}
@@ -276,7 +282,9 @@ func (env Env) runSuite(ctx context.Context, p *project, t store.Task, kind, sha
 // reapAbandoned handles runs of this task still marked running. The caller
 // holds the task lock, so their owner has exited. A run whose suite is still
 // alive blocks the command: two suites must never share a worktree. A dead
-// one is marked error, with a note in its output.log.
+// one, or one whose pid now belongs to another process (its start time does
+// not match the recorded one, or was never recorded), is marked error, with a
+// note in its output.log.
 func (env Env) reapAbandoned(ctx context.Context, p *project, t store.Task) error {
 	runs, err := p.db.RunningRuns(ctx, t.ID)
 	if err != nil {
@@ -284,8 +292,13 @@ func (env Env) reapAbandoned(ctx context.Context, p *project, t store.Task) erro
 	}
 	for _, r := range runs {
 		if testrun.GroupAlive(r.PID) {
-			return fail(ExitBusy, "%s run %d of task %s is still running (pid %d) although the shoalctl that started it exited; "+
-				"stop it (on unix: kill -TERM -- -%d), then retry", r.Kind, r.ID, t.Slug, r.PID, r.PID)
+			live, err := testrun.ProcessStart(r.PID)
+			if r.PIDStart != "" && err == nil && live == r.PIDStart {
+				return fail(ExitBusy, "%s run %d of task %s is still running (pid %d) although the shoalctl that started it exited; "+
+					"stop it (on unix: kill -TERM -- -%d), then retry", r.Kind, r.ID, t.Slug, r.PID, r.PID)
+			}
+			fmt.Fprintf(env.Stderr, "%s run %d of task %s: pid %d is alive, but shoal could not confirm it is this run's suite (the pid may have been reused); leaving that process alone\n",
+				r.Kind, r.ID, t.Slug, r.PID)
 		}
 		if f, err := os.OpenFile(r.OutputPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600); err == nil {
 			fmt.Fprintf(f, "shoal: abandoned: the shoalctl that started this run exited before it finished; marked error at %s\n", nowUTC())

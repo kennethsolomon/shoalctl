@@ -527,3 +527,16 @@ func TestJunitPathScopedToXMLReports(t *testing.T) {
 		}
 	})
 }
+
+func TestProcessStartIdentifiesProcess(t *testing.T) {
+	a, err := ProcessStart(os.Getpid())
+	if err != nil || a == "" {
+		t.Fatalf("ProcessStart(self) = %q, %v", a, err)
+	}
+	if b, err := ProcessStart(os.Getpid()); err != nil || b != a {
+		t.Fatalf("ProcessStart(self) changed: %q then %q (%v)", a, b, err)
+	}
+	if _, err := ProcessStart(-1); err == nil {
+		t.Fatal("ProcessStart(-1) succeeded")
+	}
+}

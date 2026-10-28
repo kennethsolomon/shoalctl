@@ -4,7 +4,11 @@ package testrun
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
 )
 
@@ -41,4 +45,18 @@ func GroupAlive(pid int) bool {
 	}
 	err := syscall.Kill(-pid, 0)
 	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+// ProcessStart returns the start time of process pid as ps reports it
+// (lstart, in the C locale). Together with the pid it identifies a process,
+// since a pid can be reused once its process exits.
+func ProcessStart(pid int) (string, error) {
+	cmd := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid))
+	cmd.Env = append(os.Environ(), "LC_ALL=C", "TZ=UTC")
+	out, err := cmd.Output()
+	start := strings.Join(strings.Fields(string(out)), " ")
+	if err != nil || start == "" {
+		return "", fmt.Errorf("read start time of pid %d with ps: %v (output %q)", pid, err, out)
+	}
+	return start, nil
 }
