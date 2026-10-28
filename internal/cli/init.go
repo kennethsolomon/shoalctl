@@ -26,6 +26,9 @@ func (env Env) cmdInit(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := hookPreflight(ctx, p.root); err != nil {
+		return err
+	}
 	meta, exists, err := readMeta(p.metaPath())
 	if err != nil {
 		return err

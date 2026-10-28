@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/kennethsolomon/shoalctl/internal/gitx"
 )
 
 const hookTimeoutSeconds = 10
@@ -207,17 +210,27 @@ func hasShoalHooks(data []byte) (bool, error) {
 	return false, nil
 }
 
-// installHooks merges shoal's entries into <root>/.claude/settings.local.json.
-func installHooks(root, exe string) (string, bool, error) {
+// hookPreflight refuses, before init changes anything, a repo where shoal's
+// hook file cannot stay out of git or would double-register hooks.
+func hookPreflight(ctx context.Context, root string) error {
+	const local = ".claude/settings.local.json"
+	if _, err := gitx.Run(ctx, root, "ls-files", "--error-unmatch", "--", local); err == nil {
+		return fail(ExitConfig, "%s is tracked by git, so shoal's hook entries would show up as a change in git status (stealth mode adds it to info/exclude, which does not apply to tracked files). "+
+			"Untrack it with `git rm --cached %s` and commit, or move its contents to .claude/settings.json, then run shoalctl init again. Nothing was changed", filepath.Join(root, local), local)
+	}
 	committed := filepath.Join(root, ".claude", "settings.json")
 	if data, err := os.ReadFile(committed); err == nil {
 		if found, err := hasShoalHooks(data); err == nil && found {
-			return "", false, fail(ExitConfig, "%s already registers shoalctl hooks; remove them there so hooks do not fire twice", committed)
+			return fail(ExitConfig, "%s already registers shoalctl hooks; remove them there so hooks do not fire twice", committed)
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
-		return "", false, fmt.Errorf("read %s: %w", committed, err)
+		return fmt.Errorf("read %s: %w", committed, err)
 	}
+	return nil
+}
 
+// installHooks merges shoal's entries into <root>/.claude/settings.local.json.
+func installHooks(root, exe string) (string, bool, error) {
 	path := filepath.Join(root, ".claude", "settings.local.json")
 	data, err := os.ReadFile(path)
 	perm := fs.FileMode(0o600)

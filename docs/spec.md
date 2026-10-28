@@ -850,7 +850,7 @@ Other keys in §4.3 are parsed and validated but have no effect until their phas
 `new` → `starting` → `in-progress` → `done`, with `baseline-failed` as a resumable side stage of `starting`. Stage is a plain `TEXT` column validated in code, so later phases add stages without rebuilding the table.
 
 #### `shoalctl init [--commit-config] [--rebind]`
-1. Resolve the main checkout and project id. Not a git repo or a bare repo: exit 3.
+1. Resolve the main checkout and project id. Not a git repo or a bare repo: exit 3. Then a preflight that runs before anything is written: if git tracks `.claude/settings.local.json` (an `info/exclude` entry cannot hide changes to a tracked file, so stealth would break), or the committed `.claude/settings.json` already registers shoal hooks, exit 3 with the fix and change nothing.
 2. If `project.json` exists with a different `root`, exit 3 ("project <id> is registered at <root>"), unless `--rebind`, which updates `root`.
 3. Create the directories, open `memory.db`, apply migrations (§10.6).
 4. If no config exists, write a commented template: to `<repo>/.shoal.toml` with `--commit-config` (shoal does not commit it), otherwise to the stealth path. If `go.mod` exists at the root, the template sets `command = "go test -json ./..."` and `format = "go-json"`; otherwise `command` is empty and `init` prints the file to edit.

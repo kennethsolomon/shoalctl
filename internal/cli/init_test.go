@@ -212,6 +212,36 @@ func TestInitRefusesInvalidSettings(t *testing.T) {
 	}
 }
 
+func TestInitRefusesTrackedLocalSettings(t *testing.T) {
+	h := newHarness(t)
+	settings := filepath.Join(h.repo, ".claude", "settings.local.json")
+	const body = `{"permissions": {"allow": ["Bash(ls)"]}}`
+	testutil.WriteFile(t, settings, body)
+	testutil.Git(t, h.repo, "add", ".claude/settings.local.json")
+	testutil.Git(t, h.repo, "commit", "-q", "-m", "track local settings")
+	exclude := filepath.Join(h.repo, ".git", "info", "exclude")
+	excludeBefore, _ := os.ReadFile(exclude)
+
+	errOut := h.expectCode(ExitConfig, "init")
+	for _, want := range []string{"tracked", "git rm --cached .claude/settings.local.json"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr lacks %q: %s", want, errOut)
+		}
+	}
+	if got := readFile(t, settings); got != body {
+		t.Errorf("settings changed: %s", got)
+	}
+	if after, _ := os.ReadFile(exclude); string(after) != string(excludeBefore) {
+		t.Errorf("info/exclude changed:\n%s", after)
+	}
+	if status := testutil.Git(t, h.repo, "status", "--porcelain"); status != "" {
+		t.Errorf("repo dirty after refused init:\n%s", status)
+	}
+	if _, err := os.Stat(h.project().dir); !os.IsNotExist(err) {
+		t.Errorf("refused init left project state behind: %v", err)
+	}
+}
+
 func TestInitRefusesShoalHooksInCommittedSettings(t *testing.T) {
 	h := newHarness(t)
 	testutil.WriteFile(t, filepath.Join(h.repo, ".claude", "settings.json"),
