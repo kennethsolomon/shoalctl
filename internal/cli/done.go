@@ -67,6 +67,7 @@ type verification struct {
 
 func (env Env) cmdDone(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("done", flag.ContinueOnError)
+	force := fs.Bool("force", false, "run even though the task's claude session is still running")
 	pos, err := parseArgs(fs, args, 1)
 	if err != nil {
 		return err
@@ -95,6 +96,9 @@ func (env Env) cmdDone(ctx context.Context, args []string) error {
 	if _, err := os.Stat(wt); err != nil {
 		return fail(ExitState, "worktree %s of task %s is missing: %v", wt, t.Slug, err)
 	}
+	if err := waitIndexLock(ctx, wt); err != nil {
+		return err
+	}
 	if dirty, err := gitx.Run(ctx, wt, "status", "--porcelain"); err != nil {
 		return err
 	} else if dirty != "" {
@@ -108,6 +112,11 @@ func (env Env) cmdDone(ctx context.Context, args []string) error {
 	sm, err := readSummary(filepath.Join(wt, ".shoal", "summary.json"))
 	if err != nil {
 		return err
+	}
+	if !*force {
+		if err := env.requireSessionEnded(ctx, t); err != nil {
+			return err
+		}
 	}
 	head, err := gitx.Run(ctx, wt, "rev-parse", "HEAD")
 	if err != nil {
@@ -129,6 +138,9 @@ func (env Env) cmdDone(ctx context.Context, args []string) error {
 	build := env.step(ctx, p, wt, "build", p.cfg.Stack.Build, p.runDir(final.ID))
 	if ctx.Err() != nil {
 		return fail(ExitInterrupted, "interrupted during lint or build; the task is still in-progress, run shoalctl done %s again", t.Slug)
+	}
+	if err := requireUnchanged(ctx, wt, head, t.Slug); err != nil {
+		return err
 	}
 
 	commitsOut, err := gitx.Run(ctx, wt, "rev-list", "--reverse", t.BaseSHA+"..HEAD")
@@ -183,6 +195,81 @@ func (env Env) cmdDone(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Fprintln(env.Stdout, reportPath)
+	return nil
+}
+
+// indexLockWait bounds how long done waits for a git command in the
+// worktree (the agent committing) to release index.lock.
+var indexLockWait = 10 * time.Second
+
+func waitIndexLock(ctx context.Context, wt string) error {
+	path, err := gitx.Run(ctx, wt, "rev-parse", "--git-path", "index.lock")
+	if err != nil {
+		return err
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(wt, path)
+	}
+	deadline := time.Now().Add(indexLockWait)
+	for {
+		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("check %s: %w", path, err)
+		}
+		if time.Now().After(deadline) {
+			return fail(ExitDoneRefused, "git index.lock exists at %s, so a git command (likely the agent committing) is running in %s; done waited %s. "+
+				"Retry once it finishes. If no git process is running, the lock is stale: remove it and retry. --force does not skip this check",
+				path, wt, indexLockWait)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+// requireSessionEnded refuses while the task's claude session is still
+// running: its tmux window exists with a live pane (claude is the pane's
+// process, and remain-on-exit keeps the pane, dead, after claude exits).
+func (env Env) requireSessionEnded(ctx context.Context, t store.Task) error {
+	if t.TmuxWindow == "" {
+		return nil
+	}
+	out, err := env.tmux(ctx, "list-panes", "-t", t.TmuxWindow, "-F", "#{pane_dead}")
+	if err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, "no server running") || strings.Contains(msg, "can't find") || strings.Contains(msg, "error connecting") {
+			return nil // the window or the whole tmux server is gone
+		}
+		return fmt.Errorf("check the claude session of task %s: %w", t.Slug, err)
+	}
+	for _, dead := range strings.Fields(out) {
+		if dead == "0" {
+			return fail(ExitDoneRefused, "the claude session in tmux window %s (session %s) is still running, so the agent may still be editing or committing. "+
+				"Exit claude in that window (/exit), then run shoalctl done %s again. If the agent has finished, run shoalctl done --force %s",
+				t.TmuxWindow, t.TmuxSession, t.Slug, t.Slug)
+		}
+	}
+	return nil
+}
+
+// requireUnchanged refuses to record a task whose branch or worktree changed
+// while the final suite ran, since the results would not describe HEAD.
+func requireUnchanged(ctx context.Context, wt, head, slug string) error {
+	now, err := gitx.Run(ctx, wt, "rev-parse", "HEAD")
+	if err != nil {
+		return err
+	}
+	dirty, err := gitx.Run(ctx, wt, "status", "--porcelain")
+	if err != nil {
+		return err
+	}
+	if now != head || dirty != "" {
+		return fail(ExitDoneRefused, "the branch or worktree changed while done ran (HEAD %s, now %s; uncommitted: %q); nothing was recorded. "+
+			"Make sure the agent has finished, then run shoalctl done %s again", shortSHA(head), shortSHA(now), dirty, slug)
+	}
 	return nil
 }
 

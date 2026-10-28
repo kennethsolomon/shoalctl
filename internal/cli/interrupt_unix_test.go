@@ -126,7 +126,7 @@ func TestDoneInterruptStopsFinalRun(t *testing.T) {
 	testutil.WriteFile(t, filepath.Join(task.Worktree, ".shoal", "summary.json"), `{"decision": "d", "why": "w"}`)
 	writeConfig(t, p, longSuite(pids))
 
-	cmd := h.command("done", task.Slug)
+	cmd := h.command("done", "--force", task.Slug)
 	var errb bytes.Buffer
 	cmd.Stderr = &errb
 	if err := cmd.Start(); err != nil {

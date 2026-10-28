@@ -20,17 +20,18 @@ import (
 
 // Exit codes (spec §4.7).
 const (
-	ExitOK         = 0
-	ExitInternal   = 1
-	ExitUsage      = 2
-	ExitConfig     = 3
-	ExitNotFound   = 4
-	ExitState      = 5
-	ExitBaseline   = 6
-	ExitDependency = 7
-	ExitBusy       = 8
-	ExitDoctor     = 11
-	ExitUntrusted  = 12
+	ExitOK          = 0
+	ExitInternal    = 1
+	ExitUsage       = 2
+	ExitConfig      = 3
+	ExitNotFound    = 4
+	ExitState       = 5
+	ExitBaseline    = 6
+	ExitDependency  = 7
+	ExitBusy        = 8
+	ExitDoneRefused = 10
+	ExitDoctor      = 11
+	ExitUntrusted   = 12
 	// ExitInterrupted follows the shell convention of 128 + SIGINT.
 	ExitInterrupted = 130
 )

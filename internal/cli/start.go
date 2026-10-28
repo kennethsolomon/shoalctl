@@ -392,7 +392,7 @@ func renderBrief(t store.Task, cfg config.Config, base store.Run, results []stor
 ## When you finish
 1. Commit all work on this branch. Do not push. Do not merge.
 2. Write ` + "`.shoal/summary.json`" + ` (format below).
-3. Tell the human to run ` + "`shoalctl done " + t.Slug + "`" + `.
+3. Tell the human you are finished: they exit this session, then run ` + "`shoalctl done " + t.Slug + "`" + `.
 
 summary.json:
 {"decision": "...", "alternatives_rejected": [{"option": "...", "why": "..."}],

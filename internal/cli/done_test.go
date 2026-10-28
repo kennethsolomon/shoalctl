@@ -54,7 +54,7 @@ func TestDoneRendersReport(t *testing.T) {
 	commitIn(t, task.Worktree, "broken.txt", "x")
 	testutil.WriteFile(t, filepath.Join(task.Worktree, ".shoal", "summary.json"), goodSummary)
 
-	out := h.mustRun("done", task.Slug)
+	out := h.mustRun("done", "--force", task.Slug)
 	reportPath := filepath.Join(p.dir, "reports", task.Slug+".md")
 	if !strings.Contains(out, reportPath) {
 		t.Fatalf("done output should print the report path:\n%s", out)
@@ -148,7 +148,7 @@ func TestDoneRefusals(t *testing.T) {
 	}
 
 	testutil.WriteFile(t, summary, `{"decision": "d", "why": "w"}`)
-	h.mustRun("done", task.Slug)
+	h.mustRun("done", "--force", task.Slug)
 }
 
 func TestDoneFinalRunErrorIsReported(t *testing.T) {
@@ -157,7 +157,7 @@ func TestDoneFinalRunErrorIsReported(t *testing.T) {
 	task := startedTask(t, h, "feature", "Breaks suite")
 	commitIn(t, task.Worktree, "test.sh", "#!/bin/sh\nexit 1\n")
 	testutil.WriteFile(t, filepath.Join(task.Worktree, ".shoal", "summary.json"), `{"decision": "d", "why": "w"}`)
-	h.mustRun("done", task.Slug)
+	h.mustRun("done", "--force", task.Slug)
 	report := readFile(t, filepath.Join(p.dir, "reports", task.Slug+".md"))
 	assertSections(t, report)
 	if !strings.Contains(report, "Not computed: the final run ended with status error") || !strings.Contains(report, "Lint: not configured") {
@@ -172,7 +172,7 @@ func TestDoneNotesSink(t *testing.T) {
 	task := startedTask(t, h, "feature", "Notes")
 	commitIn(t, task.Worktree, "feature.txt", "x")
 	testutil.WriteFile(t, filepath.Join(task.Worktree, ".shoal", "summary.json"), goodSummary)
-	h.mustRun("done", task.Slug)
+	h.mustRun("done", "--force", task.Slug)
 	assertSections(t, readFile(t, filepath.Join(notes, task.Slug+".md")))
 }
 

@@ -915,7 +915,7 @@ Pre-existing failures (not yours to fix unless the ask says so):
 ## When you finish
 1. Commit all work on this branch. Do not push. Do not merge.
 2. Write `.shoal/summary.json` (format below).
-3. Tell the human to run `shoalctl done <slug>`.
+3. Tell the human you are finished: they exit this session, then run `shoalctl done <slug>`.
 
 summary.json:
 {"decision": "...", "alternatives_rejected": [{"option": "...", "why": "..."}],
@@ -941,14 +941,19 @@ SLUG                     LANE     STAGE        BASE            BASELINE        W
 - `--json` prints an array of objects with the same fields, snake_case, plus `id` and `worktree`.
 - Exit codes: 0, 3.
 
-#### `shoalctl done <task>`
-Allowed only from `in-progress` (exit 5 otherwise).
-1. The worktree must be clean (`git status --porcelain` empty; `.shoal/` is excluded) and have at least one commit after `base_sha`. Otherwise exit 5.
-2. Read `.shoal/summary.json`. Missing, invalid JSON, unknown keys, or empty `decision` or `why`: exit 5, printing the path and the expected shape.
-3. Run the suite on `HEAD` (`kind = 'final'`) and compare it with the baseline using the classes in §8.5. **In the MVP this comparison is informational:** it is reported, never blocking. The blocking gate arrives in Phase 1. A final run that errors is reported as such and does not stop `done`.
-4. Run `[stack].lint` and `[stack].build` if set; record pass or fail.
-5. In one transaction: insert the `summaries` row (`commits` from `git rev-list --reverse base_sha..HEAD`, `files` from `git diff --name-status -z base_sha...HEAD`, so unicode, spaces, tabs and renames survive byte-exact, `true_at_sha = HEAD`), set `final_run_id`, stage `done`, `closed_at`.
-6. Render the report to `reports/<slug>.md` (and to `notes_path` if the sink says so). Print its path. The tmux window is left open. Exit 0.
+#### `shoalctl done <task> [--force]`
+Allowed only from `in-progress` (exit 5 otherwise). Holds `task-<id>.lock` throughout (§10.3).
+1. If the worktree's `index.lock` (`git rev-parse --git-path index.lock`) exists, a git command, most likely the agent committing, is running: wait up to 10 s for it to go, then exit 10 naming the lock and saying how to clear a stale one. `--force` does not skip this.
+2. The worktree must be clean (`git status --porcelain` empty; `.shoal/` is excluded) and have at least one commit after `base_sha`. Otherwise exit 5.
+3. Read `.shoal/summary.json`. Missing, invalid JSON, unknown keys, or empty `decision` or `why`: exit 5, printing the path and the expected shape.
+4. Unless `--force`: if the task's tmux window still has a live pane, the claude session is running and may still be editing or committing, so exit 10 and ask the human to exit claude (`/exit`) first, or to pass `--force` when the agent has finished. A dead pane (claude exited; `remain-on-exit` keeps it), a closed window, or no tmux server counts as ended. A recent hook heartbeat is not used as the signal: `Stop` fires at the end of every turn, which is exactly when the human runs `done`.
+5. Run the suite on `HEAD` (`kind = 'final'`) and compare it with the baseline using the classes in §8.5. **In the MVP this comparison is informational:** it is reported, never blocking. The blocking gate arrives in Phase 1. A final run that errors is reported as such and does not stop `done`.
+6. Run `[stack].lint` and `[stack].build` if set; record pass or fail.
+7. If `HEAD` moved or the worktree became dirty while steps 5-6 ran, exit 10 and record nothing: the results would not describe the commits being reported.
+8. In one transaction: insert the `summaries` row (`commits` from `git rev-list --reverse base_sha..HEAD`, `files` from `git diff --name-status -z base_sha...HEAD`, so unicode, spaces, tabs and renames survive byte-exact, `true_at_sha = HEAD`), set `final_run_id`, stage `done`, `closed_at`.
+9. Render the report to `reports/<slug>.md` (and to `notes_path` if the sink says so). Print its path. The tmux window is left open. Exit 0.
+
+Exit codes: 0, 3, 4, 5, 8 (task lock held, or an abandoned suite still running), 10 (work may be in flight: `index.lock`, a live session, or the branch moved during the run), 130 (interrupted).
 
 **Report sections**, in this order:
 1. Frontmatter: `task`, `lane`, `status: done`, `branch`, `base` (`<ref>@<sha>`), `commits`, `date`
