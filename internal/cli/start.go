@@ -47,6 +47,14 @@ func (env Env) cmdStart(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	lock, err := p.lockTask(t, "start")
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	if t, err = p.db.GetTask(ctx, t.Slug); err != nil {
+		return err
+	}
 	resumable := []string{store.StageNew, store.StageStarting, store.StageBaselineFailed}
 	if !contains(resumable, t.Stage) {
 		return fail(ExitState, "task %s is at %q; start needs new, starting or baseline-failed", t.Slug, t.Stage)

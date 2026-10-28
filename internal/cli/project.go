@@ -12,6 +12,7 @@ import (
 
 	"github.com/kennethsolomon/shoalctl/internal/config"
 	"github.com/kennethsolomon/shoalctl/internal/gitx"
+	"github.com/kennethsolomon/shoalctl/internal/lockfile"
 	"github.com/kennethsolomon/shoalctl/internal/store"
 )
 
@@ -149,6 +150,18 @@ func (env Env) loadConfig(p *project) error {
 	}
 	p.cfgPath, p.cfg = path, cfg
 	return nil
+}
+
+// lockTask takes the task's lock without waiting, so two commands can never
+// start, test, or finish one task at the same time. Lock order: task lock,
+// then git.lock.
+func (p *project) lockTask(t store.Task, command string) (*lockfile.Lock, error) {
+	path := filepath.Join(p.dir, "locks", fmt.Sprintf("task-%d.lock", t.ID))
+	l, err := lockfile.Acquire(path, 0, lockfile.Info{PID: os.Getpid(), Command: command, Task: t.Slug, StartedAt: nowUTC()})
+	if errors.Is(err, lockfile.ErrHeld) {
+		return nil, fail(ExitBusy, "task %s is already starting or running in another shoalctl (%v); wait for it to finish, or stop it", t.Slug, err)
+	}
+	return l, err
 }
 
 // writeFileAtomic writes through a temp file in the same dir and renames it.

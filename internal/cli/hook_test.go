@@ -61,7 +61,7 @@ func TestHookHeartbeat(t *testing.T) {
 	if code, out, errOut := h.hook(strings.NewReader(`{"session_id": "other"}`), "stop"); code != 0 || out != "" || errOut != "" {
 		t.Fatalf("stop: code %d stdout %q stderr %q", code, out, errOut)
 	}
-	if again := h.task("1"); again.SessionID != "sess-42" || again.Version != got.Version+1 {
+	if again := h.task("1"); again.SessionID != "sess-42" || again.Version != got.Version {
 		t.Fatalf("after stop: %+v", again)
 	}
 	if log := hookLog(t, p); log != "" {

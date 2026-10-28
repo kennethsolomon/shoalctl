@@ -43,18 +43,18 @@ func Acquire(path string, wait time.Duration, info Info) (*Lock, error) {
 			break
 		}
 		if time.Now().After(deadline) {
-			holder, _ := os.ReadFile(path)
+			holder := describeHolder(path)
 			f.Close()
-			return nil, fmt.Errorf("%w: %s after %s (holder: %s)", ErrHeld, path, wait, holder)
+			return nil, fmt.Errorf("%w: %s after %s (%s)", ErrHeld, path, wait, holder)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	body, err := json.Marshal(info)
 	if err == nil {
-		err = f.Truncate(0)
+		_, err = f.WriteAt(body, 0)
 	}
 	if err == nil {
-		_, err = f.WriteAt(body, 0)
+		err = f.Truncate(int64(len(body)))
 	}
 	if err != nil {
 		_ = unlock(f)
@@ -62,6 +62,30 @@ func Acquire(path string, wait time.Duration, info Info) (*Lock, error) {
 		return nil, fmt.Errorf("write lock info to %s: %w", path, err)
 	}
 	return &Lock{f: f}, nil
+}
+
+// describeHolder reads the holder's info for an error message. The content is
+// informational; the OS lock is the truth. A holder that just took the lock may not have written its info yet, so an
+// unreadable file is retried briefly.
+func describeHolder(path string) string {
+	var last string
+	for attempt := 0; attempt < 10; attempt++ {
+		if attempt > 0 {
+			time.Sleep(20 * time.Millisecond)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			last = fmt.Sprintf("holder unknown: %v", err)
+			continue
+		}
+		var info Info
+		if err := json.Unmarshal(data, &info); err != nil || info.PID == 0 {
+			last = fmt.Sprintf("holder unknown: %q", data)
+			continue
+		}
+		return fmt.Sprintf("held by pid %d: shoalctl %s, task %s, since %s", info.PID, info.Command, info.Task, info.StartedAt)
+	}
+	return last
 }
 
 func (l *Lock) Release() error {

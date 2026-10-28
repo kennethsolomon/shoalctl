@@ -174,11 +174,14 @@ func (s *Store) Update(ctx context.Context, t Task, from []string, set string, a
 	}
 }
 
-// Heartbeat records hook activity on a task. sessionID is stored when non-empty.
+// Heartbeat records hook activity on a task. sessionID is stored when
+// non-empty. It leaves version alone: version guards stage changes (§10.2),
+// and a heartbeat landing between a command's read and its update must not
+// make that update conflict.
 func (s *Store) Heartbeat(ctx context.Context, id int64, slug, sessionID string) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
 		ts := now()
-		res, err := tx.ExecContext(ctx, `UPDATE tasks SET last_seen_at = ?, updated_at = ?, version = version + 1,
+		res, err := tx.ExecContext(ctx, `UPDATE tasks SET last_seen_at = ?, updated_at = ?,
 			session_id = CASE WHEN ? = '' THEN session_id ELSE ? END
 			WHERE id = ? AND slug = ?`, ts, ts, sessionID, sessionID, id, slug)
 		if err != nil {

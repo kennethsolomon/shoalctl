@@ -619,10 +619,12 @@ Some work can't be one SQLite transaction. It uses advisory lock files under `$S
 |------|---------|------|---------------|
 | `merge.lock` | `shoalctl merge`, for the whole queue run | none | exit 8: "merge already running (pid N, started T)" |
 | `git.lock` | Any command that changes shared git state: `worktree add/remove`, branch create, rebase, ref update, `worktree prune` | up to 30 s | exit 8 |
+| `task-<id>.lock` | `start` and `done` for that task, for the whole command (baseline or final suite included) | none | exit 8: "task <slug> is already starting or running (held by pid N: shoalctl start, ...)" |
 
 - Locks use `flock(2)` (`LockFileEx` on Windows), so the OS releases them when a process dies. A crashed process never leaves a lock stuck.
 - The holder writes `{"pid", "command", "task", "started_at"}` into the file for `status` and `doctor` to show. The content is informational; the OS lock is the truth.
-- Lock order is always `merge.lock` then `git.lock`, never the reverse, so they can't deadlock.
+- Lock order is always `merge.lock`, then `task-<id>.lock`, then `git.lock`, never the reverse, so they can't deadlock.
+- Hook heartbeats update `last_seen_at` and `session_id` only. They never bump `tasks.version`, so a heartbeat cannot make a stage change conflict (§10.2).
 - Git commands that only read (`rev-parse`, `diff`, `log`, `status`) take no lock.
 
 ### 10.4 Crash recovery
@@ -1044,7 +1046,7 @@ CREATE TABLE summaries (
 All timestamps are RFC 3339 UTC text. Columns other phases need (`qa_round`, `merged_sha`, `blocked_by`, `parent_task_id`, and so on) arrive in later numbered migrations.
 
 #### Concurrency in the MVP
-WAL, `busy_timeout`, `BEGIN IMMEDIATE` per state change, and the `tasks.version` check (§10.1, §10.2) are in from day one, as is `git.lock` around `git worktree add`. `merge.lock` and per-agent claims come in Phase 1; cross-task claims and `doctor` in Phase 2.
+WAL, `busy_timeout`, `BEGIN IMMEDIATE` per state change, and the `tasks.version` check (§10.1, §10.2) are in from day one, as is `git.lock` around `git worktree add` and the per-task `task-<id>.lock` held by `start` and `done` (§10.3), so two commands can never run a suite for one task at once. `merge.lock` and per-agent claims come in Phase 1; cross-task claims and `doctor` in Phase 2.
 
 #### Acceptance checks
 1. `init` on a real project, twice: the second run changes no file (compare checksums of `settings.local.json` and `info/exclude`).

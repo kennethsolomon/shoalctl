@@ -80,6 +80,14 @@ func (env Env) cmdDone(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	lock, err := p.lockTask(t, "done")
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	if t, err = p.db.GetTask(ctx, t.Slug); err != nil {
+		return err
+	}
 	if t.Stage != store.StageInProgress {
 		return fail(ExitState, "task %s is at %q; done needs in-progress", t.Slug, t.Stage)
 	}

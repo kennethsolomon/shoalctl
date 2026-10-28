@@ -280,11 +280,31 @@ func TestHeartbeat(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := s.GetTask(ctx, task.Slug)
-	if got.SessionID != "sess-1" || got.LastSeenAt == "" || got.Version != 3 {
-		t.Fatalf("after heartbeat: %+v", got)
+	if got.SessionID != "sess-1" || got.LastSeenAt == "" || got.Version != task.Version {
+		t.Fatalf("after heartbeat (heartbeats must not bump the version): %+v", got)
 	}
 	if err := s.Heartbeat(ctx, task.ID, "other-slug", ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("mismatched slug: %v", err)
+	}
+}
+
+// TestHeartbeatDoesNotRaceStageChanges: a hook heartbeat landing between a
+// command's read and its stage update must not cost that update a retry.
+func TestHeartbeatDoesNotRaceStageChanges(t *testing.T) {
+	s, _ := openTest(t)
+	ctx := context.Background()
+	task, _ := s.CreateTask(ctx, "feature", "T", "ask", slugger)
+	for i := 0; i < 5; i++ {
+		if err := s.Heartbeat(ctx, task.ID, task.Slug, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.Update(ctx, task, []string{StageNew}, "stage = ?", []any{StageStarting}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Version != task.Version+1 || got.Stage != StageStarting {
+		t.Fatalf("update after heartbeats: version %d (read %d), stage %s", got.Version, task.Version, got.Stage)
 	}
 }
 
