@@ -83,6 +83,9 @@ func TestLoadErrors(t *testing.T) {
 		{"backslash parent junit_path", "[tests]\njunit_path = 'reports\\..\\..\\x.xml'\n", "[tests].junit_path"},
 		{"junit placeholder escape", "[tests]\njunit_path = \"{junit}/../../x.xml\"\n", "[tests].junit_path"},
 		{"home junit_path", "[tests]\njunit_path = \"~/victim/*.xml\"\n", "[tests].junit_path"},
+		{"dotfile junit_path", "[tests]\njunit_path = \".e?v\"\n", "must end in .xml"},
+		{"star junit_path", "[tests]\njunit_path = \"*\"\n", "must end in .xml"},
+		{"git junit_path", "[tests]\njunit_path = \".git/*.xml\"\n", ".git"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

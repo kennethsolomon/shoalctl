@@ -177,9 +177,9 @@ func Run(ctx context.Context, spec Spec) Outcome {
 		}
 		out.Results = []Result{{TestID: SuiteID, Status: status}}
 	case "junit":
-		files, err := filepath.Glob(pattern)
+		files, err := reportMatches(pattern)
 		if err != nil {
-			return note(fmt.Sprintf("bad junit_path %q: %v", spec.JunitPath, err))
+			return note(err.Error())
 		}
 		if len(files) == 0 {
 			return note(fmt.Sprintf("test command exited %d and wrote no JUnit file matching %s", *out.ExitCode, pattern))
@@ -308,6 +308,14 @@ func checkPattern(dir, runDir, junitPath string) (reportRoots, error) {
 	}
 	roots := reportRoots{worktree: wt, runDir: rd}
 	pattern := junitPattern(dir, runDir, junitPath)
+	if !strings.HasSuffix(pattern, ".xml") {
+		return roots, fmt.Errorf("junit_path %q must end in .xml (or be {junit}); shoal deletes stale matches before each run and only ever deletes .xml reports", junitPath)
+	}
+	for _, part := range strings.FieldsFunc(junitPath, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if part == ".git" {
+			return roots, fmt.Errorf("junit_path %q reaches into .git; point it at a report directory in the worktree", junitPath)
+		}
+	}
 	base, err := resolveExisting(globBase(pattern))
 	if err != nil {
 		return roots, err
@@ -377,18 +385,60 @@ func resolveExisting(p string) (string, error) {
 	}
 }
 
-// removeStale deletes old report files matching pattern so a previous run is
-// never read. It refuses any match that resolves outside the roots and any
-// file git tracks in the worktree.
-func removeStale(ctx context.Context, roots reportRoots, pattern string) error {
+// reportMatches globs pattern and keeps only paths that can be JUnit
+// reports: names ending in .xml that are not directories, with no dotfile or
+// dot directory below the pattern's fixed directory part.
+func reportMatches(pattern string) ([]string, error) {
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
-		return fmt.Errorf("bad junit_path pattern %q: %w", pattern, err)
+		return nil, fmt.Errorf("bad junit_path pattern %q: %w", pattern, err)
+	}
+	base := globBase(pattern)
+	var keep []string
+	for _, m := range matches {
+		if !strings.HasSuffix(m, ".xml") || strings.HasPrefix(filepath.Base(m), ".") {
+			continue
+		}
+		rel, err := filepath.Rel(base, m)
+		if err != nil {
+			return nil, fmt.Errorf("relate %s to %s: %w", m, base, err)
+		}
+		hidden := false
+		for _, part := range strings.Split(rel, string(filepath.Separator)) {
+			hidden = hidden || (part != "." && strings.HasPrefix(part, "."))
+		}
+		if hidden {
+			continue
+		}
+		info, err := os.Lstat(m)
+		if err != nil {
+			return nil, fmt.Errorf("stat report %s: %w", m, err)
+		}
+		if info.Mode().IsRegular() || info.Mode()&fs.ModeSymlink != 0 {
+			keep = append(keep, m)
+		}
+	}
+	return keep, nil
+}
+
+// removeStale deletes old report files matching pattern so a previous run is
+// never read. It deletes only regular .xml files, and checks every match
+// before deleting any: a match that resolves outside the roots, is a
+// symlink, or is tracked by git in the worktree refuses the whole run.
+func removeStale(ctx context.Context, roots reportRoots, pattern string) error {
+	matches, err := reportMatches(pattern)
+	if err != nil {
+		return err
 	}
 	for _, m := range matches {
 		real, err := roots.resolve(m)
 		if err != nil {
 			return err
+		}
+		if info, err := os.Lstat(m); err != nil {
+			return fmt.Errorf("stat report %s: %w", m, err)
+		} else if !info.Mode().IsRegular() {
+			return fmt.Errorf("junit_path matches %s, which is not a regular file; shoal will not delete it. Point junit_path at an untracked report path", m)
 		}
 		if within(roots.worktree, real) {
 			parent, err := filepath.EvalSymlinks(filepath.Dir(m))
@@ -405,6 +455,8 @@ func removeStale(ctx context.Context, roots reportRoots, pattern string) error {
 				}
 			}
 		}
+	}
+	for _, m := range matches {
 		if err := os.Remove(m); err != nil {
 			return fmt.Errorf("remove stale report %s: %w", m, err)
 		}

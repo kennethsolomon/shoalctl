@@ -448,7 +448,7 @@ shoal does not parse test-runner output. The project's configured suite command 
 | `exit-code` | Exit status only. Fallback when the runner has no per-test format | suite (reduced) |
 | `none` | No suite. The protocol is inactive and every report says so in its first line | none |
 
-Placeholders in `command`, `rerun_command`, and `junit_path`: `{junit}` is an absolute path inside `$SHOAL_HOME/projects/<id>/runs/<run-id>/junit.xml`; `{tests}` is the list of test ids to re-run, space-separated and shell-quoted. shoal deletes stale files matching `junit_path` before every run, so an old report is never read.
+Placeholders in `command`, `rerun_command`, and `junit_path`: `{junit}` is an absolute path inside `$SHOAL_HOME/projects/<id>/runs/<run-id>/junit.xml`; `{tests}` is the list of test ids to re-run, space-separated and shell-quoted. shoal deletes stale `.xml` files matching `junit_path` before every run, so an old report is never read.
 
 **Test identity.** Every result gets a stable `test_id`:
 - `junit`: `<classname>::<name>` from each `<testcase>`. If `classname` is empty, the `file` attribute, then the enclosing `<testsuite name>`, is used instead. A duplicate id within one run gets `#2`, `#3` suffixes in document order.
@@ -839,7 +839,7 @@ Lookup: `<repo>/.shoal.toml` if it exists, otherwise `$SHOAL_HOME/projects/<id>/
 | `[install].stealth` | bool | `true` | `false` is rejected with exit 3 until Phase 4 |
 | `[tests].command` | string | none | Required unless `format = "none"`. Run with `sh -c` in the worktree |
 | `[tests].format` | enum | `"junit"` | `junit`, `go-json`, `exit-code`, `none` |
-| `[tests].junit_path` | string | `"{junit}"` | Used when `format = "junit"`. Must be `{junit}` or a glob relative to the worktree with no `..`, `~`, root, or drive; anything else is a config error (exit 3). `start` also exits 3 when its directory resolves outside the worktree through a symlink. Before each run, stale matches are deleted only when they resolve inside the worktree (or shoal's run dir) and git does not track them |
+| `[tests].junit_path` | string | `"{junit}"` | Used when `format = "junit"`. Must be `{junit}` or a glob relative to the worktree with no `..`, `~`, root, or drive; anything else is a config error (exit 3). `start` also exits 3 when its directory resolves outside the worktree through a symlink. The pattern must end in `.xml` and may not name `.git`, so `.e?v` or `*` is a config error. Before each run, stale matches are deleted only when they are regular `.xml` files (not directories or symlinks), not dotfiles or under a dot directory, resolve inside the worktree (or shoal's run dir), and git does not track them; every match is checked before any is deleted, so a refusal deletes nothing |
 | `[tests].timeout` | duration | `"30m"` | Process group killed on timeout |
 | `[tests].flaky_retries` | int ≥ 0 | `2` | Validated in the MVP, applied from Phase 1 |
 | `[merge].base` | string | `"main"` | Must resolve to a local branch |

@@ -166,6 +166,9 @@ func (c Config) Validate() error {
 	check(c.Tests.Format != "junit" || c.Tests.JunitPath != "", "[tests].junit_path must be set when format is junit")
 	check(c.Tests.JunitPath == "" || junitPathInside(c.Tests.JunitPath),
 		"[tests].junit_path %q must be {junit} or a path relative to the task worktree with no .. (shoal deletes stale matches before each run, so it must never reach outside the worktree)", c.Tests.JunitPath)
+	check(c.Tests.JunitPath == "" || strings.HasSuffix(c.Tests.JunitPath, ".xml") || c.Tests.JunitPath == "{junit}",
+		"[tests].junit_path %q must end in .xml (or be {junit}): shoal deletes stale matches before each run and only ever deletes .xml reports", c.Tests.JunitPath)
+	check(!junitPathInGit(c.Tests.JunitPath), "[tests].junit_path %q reaches into .git; point it at a report directory in the worktree", c.Tests.JunitPath)
 	check(c.Tests.FlakyRetries >= 0, "[tests].flaky_retries %d must be >= 0", c.Tests.FlakyRetries)
 	check(positiveDuration(c.Tests.Timeout), "[tests].timeout %q must be a positive duration like 30m", c.Tests.Timeout)
 	check(oneOf(c.Tests.CoverageFormat, "", "lcov", "cobertura", "go-cover"), "[tests].coverage_format %q must be empty, lcov, cobertura or go-cover", c.Tests.CoverageFormat)
@@ -223,6 +226,15 @@ func junitPathInside(p string) bool {
 		}
 	}
 	return true
+}
+
+func junitPathInGit(p string) bool {
+	for _, part := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if part == ".git" {
+			return true
+		}
+	}
+	return false
 }
 
 func exists(path string) (bool, error) {

@@ -439,3 +439,91 @@ func TestRunCommandPathWithSpaces(t *testing.T) {
 		t.Fatalf("status %s: %s", out.Status, out.Problem)
 	}
 }
+
+// TestJunitPathScopedToXMLReports reproduces junit_path globs that reached
+// dotfiles, the worktree's .git file, and other untracked files.
+func TestJunitPathScopedToXMLReports(t *testing.T) {
+	testutil.Isolate(t)
+	t.Run("pattern that cannot match xml", func(t *testing.T) {
+		repo := testutil.Repo(t)
+		env := filepath.Join(repo, ".env")
+		testutil.WriteFile(t, env, "SECRET=1")
+		spec, _ := runSpec(t, "junit", "true")
+		spec.Dir = repo
+		spec.JunitPath = ".e?v"
+		if err := CheckJunitPath(spec.Dir, spec.RunDir, spec.JunitPath); err == nil || !strings.Contains(err.Error(), ".xml") {
+			t.Errorf("CheckJunitPath(%q) = %v, want an error naming .xml", spec.JunitPath, err)
+		}
+		out := Run(context.Background(), spec)
+		if out.Status != StatusError || !strings.Contains(out.Problem, ".xml") {
+			t.Errorf("status %s, problem %q; want an error naming .xml", out.Status, out.Problem)
+		}
+		if _, err := os.Stat(env); err != nil {
+			t.Fatalf(".env was deleted: %v", err)
+		}
+	})
+	t.Run("star", func(t *testing.T) {
+		repo := testutil.Repo(t)
+		gitFile := filepath.Join(repo, ".git")
+		notes := filepath.Join(repo, "notes.txt")
+		testutil.WriteFile(t, notes, "keep")
+		spec, _ := runSpec(t, "junit", "true")
+		spec.Dir = repo
+		spec.JunitPath = "*"
+		if err := CheckJunitPath(spec.Dir, spec.RunDir, spec.JunitPath); err == nil {
+			t.Errorf("CheckJunitPath(%q) accepted a pattern that can match non-xml files", spec.JunitPath)
+		}
+		Run(context.Background(), spec)
+		for _, p := range []string{gitFile, notes} {
+			if _, err := os.Stat(p); err != nil {
+				t.Fatalf("%s was deleted: %v", p, err)
+			}
+		}
+	})
+	t.Run("star xml skips dotfiles, git and dirs", func(t *testing.T) {
+		repo := testutil.Repo(t)
+		keep := []string{
+			filepath.Join(repo, ".hidden.xml"),
+			filepath.Join(repo, ".git", "x.xml"),
+			filepath.Join(repo, ".cache", "y.xml"),
+			filepath.Join(repo, "dir.xml", "inner.txt"),
+		}
+		for _, p := range keep {
+			testutil.WriteFile(t, p, "keep")
+		}
+		stale := filepath.Join(repo, "old.xml")
+		testutil.WriteFile(t, stale, "<testsuite/>")
+		spec, _ := runSpec(t, "junit", "true")
+		spec.Dir = repo
+		for _, pattern := range []string{"*.xml", "*/*.xml", ".git/*.xml"} {
+			spec.JunitPath = pattern
+			Run(context.Background(), spec)
+		}
+		for _, p := range keep {
+			if _, err := os.Stat(p); err != nil {
+				t.Errorf("%s was deleted: %v", p, err)
+			}
+		}
+		if _, err := os.Stat(stale); err == nil {
+			t.Error("stale old.xml not deleted")
+		}
+	})
+	t.Run("validates every match before deleting any", func(t *testing.T) {
+		repo := testutil.Repo(t)
+		first := filepath.Join(repo, "reports", "a.xml")
+		testutil.WriteFile(t, first, "<testsuite/>")
+		tracked := filepath.Join(repo, "reports", "b.xml")
+		testutil.WriteFile(t, tracked, "<testsuite/>")
+		testutil.Git(t, repo, "add", "reports/b.xml")
+		testutil.Git(t, repo, "commit", "-q", "-m", "tracked report")
+		spec, _ := runSpec(t, "junit", "true")
+		spec.Dir = repo
+		spec.JunitPath = "reports/*.xml"
+		if out := Run(context.Background(), spec); out.Status != StatusError || !strings.Contains(out.Problem, "git tracks") {
+			t.Fatalf("status %s, problem %q", out.Status, out.Problem)
+		}
+		if _, err := os.Stat(first); err != nil {
+			t.Fatalf("a.xml deleted although b.xml was refused: %v", err)
+		}
+	})
+}
