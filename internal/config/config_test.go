@@ -47,6 +47,16 @@ func TestLoadPrecedence(t *testing.T) {
 	}
 }
 
+func TestJunitPathInsideWorktreeAccepted(t *testing.T) {
+	for _, p := range []string{"{junit}", "reports/*.xml", "build/test-results/**/*.xml", "a..b/x.xml", "./out.xml"} {
+		dir := t.TempDir()
+		path := write(t, dir, "p.toml", "[tests]\njunit_path = \""+p+"\"\n")
+		if _, err := Load(filepath.Join(dir, "g.toml"), path); err != nil {
+			t.Errorf("junit_path %q: %v", p, err)
+		}
+	}
+}
+
 func TestLoadErrors(t *testing.T) {
 	tests := []struct {
 		name, body, want string
@@ -65,6 +75,14 @@ func TestLoadErrors(t *testing.T) {
 		{"empty model", "[session]\nmodel = \"\"\n", "[session].model"},
 		{"type mismatch", "[tests]\nflaky_retries = \"two\"\n", "parse"},
 		{"syntax", "[tests\n", "parse"},
+		{"absolute junit_path", "[tests]\njunit_path = \"/home/u/victim/*.xml\"\n", "[tests].junit_path"},
+		{"windows absolute junit_path", "[tests]\njunit_path = 'C:\\victim\\*.xml'\n", "[tests].junit_path"},
+		{"rooted junit_path", "[tests]\njunit_path = '\\victim\\*.xml'\n", "[tests].junit_path"},
+		{"parent junit_path", "[tests]\njunit_path = \"../victim/*.xml\"\n", "[tests].junit_path"},
+		{"inner parent junit_path", "[tests]\njunit_path = \"reports/../../victim.xml\"\n", "[tests].junit_path"},
+		{"backslash parent junit_path", "[tests]\njunit_path = 'reports\\..\\..\\x.xml'\n", "[tests].junit_path"},
+		{"junit placeholder escape", "[tests]\njunit_path = \"{junit}/../../x.xml\"\n", "[tests].junit_path"},
+		{"home junit_path", "[tests]\njunit_path = \"~/victim/*.xml\"\n", "[tests].junit_path"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

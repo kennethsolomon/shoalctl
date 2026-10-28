@@ -287,6 +287,71 @@ func TestRunDeletesStaleUntrackedReports(t *testing.T) {
 	}
 }
 
+// TestRunNeverDeletesOutsideWorktree reproduces a junit_path that reaches a
+// user's files: absolute, through .., or through a symlinked directory.
+func TestRunNeverDeletesOutsideWorktree(t *testing.T) {
+	testutil.Isolate(t)
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, repo, victim string) string // returns junit_path
+	}{
+		{"absolute path", func(t *testing.T, repo, victim string) string { return filepath.Join(victim, "*.xml") }},
+		{"parent dir", func(t *testing.T, repo, victim string) string {
+			rel, err := filepath.Rel(repo, victim)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return filepath.Join(rel, "*.xml")
+		}},
+		{"symlinked dir", func(t *testing.T, repo, victim string) string {
+			if err := os.Symlink(victim, filepath.Join(repo, "reports")); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			return "reports/*.xml"
+		}},
+		{"symlinked file", func(t *testing.T, repo, victim string) string {
+			if err := os.MkdirAll(filepath.Join(repo, "reports"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(victim, "keep.xml"), filepath.Join(repo, "reports", "link.xml")); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			return "reports/*.xml"
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := testutil.Repo(t)
+			victim := testutil.Resolve(t, t.TempDir())
+			keep := filepath.Join(victim, "keep.xml")
+			testutil.WriteFile(t, keep, "important")
+			spec, _ := runSpec(t, "junit", "true")
+			spec.Dir = repo
+			spec.JunitPath = tt.setup(t, repo, victim)
+
+			if err := CheckJunitPath(spec.Dir, spec.RunDir, spec.JunitPath); err == nil && tt.name != "symlinked file" {
+				t.Errorf("CheckJunitPath(%q) accepted a path outside the worktree", spec.JunitPath)
+			}
+			out := Run(context.Background(), spec)
+			if out.Status != StatusError || !strings.Contains(out.Problem, "outside") {
+				t.Errorf("status %s, problem %q; want an error naming the path outside the worktree", out.Status, out.Problem)
+			}
+			if got, err := os.ReadFile(keep); err != nil || string(got) != "important" {
+				t.Fatalf("user file outside the worktree was touched: %q, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestCheckJunitPathAcceptsWorktreeAndRunDir(t *testing.T) {
+	spec, dir := runSpec(t, "junit", "true")
+	for _, p := range []string{"{junit}", "reports/*.xml", "missing/dir/*.xml"} {
+		if err := CheckJunitPath(dir, spec.RunDir, p); err != nil {
+			t.Errorf("CheckJunitPath(%q): %v", p, err)
+		}
+	}
+}
+
 func TestRunCommandPathWithSpaces(t *testing.T) {
 	spec, _ := runSpec(t, "junit", `printf '%s' '<testsuite><testcase classname="C" name="a"/></testsuite>' > {junit}`)
 	spec.RunDir = filepath.Join(t.TempDir(), "dir with 'quote' and space", "1")

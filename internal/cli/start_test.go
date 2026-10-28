@@ -263,6 +263,29 @@ func TestStartRefusesForeignBranch(t *testing.T) {
 	}
 }
 
+func TestStartRejectsJunitPathOutsideWorktree(t *testing.T) {
+	h := newHarness(t).withSession()
+	victim := testutil.Resolve(t, t.TempDir())
+	keep := filepath.Join(victim, "keep.xml")
+	testutil.WriteFile(t, keep, "important")
+	if err := os.Symlink(victim, filepath.Join(h.repo, "reports")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	testutil.Git(t, h.repo, "add", "reports")
+	testutil.Git(t, h.repo, "commit", "-q", "-m", "symlinked reports dir")
+	h.initWith("[tests]\ncommand = \"true\"\nformat = \"junit\"\njunit_path = \"reports/*.xml\"\n")
+	h.mustRun("new", "feature", "One")
+	if errOut := h.expectCode(ExitConfig, "start", "1"); !strings.Contains(errOut, "outside the worktree") {
+		t.Fatalf("stderr: %s", errOut)
+	}
+	if got := readFile(t, keep); got != "important" {
+		t.Fatalf("file outside the worktree changed: %q", got)
+	}
+	if len(claudeLaunches(t, h.argsLog)) != 0 {
+		t.Fatal("claude launched despite a junit_path outside the worktree")
+	}
+}
+
 func TestStartNoneFormat(t *testing.T) {
 	h := newHarness(t).withSession()
 	h.initWith("[tests]\nformat = \"none\"\n")

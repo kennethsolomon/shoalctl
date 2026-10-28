@@ -85,6 +85,11 @@ func (env Env) cmdStart(ctx context.Context, args []string) error {
 	if err := env.ensureWorktree(ctx, p, t, branch, wt, baseSHA); err != nil {
 		return err
 	}
+	if p.cfg.Tests.Format == "junit" {
+		if err := testrun.CheckJunitPath(wt, p.runDir(0), p.cfg.Tests.JunitPath); err != nil {
+			return fail(ExitConfig, "%v; fix [tests].junit_path in %s", err, p.cfgPath)
+		}
+	}
 	if err := writeTaskFile(wt, taskFile{ProjectID: p.id, TaskID: t.ID, Slug: t.Slug}); err != nil {
 		return err
 	}

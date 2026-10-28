@@ -836,7 +836,7 @@ Lookup: `<repo>/.shoal.toml` if it exists, otherwise `$SHOAL_HOME/projects/<id>/
 | `[install].stealth` | bool | `true` | `false` is rejected with exit 3 until Phase 4 |
 | `[tests].command` | string | none | Required unless `format = "none"`. Run with `sh -c` in the worktree |
 | `[tests].format` | enum | `"junit"` | `junit`, `go-json`, `exit-code`, `none` |
-| `[tests].junit_path` | string | `"{junit}"` | Used when `format = "junit"` |
+| `[tests].junit_path` | string | `"{junit}"` | Used when `format = "junit"`. Must be `{junit}` or a glob relative to the worktree with no `..`, `~`, root, or drive; anything else is a config error (exit 3). `start` also exits 3 when its directory resolves outside the worktree through a symlink. Before each run, stale matches are deleted only when they resolve inside the worktree (or shoal's run dir) and git does not track them |
 | `[tests].timeout` | duration | `"30m"` | Process group killed on timeout |
 | `[tests].flaky_retries` | int ≥ 0 | `2` | Validated in the MVP, applied from Phase 1 |
 | `[merge].base` | string | `"main"` | Must resolve to a local branch |

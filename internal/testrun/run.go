@@ -9,9 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -93,12 +95,13 @@ func Run(ctx context.Context, spec Spec) Outcome {
 	}
 	junitFile := filepath.Join(spec.RunDir, "junit.xml")
 	pattern := ""
+	var roots reportRoots
 	if spec.Format == "junit" {
-		pattern = strings.ReplaceAll(spec.JunitPath, junitPlaceh, junitFile)
-		if !filepath.IsAbs(pattern) {
-			pattern = filepath.Join(spec.Dir, pattern)
+		pattern = junitPattern(spec.Dir, spec.RunDir, spec.JunitPath)
+		if roots, err = checkPattern(spec.Dir, spec.RunDir, spec.JunitPath); err != nil {
+			return note(err.Error())
 		}
-		if err := removeStale(ctx, spec.Dir, pattern); err != nil {
+		if err := removeStale(ctx, roots, pattern); err != nil {
 			return note(err.Error())
 		}
 	}
@@ -165,6 +168,11 @@ func Run(ctx context.Context, spec Spec) Outcome {
 		if len(files) == 0 {
 			return note(fmt.Sprintf("test command exited %d and wrote no JUnit file matching %s", *out.ExitCode, pattern))
 		}
+		for _, f := range files {
+			if _, err := roots.resolve(f); err != nil {
+				return note(err.Error())
+			}
+		}
 		sort.Strings(files)
 		if out.Results, err = ParseJUnitFiles(files); err != nil {
 			return note(err.Error())
@@ -208,17 +216,132 @@ func anyFailed(rs []Result) bool {
 	return false
 }
 
+func junitPattern(dir, runDir, junitPath string) string {
+	pattern := strings.ReplaceAll(junitPath, junitPlaceh, filepath.Join(runDir, "junit.xml"))
+	if !filepath.IsAbs(pattern) {
+		pattern = filepath.Join(dir, pattern)
+	}
+	return pattern
+}
+
+// reportRoots are the symlink-resolved directories report files may live in:
+// the task worktree and shoal's own run directory.
+type reportRoots struct{ worktree, runDir string }
+
+// CheckJunitPath refuses a junit_path whose fixed directory part resolves,
+// through symlinks, outside the worktree dir and the run dir. shoal deletes
+// stale matches before each run, so such a path could delete user files.
+func CheckJunitPath(dir, runDir, junitPath string) error {
+	_, err := checkPattern(dir, runDir, junitPath)
+	return err
+}
+
+func checkPattern(dir, runDir, junitPath string) (reportRoots, error) {
+	wt, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return reportRoots{}, fmt.Errorf("resolve worktree %s: %w", dir, err)
+	}
+	rd, err := resolveExisting(runDir)
+	if err != nil {
+		return reportRoots{}, err
+	}
+	roots := reportRoots{worktree: wt, runDir: rd}
+	pattern := junitPattern(dir, runDir, junitPath)
+	base, err := resolveExisting(globBase(pattern))
+	if err != nil {
+		return roots, err
+	}
+	if !roots.contains(base) {
+		return roots, fmt.Errorf("junit_path %q resolves to %s, outside the worktree %s; shoal deletes stale matches before each run, so it must point inside the worktree (or be {junit})",
+			junitPath, base, wt)
+	}
+	return roots, nil
+}
+
+// resolve returns the real path of an existing report file, or an error when
+// it resolves outside the roots.
+func (r reportRoots) resolve(path string) (string, error) {
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve report %s: %w", path, err)
+	}
+	if !r.contains(real) {
+		return "", fmt.Errorf("report %s resolves to %s, outside the worktree %s; shoal will not read or delete it", path, real, r.worktree)
+	}
+	return real, nil
+}
+
+func (r reportRoots) contains(p string) bool { return within(r.worktree, p) || within(r.runDir, p) }
+
+func within(root, p string) bool {
+	rel, err := filepath.Rel(root, p)
+	if err != nil || filepath.IsAbs(rel) {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// globBase is the longest leading directory of pattern with no glob syntax.
+func globBase(pattern string) string {
+	base := pattern
+	for strings.ContainsAny(base, `*?[`) || (runtime.GOOS != "windows" && strings.Contains(base, `\`)) {
+		parent := filepath.Dir(base)
+		if parent == base {
+			break
+		}
+		base = parent
+	}
+	return base
+}
+
+// resolveExisting resolves symlinks in the longest existing prefix of p and
+// appends the rest unchanged.
+func resolveExisting(p string) (string, error) {
+	p = filepath.Clean(p)
+	var rest []string
+	for {
+		real, err := filepath.EvalSymlinks(p)
+		if err == nil {
+			return filepath.Join(append([]string{real}, rest...)...), nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("resolve %s: %w", p, err)
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return "", fmt.Errorf("resolve %s: %w", p, err)
+		}
+		rest = append([]string{filepath.Base(p)}, rest...)
+		p = parent
+	}
+}
+
 // removeStale deletes old report files matching pattern so a previous run is
-// never read. It refuses to delete files git tracks in the worktree.
-func removeStale(ctx context.Context, dir, pattern string) error {
+// never read. It refuses any match that resolves outside the roots and any
+// file git tracks in the worktree.
+func removeStale(ctx context.Context, roots reportRoots, pattern string) error {
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		return fmt.Errorf("bad junit_path pattern %q: %w", pattern, err)
 	}
 	for _, m := range matches {
-		if rel, err := filepath.Rel(dir, m); err == nil && !strings.HasPrefix(rel, "..") {
-			if _, err := gitx.Run(ctx, dir, "ls-files", "--error-unmatch", "--", rel); err == nil {
-				return fmt.Errorf("junit_path matches %s, which git tracks; shoal will not delete it. Point junit_path at an untracked path", m)
+		real, err := roots.resolve(m)
+		if err != nil {
+			return err
+		}
+		if within(roots.worktree, real) {
+			parent, err := filepath.EvalSymlinks(filepath.Dir(m))
+			if err != nil {
+				return fmt.Errorf("resolve %s: %w", filepath.Dir(m), err)
+			}
+			for _, p := range []string{filepath.Join(parent, filepath.Base(m)), real} {
+				rel, err := filepath.Rel(roots.worktree, p)
+				if err != nil {
+					return fmt.Errorf("relate %s to %s: %w", p, roots.worktree, err)
+				}
+				if _, err := gitx.Run(ctx, roots.worktree, "ls-files", "--error-unmatch", "--", filepath.ToSlash(rel)); err == nil {
+					return fmt.Errorf("junit_path matches %s, which git tracks; shoal will not delete it. Point junit_path at an untracked path", m)
+				}
 			}
 		}
 		if err := os.Remove(m); err != nil {

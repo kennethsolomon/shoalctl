@@ -164,6 +164,8 @@ func (c Config) Validate() error {
 	}
 	check(oneOf(c.Tests.Format, "junit", "go-json", "exit-code", "none"), "[tests].format %q must be junit, go-json, exit-code or none", c.Tests.Format)
 	check(c.Tests.Format != "junit" || c.Tests.JunitPath != "", "[tests].junit_path must be set when format is junit")
+	check(c.Tests.JunitPath == "" || junitPathInside(c.Tests.JunitPath),
+		"[tests].junit_path %q must be {junit} or a path relative to the task worktree with no .. (shoal deletes stale matches before each run, so it must never reach outside the worktree)", c.Tests.JunitPath)
 	check(c.Tests.FlakyRetries >= 0, "[tests].flaky_retries %d must be >= 0", c.Tests.FlakyRetries)
 	check(positiveDuration(c.Tests.Timeout), "[tests].timeout %q must be a positive duration like 30m", c.Tests.Timeout)
 	check(oneOf(c.Tests.CoverageFormat, "", "lcov", "cobertura", "go-cover"), "[tests].coverage_format %q must be empty, lcov, cobertura or go-cover", c.Tests.CoverageFormat)
@@ -202,6 +204,25 @@ func positiveDuration(s string) bool {
 
 func validRefName(s string) bool {
 	return s != "" && !strings.HasPrefix(s, "-") && !strings.ContainsAny(s, " \t\n~^:?[\\") && !strings.Contains(s, "..")
+}
+
+// junitPathInside reports whether a junit_path stays inside the worktree as
+// written: exactly {junit}, or relative with no "..", "~", root, or drive.
+// Symlinks are checked against the real worktree at run time.
+func junitPathInside(p string) bool {
+	if p == "{junit}" {
+		return true
+	}
+	if strings.Contains(p, "{junit}") || filepath.IsAbs(p) || strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) ||
+		strings.HasPrefix(p, "~") || filepath.VolumeName(p) != "" || (len(p) >= 2 && p[1] == ':') {
+		return false
+	}
+	for _, part := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if part == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 func exists(path string) (bool, error) {
