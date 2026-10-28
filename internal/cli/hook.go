@@ -50,6 +50,7 @@ func runHook(args []string, env Env) int {
 	if res.err == nil {
 		return ExitOK
 	}
+	logLine := logHook // read here: the goroutine below may outlive this call
 	logged := make(chan struct{})
 	go func() {
 		defer close(logged)
@@ -58,7 +59,7 @@ func runHook(args []string, env Env) int {
 			res = resolveFailure(res.err)
 		}
 		if res.shoal {
-			logHook(event, res.dir, res.err)
+			logLine(event, res.dir, res.err)
 		}
 	}()
 	select {
