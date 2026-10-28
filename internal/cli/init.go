@@ -22,6 +22,9 @@ func (env Env) cmdInit(ctx context.Context, args []string) error {
 		return err
 	}
 
+	if err := requireAbsoluteExe(env.Exe); err != nil {
+		return err
+	}
 	p, err := env.identify(ctx)
 	if err != nil {
 		return err

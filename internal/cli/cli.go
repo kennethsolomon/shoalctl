@@ -29,6 +29,7 @@ const (
 	ExitBaseline   = 6
 	ExitDependency = 7
 	ExitBusy       = 8
+	ExitDoctor     = 11
 	ExitUntrusted  = 12
 	// ExitInterrupted follows the shell convention of 128 + SIGINT.
 	ExitInterrupted = 130
@@ -57,8 +58,10 @@ func DefaultEnv() (Env, error) {
 	if err != nil {
 		return Env{}, fmt.Errorf("locate shoalctl binary: %w", err)
 	}
-	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = resolved
+	// Hook entries name this resolved path, so a symlink swapped later (for
+	// example by a package manager) does not change what they run.
+	if exe, err = filepath.EvalSymlinks(exe); err != nil {
+		return Env{}, fmt.Errorf("resolve shoalctl binary path: %w", err)
 	}
 	return Env{Dir: dir, Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr, Exe: exe, Claude: "claude", Tmux: "tmux"}, nil
 }
@@ -110,6 +113,7 @@ commands:
   start <task> [--model <model>]
   status [--json]
   done <task>
+  doctor [--fix]      check (and repair) shoal's hook entries
   version
 `
 
@@ -145,6 +149,8 @@ func Main(args []string, env Env, version string) int {
 		err = env.cmdStatus(ctx, args[1:])
 	case "done":
 		err = env.cmdDone(ctx, args[1:])
+	case "doctor":
+		err = env.cmdDoctor(ctx, args[1:])
 	case "help", "-h", "--help":
 		fmt.Fprint(env.Stdout, usage)
 	default:

@@ -186,7 +186,7 @@ deny_globs = [".env*", "storage/**"]
 | `shoalctl recall <query \| --file path>` | FTS5 search over decisions, lessons, conventions, and bugs |
 | `shoalctl why <file \| sha \| bug-id>` | Shows the stored WHY together with live `git log` for that file or SHA |
 | `shoalctl convention propose\|agree\|retire` | Manages the convention lifecycle |
-| `shoalctl doctor [--fix]` | Checks DB integrity, migrations, stuck stages and runs, worktrees, tmux windows, hook registration, stale claims; repairs what is safe (§10.4) |
+| `shoalctl doctor [--fix]` | Checks DB integrity, migrations, stuck stages and runs, worktrees, tmux windows, hook registration, stale claims; repairs what is safe (§10.4). A minimal version that checks only the hook entries ships early, with the MVP (§15.1) |
 | `shoalctl gc` | Removes merged worktrees, closes tmux windows, flags stale records |
 | `shoalctl export <id>` / `shoalctl purge <id>` | Offboarding. `purge` asks for confirmation |
 | `shoalctl uninstall` | Removes hook entries and the managed CLAUDE.md block, nothing else |
@@ -793,9 +793,9 @@ Every feature in this spec lands in exactly one phase. Commands not yet built ar
 | Phase | Scope | Done when | Est. |
 |-------|-------|-----------|------|
 | **Spikes (done)** | Go skeleton, modernc FTS5 spike, hook loading in outside worktrees, startup timing ([phase-0-results.md](phase-0-results.md)) | All four spikes recorded | done |
-| **0: MVP** | Exactly: `init` (stealth; installs hooks by option 1), `new` (lane `feature\|bugfix\|hotfix`), `start` (worktree + tmux window + `claude` launched with the task brief, default model `claude-opus-5-5`, configurable), `status`, `done` (rendered report). Tables `schema_migrations`, `tasks`, `summaries`, `test_runs`, `test_results`. The baseline test run (§8.2) wired into `start`. Full build spec in §15.1 | The acceptance checks in §15.1 pass on a real project | 3-4 days |
+| **0: MVP** | Exactly: `init` (stealth; installs hooks by option 1), `new` (lane `feature\|bugfix\|hotfix`), `start` (worktree + tmux window + `claude` launched with the task brief, default model `claude-opus-5-5`, configurable), `status`, `done` (rendered report), and a minimal `doctor [--fix]` that checks and repairs only the hook entries (shipped early from Phase 2, because a moved binary otherwise silently disables every hook). Tables `schema_migrations`, `tasks`, `summaries`, `test_runs`, `test_results`. The baseline test run (§8.2) wired into `start`. Full build spec in §15.1 | The acceptance checks in §15.1 pass on a real project | 3-4 days |
 | **1: Agent team, QA loop, zero-regression merge gate** | `agents install` (stealth and `--commit`), the eight `shoal-*` definitions (§7); `messages`, `message_reads`, `msg`; `contracts` and `contract freeze`; per-agent `claim`/`release` inside one task (the `file_claims` table); `qa` with the 3-round cap and escalation; feature behaviour rule (§8.4); user scope matrix, `scope add\|show\|review\|check`, `new --scope` (§8.6); hotfix minimal-diff check and automatic backport task (§6.3). The merge gate (§8.5) with `--accept-regression` and `regression_overrides`; `repro red\|green` and `regression_proofs` (§8.3); flaky re-runs and `test_quarantine` (§8.7); coverage comparison and `coverage_files`; "Untested areas" (§8.8); `test` command; hotfixes merging into the production branch; a simple serialized `merge` that takes `done` tasks oldest first, one at a time, under `merge.lock`. Warnings that need `PreToolUse`/`PostToolUse` (writes outside claims, contract edits by non-leads) arrive with those hooks in Phase 3 | One feature runs through the feature lane with backend and frontend agents and a frozen contract; an "also test X" item blocks `done` until every row is green or waived; a bugfix without a red/green proof is refused by `done`; breaking a baseline-passing test blocks `merge` with exit 9, and `--accept-regression` lets it through with the override in the report; a test made flaky on purpose is quarantined and listed; a finished hotfix merges into the production branch and creates its backport task | 7-9 days |
-| **2: Claims + queue** | `plan` with expected `file_claims` across tasks and the one-keypress overlap prompt (§9.2); `merge_queue` per target branch and `needs-rebase` for tasks whose claims overlap a merge (§9.4); optimistic locking on claims; stale-claim expiry; `doctor [--fix]` (§10.4) | The Bug A / Bug B scenario works end to end; two concurrent `plan` runs can't both win one path; `doctor --fix` recovers a task killed mid-`start` and releases a stale claim | 3-4 days |
+| **2: Claims + queue** | `plan` with expected `file_claims` across tasks and the one-keypress overlap prompt (§9.2); `merge_queue` per target branch and `needs-rebase` for tasks whose claims overlap a merge (§9.4); optimistic locking on claims; stale-claim expiry; the full `doctor [--fix]` (§10.4), extending the minimal one from Phase 0 | The Bug A / Bug B scenario works end to end; two concurrent `plan` runs can't both win one path; `doctor --fix` recovers a task killed mid-`start` and releases a stale claim | 3-4 days |
 | **3: Memory + hooks** | `bugs`, `decisions`, `lessons`, `qa`, FTS5; `SessionStart` brief, `PreToolUse` and `PostToolUse` handlers (including the claim and contract warnings from Phase 1); staleness pre-check; `why`, `recall`; lesson hit counting | Brief < 1k tokens measured; a lesson is injected on a matching file touch; a write outside an agent's claims prints a one-line warning | 3-4 days |
 | **4: Conventions + promotion** | Convention lifecycle, brainstorm-first brief, lesson promotion proposed after 3 repeats, non-stealth mode (`[install].stealth = false`, managed CLAUDE.md block), conflict detection | "Strategy pattern" example works end to end | 1-2 days |
 | **5: Publish** | `export`/`purge`/`uninstall`, `gc`, release CI guard, FTS5 test run on every target, Homebrew tap, cross-compiled releases | Installed on a project with zero repo footprint | 2 days |
@@ -963,6 +963,15 @@ Allowed only from `in-progress` (exit 5 otherwise).
 10. `## Risks / Follow-ups`
 11. `## Fidelity and limits`: the reduced-fidelity line when it applies; "Coverage and untested areas are not computed in this version"; "Flaky re-runs are not applied in this version"
 
+#### `shoalctl doctor [--fix]` (minimal)
+Shipped early from Phase 2 and limited to hook registration. Hooks fail open (§4.6), so a broken entry never shows up in a session: the session just runs without shoal's heartbeats. This is how you find out.
+- Reads `<main checkout>/.claude/settings.local.json` and checks, for `SessionStart` and `Stop`: exactly one shoal entry; its binary path is absolute, exists, is a regular file and is executable; the entry has the current shape (wrapper, quoting, `shell` on Windows, timeout).
+- Prints `ok` and the binary path when healthy. Otherwise lists each problem on stderr and exits 11, naming `--fix`.
+- `--fix` runs the same merge as `init` step 5 with the running binary's resolved absolute path (`os.Executable` with symlinks resolved), then checks again. It keeps every other byte of the file and refuses, like `init`, a tracked `settings.local.json`.
+- Exit codes: 0 (healthy or fixed), 3 (settings file is not valid JSON, or is tracked), 11 (problems and no `--fix`).
+
+`init` also refuses (exit 1) to register a binary path that is not absolute, and always registers the symlink-resolved path, so a later swap of a symlink cannot change what hooks run.
+
 #### Migration `0001_init.sql`
 ```sql
 CREATE TABLE schema_migrations (
@@ -1086,7 +1095,7 @@ WAL, `busy_timeout`, `BEGIN IMMEDIATE` per state change, and the `tasks.version`
 | 18 | Schema migrations | Numbered, embedded, append-only; `schema_migrations` table plus `PRAGMA user_version`; never downgrade |
 | 19 | Default model | `claude-opus-5-5` for every session shoalctl launches, set by `[session].model` and overridable with `start --model`. Agent definitions use `model: inherit` |
 | 20 | QA cap | 3 rounds in every lane, then `escalated` |
-| 21 | MVP scope | `init`, `new`, `start`, `status`, `done`; tables `schema_migrations`, `tasks`, `summaries`, `test_runs`, `test_results`; baseline wired into `start`. The rest of the zero-regression gate is Phase 1 |
+| 21 | MVP scope | `init`, `new`, `start`, `status`, `done`, and a minimal hook-only `doctor`; tables `schema_migrations`, `tasks`, `summaries`, `test_runs`, `test_results`; baseline wired into `start`. The rest of the zero-regression gate is Phase 1 |
 | 22 | Test command | Required. A project without tests must say so with `format = "none"`, and every report then states the protocol is inactive |
 | 23 | Task files | Live in `<worktree>/.shoal/`, excluded through `info/exclude`. The brief is passed to `claude` as a one-line first prompt pointing at `.shoal/brief.md` |
 | 24 | Workspace trust | `start` checks, read-only, that Claude Code trusts the main checkout and exits 12 otherwise. Worktrees inherit that trust. shoal never writes trust into `~/.claude.json` and never answers the dialog, whose default is "No, exit" |
