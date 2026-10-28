@@ -221,10 +221,7 @@ func TestStartRefusesUnconfirmedLiveSuite(t *testing.T) {
 			t.Fatal("expected the suite's child to outlive its leader")
 		}
 
-		errOut := h.expectCode(ExitBusy, "start", "1")
-		if !strings.Contains(errOut, "kill -TERM -- -"+strconv.Itoa(sh)) {
-			t.Errorf("stderr lacks the kill hint: %s", errOut)
-		}
+		assertUnconfirmed(t, h.expectCode(ExitBusy, "start", "1"), sh)
 		if n := countRows(t, p, `SELECT count(*) FROM test_runs`); n != 1 {
 			t.Fatalf("a second suite was started next to the orphaned group: %d runs", n)
 		}
@@ -249,10 +246,7 @@ func TestStartRefusesUnconfirmedLiveSuite(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		errOut := h.expectCode(ExitBusy, "start", "1")
-		if !strings.Contains(errOut, "kill -TERM -- -"+strconv.Itoa(old.Process.Pid)) {
-			t.Errorf("stderr lacks the kill hint: %s", errOut)
-		}
+		assertUnconfirmed(t, h.expectCode(ExitBusy, "start", "1"), old.Process.Pid)
 		if n := countRows(t, p, `SELECT count(*) FROM test_runs`); n != 1 {
 			t.Fatalf("a second suite was started next to a pre-migration one: %d runs", n)
 		}
@@ -285,6 +279,7 @@ func TestStartRefusesUnparseableStartTime(t *testing.T) {
 			}
 
 			errOut := h.expectCode(ExitBusy, "start", "1")
+			assertUnconfirmed(t, errOut, old.Process.Pid)
 			if strings.Contains(errOut, "pid was reused") {
 				t.Errorf("start treated an unparseable start time as a reused pid:\n%s", errOut)
 			}
@@ -295,6 +290,21 @@ func TestStartRefusesUnparseableStartTime(t *testing.T) {
 				t.Fatal("the live process was killed")
 			}
 		})
+	}
+}
+
+// assertUnconfirmed checks that a refusal for a live group whose identity
+// could not be confirmed says so and suggests inspecting the group, not
+// killing it.
+func assertUnconfirmed(t *testing.T, errOut string, pid int) {
+	t.Helper()
+	for _, want := range []string{"could not be confirmed", "pgrep -l -g " + strconv.Itoa(pid)} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr lacks %q: %s", want, errOut)
+		}
+	}
+	if strings.Contains(errOut, "kill -TERM") {
+		t.Errorf("start suggested killing an unconfirmed process group:\n%s", errOut)
 	}
 }
 

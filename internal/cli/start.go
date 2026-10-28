@@ -281,8 +281,9 @@ func (env Env) runSuite(ctx context.Context, p *project, t store.Task, kind, sha
 
 // reapAbandoned handles runs of this task still marked running. The caller
 // holds the task lock, so their owner has exited. A run whose suite is still
-// alive, or might be (its start time cannot be read or was never recorded),
-// blocks the command: two suites must never share a worktree. A dead one, or
+// alive, or might be (its start time cannot be read, parsed, or was never
+// recorded), blocks the command: two suites must never share a worktree; only
+// a confirmed one comes with a kill command. A dead one, or
 // one whose pid now belongs to another process (its start time differs from
 // the recorded one), is marked error, with a note in its output.log.
 func (env Env) reapAbandoned(ctx context.Context, p *project, t store.Task) error {
@@ -293,7 +294,12 @@ func (env Env) reapAbandoned(ctx context.Context, p *project, t store.Task) erro
 	for _, r := range runs {
 		if testrun.GroupAlive(r.PID) {
 			live, err := testrun.ProcessStart(r.PID)
-			if r.PIDStart == "" || err != nil || testrun.SameStart(r.PIDStart, live) {
+			if r.PIDStart == "" || err != nil || !testrun.ComparableStart(r.PIDStart, live) {
+				return fail(ExitBusy, "%s run %d of task %s may still be running (pid %d is alive) although the shoalctl that started it exited, "+
+					"but the suite's identity could not be confirmed; check the process first (on unix: pgrep -l -g %d), stop it if it is the suite, then retry",
+					r.Kind, r.ID, t.Slug, r.PID, r.PID)
+			}
+			if testrun.SameStart(r.PIDStart, live) {
 				return fail(ExitBusy, "%s run %d of task %s is still running (pid %d) although the shoalctl that started it exited; "+
 					"stop it (on unix: kill -TERM -- -%d), then retry", r.Kind, r.ID, t.Slug, r.PID, r.PID)
 			}

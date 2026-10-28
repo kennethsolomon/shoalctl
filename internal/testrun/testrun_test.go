@@ -541,6 +541,26 @@ func TestProcessStartIdentifiesProcess(t *testing.T) {
 	}
 }
 
+func TestComparableStart(t *testing.T) {
+	for _, tt := range []struct {
+		name           string
+		recorded, live string
+		want           bool
+	}{
+		{"both lstart", "Wed Oct 28 10:11:12 2026", "Thu Jan 1 00:00:00 1970", true},
+		{"both windows", "133000000000000000", "133000003000000000", true},
+		{"unparsable but equal", "x", "x", true},
+		{"recorded unparsable", "garbage-not-a-date", "Wed Oct 28 10:11:12 2026", false},
+		{"live unparsable", "Wed Oct 28 10:11:12 2026", " ", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ComparableStart(tt.recorded, tt.live); got != tt.want {
+				t.Errorf("ComparableStart(%q, %q) = %v, want %v", tt.recorded, tt.live, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSameStart(t *testing.T) {
 	for _, tt := range []struct {
 		name           string
