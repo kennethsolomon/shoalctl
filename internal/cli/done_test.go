@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -210,7 +211,11 @@ func TestChangedFilesKeepsUnicodeSpacesAndRenames(t *testing.T) {
 
 	testutil.Git(t, repo, "mv", "old name.txt", "new näme.txt")
 	testutil.WriteFile(t, filepath.Join(repo, "dir ü", "naïve file ✓.go"), "package x\n")
-	testutil.WriteFile(t, filepath.Join(repo, "tab\there.txt"), "x\n")
+	added := []string{"dir ü/naïve file ✓.go"}
+	if runtime.GOOS != "windows" { // Windows forbids control characters in file names
+		testutil.WriteFile(t, filepath.Join(repo, "tab\there.txt"), "x\n")
+		added = append(added, "tab\there.txt")
+	}
 	testutil.Git(t, repo, "add", "-A")
 	testutil.Git(t, repo, "commit", "-q", "-m", "change")
 
@@ -225,12 +230,12 @@ func TestChangedFilesKeepsUnicodeSpacesAndRenames(t *testing.T) {
 	if f, ok := got["new näme.txt"]; !ok || !strings.HasPrefix(f.Status, "R") || f.From != "old name.txt" {
 		t.Errorf("rename = %+v (all: %+v)", f, files)
 	}
-	for _, path := range []string{"dir ü/naïve file ✓.go", "tab\there.txt"} {
+	for _, path := range added {
 		if f, ok := got[path]; !ok || f.Status != "A" {
 			t.Errorf("%q = %+v (all: %+v)", path, f, files)
 		}
 	}
-	if len(files) != 3 {
-		t.Errorf("want 3 changed files, got %+v", files)
+	if len(files) != 1+len(added) {
+		t.Errorf("want %d changed files, got %+v", 1+len(added), files)
 	}
 }

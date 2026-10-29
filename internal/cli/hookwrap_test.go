@@ -30,12 +30,18 @@ func main() {
 func crashingBinaries(t *testing.T) map[string]string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "bin dir")
+	// Windows runs only .exe files by path, so the shell scripts are POSIX
+	// only; the Go fatal program still covers exit 2 there.
+	exe := "shoalctl"
 	bins := map[string]string{
 		"exits 2":        "#!/bin/sh\nexit 2\n",
 		"exits 1":        "#!/bin/sh\nexit 1\n",
 		"killed by SEGV": "#!/bin/sh\nkill -SEGV $$\n",
 	}
-	out := map[string]string{"missing binary": filepath.Join(dir, "gone", "shoalctl")}
+	if runtime.GOOS == "windows" {
+		exe, bins = "shoalctl.exe", nil
+	}
+	out := map[string]string{"missing binary": filepath.Join(dir, "gone", exe)}
 	for name, script := range bins {
 		path := filepath.Join(dir, name, "shoalctl")
 		testutil.WriteFile(t, path, script)
@@ -47,7 +53,7 @@ func crashingBinaries(t *testing.T) map[string]string {
 
 	src := filepath.Join(t.TempDir(), "main.go")
 	testutil.WriteFile(t, src, goFatal)
-	fatal := filepath.Join(dir, "go runtime fatal", "shoalctl")
+	fatal := filepath.Join(dir, "go runtime fatal", exe)
 	build := exec.Command("go", "build", "-o", fatal, src)
 	build.Env = append(os.Environ(), "GO111MODULE=off")
 	if b, err := build.CombinedOutput(); err != nil {
