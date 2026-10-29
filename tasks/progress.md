@@ -60,3 +60,15 @@ Vex returned BLOCK on `fa19076` with five items; each fixed test-first in its ow
 | `repro green` could be recorded on the red commit | after a `fail` red, green needs a later commit with a different tree; else exit 9, nothing recorded (`not-reproducible` backports exempt) | `TestReproGreenNeedsALaterCommitWithChanges` |
 
 Remaining: `[tests].setup` is not part of `command_hash`, so a baseline cached before a setup change is reused (rule (a) still applies). Rule (a) only catches a test that passed in some earlier run of the task; a task that breaks a setup-dependent test before any run with the file, with no `[tests].setup`, still reads as pre-existing.
+
+## Vex HOLD round 3
+
+Vex returned HOLD on `d14fc2d` with three items; each fixed test-first in its own commit (spec §16 rows 41, 44, 45).
+
+| Item | Fix | Test |
+|------|-----|------|
+| A task breaking an ignored-file test (`.env`) in its first commit, before any run, merged with no warning when no `[tests].setup` was set | Fallback chosen: with no `setup`, every `pre-existing` row of a gate run (`merge`, `test --kind gate`) blocks with exit 9; the note says to configure `[tests].setup` or have a human accept with `merge --task <task> --accept-regression <test>`. The preferred "prove it on a run with the same file set" is unreliable: `start`'s baseline runs in the freshly created worktree before `.env` is copied in, so it is a clean baseline too, and no ignored-file inventory is recorded. Test fixtures that rely on pre-existing failures now declare `setup = "true"` (`junitConfig`); `junitNoSetup` keeps the bare config | `TestGateBlocksUnprovenBaselineFailureWithoutSetup`, `TestHumanAcceptsUnprovenBaselineFailure` |
+| `[tests].setup` was not in the baseline cache key | `CommandHash(command, format, rerun_command, setup)`; start, merge and every run use `project.commandHash()` | `TestCommandHash`, `TestSetupChangeInvalidatesCachedBaseline` |
+| `repro green` cannot prove a real fix | Documented risk in README and spec §8.3, §16 row 45 | docs only |
+
+Remaining: with no `setup`, any project with a known failing test needs a human acceptance (or `setup = "true"`) at every merge. `setup = "true"` reopens the ignored-file hole by the user's explicit choice; rule (a) still applies. Changing the hash input re-runs every cached baseline once.
