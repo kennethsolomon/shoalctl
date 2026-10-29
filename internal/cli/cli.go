@@ -186,6 +186,8 @@ func Main(args []string, env Env, version string) int {
 		err = env.cmdDoctor(ctx, args[1:])
 	case "test":
 		err = env.cmdTest(ctx, args[1:])
+	case "repro":
+		err = env.cmdRepro(ctx, args[1:])
 	case "scope":
 		err = env.cmdScope(ctx, args[1:])
 	case "agents":

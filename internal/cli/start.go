@@ -249,8 +249,14 @@ func (env Env) baseline(ctx context.Context, p *project, t store.Task, wt string
 // coverage is read after the first attempt when configured. A baseline's
 // flaky tests go into quarantine.
 func (env Env) runSuite(ctx context.Context, p *project, t store.Task, kind, sha, wt string) (store.Run, error) {
+	return env.runSuiteWith(ctx, p, t, kind, sha, wt, p.cfg.Tests.Command)
+}
+
+// runSuiteWith is runSuite with the first attempt's command given, for
+// example rerun_command filled with one test id (repro).
+func (env Env) runSuiteWith(ctx context.Context, p *project, t store.Task, kind, sha, wt, command string) (store.Run, error) {
 	cfg := p.cfg.Tests
-	run, err := p.db.StartRun(ctx, store.Run{TaskID: t.ID, Kind: kind, SHA: sha, Command: cfg.Command,
+	run, err := p.db.StartRun(ctx, store.Run{TaskID: t.ID, Kind: kind, SHA: sha, Command: command,
 		CommandHash: testrun.CommandHash(cfg.Command, cfg.Format, cfg.RerunCommand), Format: cfg.Format,
 		Fidelity: testrun.Fidelity(cfg.Format)},
 		func(id int64) string { return filepath.Join(p.runDir(id), "output.log") })
@@ -260,7 +266,7 @@ func (env Env) runSuite(ctx context.Context, p *project, t store.Task, kind, sha
 	// Bookkeeping writes outlive an interrupt, so the run is never left at
 	// running with no owner.
 	wctx := context.WithoutCancel(ctx)
-	spec := testrun.Spec{Command: cfg.Command, Format: cfg.Format, JunitPath: cfg.JunitPath,
+	spec := testrun.Spec{Command: command, Format: cfg.Format, JunitPath: cfg.JunitPath,
 		Timeout: p.cfg.TestTimeout(), Dir: wt, RunDir: p.runDir(run.ID),
 		OnStart: func(pid int) error {
 			start, err := testrun.ProcessStart(pid)

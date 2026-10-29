@@ -25,7 +25,9 @@ var fakeExe = func() string {
 }()
 
 // testScript emits JUnit for a tiny fake suite. C::pre fails at baseline;
-// feature.txt adds a passing test and broken.txt breaks C::a.
+// feature.txt adds a passing test and broken.txt breaks C::a. Committing
+// tests/bug.t adds the regression test C::bug, which fails until fix.txt
+// exists.
 const testScript = `#!/bin/sh
 out="$1"
 {
@@ -34,6 +36,7 @@ if [ -f broken.txt ]; then echo '<testcase classname="C" name="a"><failure messa
 echo '<testcase classname="C" name="pre"><failure message="old bug"/></testcase>'
 echo '<testcase classname="C" name="later"><skipped/></testcase>'
 if [ -f feature.txt ]; then echo '<testcase classname="C" name="new"/>'; fi
+if [ -f tests/bug.t ]; then if [ -f fix.txt ]; then echo '<testcase classname="C" name="bug"/>'; else echo '<testcase classname="C" name="bug"><failure message="bug"/></testcase>'; fi; fi
 echo '</testsuite>'
 } > "$out"
 `
