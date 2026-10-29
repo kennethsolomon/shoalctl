@@ -172,6 +172,11 @@ func (c Config) Validate() error {
 	check(c.Tests.FlakyRetries >= 0, "[tests].flaky_retries %d must be >= 0", c.Tests.FlakyRetries)
 	check(positiveDuration(c.Tests.Timeout), "[tests].timeout %q must be a positive duration like 30m", c.Tests.Timeout)
 	check(oneOf(c.Tests.CoverageFormat, "", "lcov", "cobertura", "go-cover"), "[tests].coverage_format %q must be empty, lcov, cobertura or go-cover", c.Tests.CoverageFormat)
+	check(c.Tests.CoverageFormat == "" || c.Tests.CoveragePath != "", "[tests].coverage_path must be set when coverage_format is set")
+	check(c.Tests.CoveragePath == "" || (junitPathInside(c.Tests.CoveragePath) && !strings.ContainsAny(c.Tests.CoveragePath, "*?[{")),
+		"[tests].coverage_path %q must be a file path relative to the task worktree with no .. or wildcards (shoal deletes the old report before each run)", c.Tests.CoveragePath)
+	check(!junitPathInGit(c.Tests.CoveragePath), "[tests].coverage_path %q reaches into .git", c.Tests.CoveragePath)
+	check(c.Tests.RerunCommand == "" || strings.Contains(c.Tests.RerunCommand, "{tests}"), "[tests].rerun_command must contain {tests}, the ids of the tests to re-run")
 	check(strings.TrimSpace(c.Session.Model) != "" && !strings.HasPrefix(c.Session.Model, "-"), "[session].model %q must be a model name", c.Session.Model)
 	check(c.Install.Stealth, "[install].stealth = false is not supported until Phase 4")
 	check(c.Lanes.QAMaxRounds >= 1, "[lanes].qa_max_rounds %d must be >= 1", c.Lanes.QAMaxRounds)

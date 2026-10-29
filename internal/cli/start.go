@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kennethsolomon/shoalctl/internal/config"
+	"github.com/kennethsolomon/shoalctl/internal/coverage"
 	"github.com/kennethsolomon/shoalctl/internal/gitx"
 	"github.com/kennethsolomon/shoalctl/internal/lockfile"
 	"github.com/kennethsolomon/shoalctl/internal/store"
@@ -243,7 +244,10 @@ func (env Env) baseline(ctx context.Context, p *project, t store.Task, wt string
 }
 
 // runSuite records a test run: insert running, run with no transaction open,
-// then store the outcome and results in one transaction.
+// then store the outcome and results in one transaction. Failing tests are
+// re-run up to [tests].flaky_retries times (§8.7), every attempt stored;
+// coverage is read after the first attempt when configured. A baseline's
+// flaky tests go into quarantine.
 func (env Env) runSuite(ctx context.Context, p *project, t store.Task, kind, sha, wt string) (store.Run, error) {
 	cfg := p.cfg.Tests
 	run, err := p.db.StartRun(ctx, store.Run{TaskID: t.ID, Kind: kind, SHA: sha, Command: cfg.Command,
@@ -256,7 +260,7 @@ func (env Env) runSuite(ctx context.Context, p *project, t store.Task, kind, sha
 	// Bookkeeping writes outlive an interrupt, so the run is never left at
 	// running with no owner.
 	wctx := context.WithoutCancel(ctx)
-	out := testrun.Run(ctx, testrun.Spec{Command: cfg.Command, Format: cfg.Format, JunitPath: cfg.JunitPath,
+	spec := testrun.Spec{Command: cfg.Command, Format: cfg.Format, JunitPath: cfg.JunitPath,
 		Timeout: p.cfg.TestTimeout(), Dir: wt, RunDir: p.runDir(run.ID),
 		OnStart: func(pid int) error {
 			start, err := testrun.ProcessStart(pid)
@@ -267,15 +271,139 @@ func (env Env) runSuite(ctx context.Context, p *project, t store.Task, kind, sha
 				return fmt.Errorf("record the suite's pid %d: %w", pid, err)
 			}
 			return nil
-		}})
+		}}
+	coverageFile := ""
+	if cfg.CoverageFormat != "" && cfg.Format != "none" {
+		if coverageFile, err = removeStaleCoverage(wt, cfg.CoveragePath); err != nil {
+			fmt.Fprintf(env.Stderr, "%s run %d: %v; coverage is not recorded for this run\n", kind, run.ID, err)
+		}
+	}
+	out := testrun.Run(ctx, spec)
 	if out.Problem != "" {
 		fmt.Fprintf(env.Stderr, "%s run %d: %s\n", kind, run.ID, out.Problem)
 	}
-	results := make([]store.Result, len(out.Results))
-	for i, r := range out.Results {
-		results[i] = store.Result(r)
+	results := make([]store.Result, 0, len(out.Results))
+	for _, r := range out.Results {
+		results = append(results, store.Result{TestID: r.TestID, Status: r.Status, DurationMS: r.DurationMS, Message: r.Message, Attempt: 1})
 	}
-	return p.db.FinishRun(wctx, run.ID, out.Status, out.ExitCode, results)
+	if out.Status == testrun.StatusCompleted {
+		if coverageFile != "" {
+			env.recordCoverage(wctx, p, run.ID, coverageFile, wt)
+		}
+		results = append(results, env.rerunFailing(ctx, p, spec, run.ID, kind, out.Results)...)
+	}
+	done, err := p.db.FinishRun(wctx, run.ID, out.Status, out.ExitCode, results)
+	if err != nil || kind != "baseline" || done.Status != testrun.StatusCompleted {
+		return done, err
+	}
+	eff, err := p.db.EffectiveResults(wctx, done.ID)
+	if err != nil {
+		return done, err
+	}
+	var flaky []store.Result
+	for _, r := range eff {
+		if r.Status == store.StatusFlaky {
+			flaky = append(flaky, r)
+		}
+	}
+	if n, err := p.db.QuarantineTests(wctx, done.ID, flaky); err != nil {
+		return done, err
+	} else if n > 0 {
+		fmt.Fprintf(env.Stdout, "baseline: %d flaky test(s) quarantined; see shoalctl test quarantine list\n", n)
+	}
+	return done, nil
+}
+
+// rerunFailing re-runs the failing tests of a completed first attempt, up to
+// [tests].flaky_retries times, with rerun_command when set and otherwise the
+// whole suite. It returns the later attempts' results for those tests only.
+// A test a re-run does not report stays failed.
+func (env Env) rerunFailing(ctx context.Context, p *project, spec testrun.Spec, runID int64, kind string, first []testrun.Result) []store.Result {
+	cfg := p.cfg.Tests
+	var failing []string
+	for _, r := range first {
+		if r.Status == "fail" {
+			failing = append(failing, r.TestID)
+		}
+	}
+	var extra []store.Result
+	for attempt := 2; attempt <= cfg.FlakyRetries+1 && len(failing) > 0 && ctx.Err() == nil; attempt++ {
+		whole := cfg.RerunCommand == "" || cfg.Format == "exit-code" || contains(failing, testrun.SuiteID)
+		rs := spec
+		rs.RunDir = filepath.Join(spec.RunDir, fmt.Sprintf("attempt-%d", attempt))
+		if !whole {
+			rs.Command = testrun.RerunCommand(cfg.RerunCommand, failing)
+		}
+		fmt.Fprintf(env.Stdout, "%s run %d: re-running %d failing test(s), attempt %d of %d\n", kind, runID, len(failing), attempt, cfg.FlakyRetries+1)
+		out := testrun.Run(ctx, rs)
+		if out.Status != testrun.StatusCompleted {
+			fmt.Fprintf(env.Stderr, "%s run %d attempt %d: %s; the remaining failures stand\n", kind, runID, attempt, out.Problem)
+			break
+		}
+		got := map[string]string{}
+		for _, r := range out.Results {
+			got[r.TestID] = r.Status
+		}
+		if _, ok := got[testrun.SuiteID]; whole && !ok && out.ExitCode != nil && *out.ExitCode == 0 {
+			got[testrun.SuiteID] = "pass"
+		}
+		var still []string
+		for _, id := range failing {
+			st, ok := got[id]
+			if !ok {
+				still = append(still, id)
+				continue
+			}
+			extra = append(extra, store.Result{TestID: id, Status: st, Attempt: attempt})
+			if st != "pass" {
+				still = append(still, id)
+			}
+		}
+		failing = still
+	}
+	return extra
+}
+
+// removeStaleCoverage deletes an old coverage report before a run, so a stale
+// one is never read, and returns the report's absolute path. The path must
+// stay inside the worktree after resolving symlinks.
+func removeStaleCoverage(wt, rel string) (string, error) {
+	if rel == "" {
+		return "", fmt.Errorf("[tests].coverage_path is empty")
+	}
+	path := filepath.Join(wt, filepath.FromSlash(rel))
+	root, err := filepath.EvalSymlinks(wt)
+	if err != nil {
+		return "", fmt.Errorf("resolve worktree %s: %w", wt, err)
+	}
+	if dir, err := filepath.EvalSymlinks(filepath.Dir(path)); err == nil {
+		if r, err := filepath.Rel(root, dir); err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+			return "", fmt.Errorf("coverage_path %s resolves outside the worktree (%s)", rel, dir)
+		}
+	}
+	if fi, err := os.Lstat(path); err == nil {
+		if !fi.Mode().IsRegular() {
+			return "", fmt.Errorf("coverage_path %s is not a regular file", rel)
+		}
+		if err := os.Remove(path); err != nil {
+			return "", fmt.Errorf("remove stale coverage report %s: %w", path, err)
+		}
+	}
+	return path, nil
+}
+
+func (env Env) recordCoverage(ctx context.Context, p *project, runID int64, file, wt string) {
+	files, err := coverage.Parse(p.cfg.Tests.CoverageFormat, file, wt)
+	if err == nil {
+		rows := make([]store.CoverageFile, 0, len(files))
+		for _, f := range files {
+			rows = append(rows, store.CoverageFile{Path: f.Path, LinesTotal: f.Total, LinesCovered: f.Covered, Uncovered: coverage.Ranges(f.Uncovered)})
+		}
+		err = p.db.SetCoverage(ctx, runID, rows)
+	}
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "run %d: coverage not recorded: %v\n", runID, err)
+	}
 }
 
 // reapAbandoned handles runs of this task still marked running. The caller

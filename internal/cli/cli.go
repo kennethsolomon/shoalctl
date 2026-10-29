@@ -29,6 +29,7 @@ const (
 	ExitBaseline    = 6
 	ExitDependency  = 7
 	ExitBusy        = 8
+	// ExitGate (9) is declared with the gate in gate.go.
 	ExitDoneRefused = 10
 	ExitDoctor      = 11
 	ExitUntrusted   = 12
@@ -47,6 +48,22 @@ type Env struct {
 	Claude   string   // claude binary name or path
 	Tmux     string   // tmux binary name or path
 	TmuxArgs []string // global tmux args, e.g. -L <socket>
+	// Terminal reports whether a human is at the keyboard; nil means stdin
+	// is a character device. Waivers and manual checks need one (§8.6).
+	Terminal func() bool
+}
+
+// interactive reports whether stdin is a terminal a human types into.
+func (env Env) interactive() bool {
+	if env.Terminal != nil {
+		return env.Terminal()
+	}
+	f, ok := env.Stdin.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
 // DefaultEnv is the environment of a real invocation.
@@ -110,10 +127,25 @@ const usage = `usage: shoalctl <command> [args]
 
 commands:
   init [--commit-config] [--rebind]
-  new <feature|bugfix|hotfix> "<title>" [--ask "<text>" | --ask-file <path>]
+  new <feature|bugfix|hotfix> "<title>" [--ask "<text>" | --ask-file <path>] [--scope "<text>"]...
   start <task> [--model <model>]
   status [--json]
-  done <task>
+  test <task> [--kind gate|qa|baseline]
+  test quarantine list [--all] | release <test>
+  qa <task>
+  done <task> [--force] [--accept-large-diff --reason "<text>"]
+  merge [--accept-regression <target> --reason "<text>"]...
+  repro red|green <task> --test <id> [--file <path>]
+  scope add <task> [--behaviour] "<text>"
+  scope case <task> <item-id> --category <c> --desc "<text>" (--test <id> | --manual "<step>" | --na "<reason>")
+  scope show|review <task>
+  scope check <task> <case-id> --pass|--fail [--note "<text>"]
+  agents install [--commit] | agents list
+  contract freeze <task> [--as <agent>] [--note "<what changed>"]
+  claim <task> --as <agent> <glob>...
+  release <task> --as <agent> [<glob>...]
+  msg send <task> --from <agent> --to <agent|*> --kind <kind> [--subject "<s>"] [--reply-to <id>] "<body>"
+  msg inbox <task> --as <agent> [--all]
   doctor [--fix]      check (and repair) shoal's hook entries
   version
 `
@@ -152,6 +184,8 @@ func Main(args []string, env Env, version string) int {
 		err = env.cmdDone(ctx, args[1:])
 	case "doctor":
 		err = env.cmdDoctor(ctx, args[1:])
+	case "test":
+		err = env.cmdTest(ctx, args[1:])
 	case "help", "-h", "--help":
 		fmt.Fprint(env.Stdout, usage)
 	default:

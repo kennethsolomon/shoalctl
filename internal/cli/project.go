@@ -164,6 +164,45 @@ func (p *project) lockTask(t store.Task, command string) (*lockfile.Lock, error)
 	return l, err
 }
 
+// lockedTask opens the project, finds the task, takes its lock and re-reads
+// it under the lock. The caller closes p and releases the lock.
+func (env Env) lockedTask(ctx context.Context, ref, command string) (*project, store.Task, *lockfile.Lock, error) {
+	p, err := env.openProject(ctx)
+	if err != nil {
+		return nil, store.Task{}, nil, err
+	}
+	t, err := p.db.GetTask(ctx, ref)
+	if err != nil {
+		p.close()
+		return nil, store.Task{}, nil, err
+	}
+	lock, err := p.lockTask(t, command)
+	if err != nil {
+		p.close()
+		return nil, store.Task{}, nil, err
+	}
+	if t, err = p.db.GetTask(ctx, t.Slug); err != nil {
+		lock.Release()
+		p.close()
+		return nil, store.Task{}, nil, err
+	}
+	return p, t, lock, nil
+}
+
+// openTask opens the project and finds one task without locking it.
+func (env Env) openTask(ctx context.Context, ref string) (*project, store.Task, error) {
+	p, err := env.openProject(ctx)
+	if err != nil {
+		return nil, store.Task{}, err
+	}
+	t, err := p.db.GetTask(ctx, ref)
+	if err != nil {
+		p.close()
+		return nil, store.Task{}, err
+	}
+	return p, t, nil
+}
+
 // writeFileAtomic writes through a temp file in the same dir, fsyncs it, sets
 // perm, and renames it over path, so readers see the old or the new file.
 func writeFileAtomic(path string, data []byte, perm fs.FileMode) error {
