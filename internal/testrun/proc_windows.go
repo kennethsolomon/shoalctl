@@ -3,6 +3,7 @@
 package testrun
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -19,14 +20,14 @@ import (
 type procGroup struct{ job windows.Handle }
 
 // prepare keeps the suite out of shoalctl's console process group, so
-// shoalctl decides how the suite stops on Ctrl-C.
+// shoalctl decides how the suite stops on Ctrl-C, and creates it suspended:
+// it runs nothing until its gate opens, after attach has put it in its job.
 func prepare(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP}
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_SUSPENDED}
 }
 
-// attach puts the started suite into a new kill-on-close job object. A child
-// the suite spawns before this returns is not in the job; the window is the
-// few microseconds after process creation.
+// attach puts the started, still suspended suite into a new kill-on-close job
+// object, so every process it starts is in the job too.
 func attach(cmd *exec.Cmd) (*procGroup, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
@@ -101,11 +102,49 @@ func parseStart(s string) (time.Time, bool) {
 	return time.Unix(0, ns), true
 }
 
-// gate is a no-op on Windows: the kill-on-close job object ends the suite
-// with shoalctl, so an unrecorded suite cannot outlive it.
-type gate struct{}
+// gate holds the suite suspended (see prepare) until its pid is recorded. A
+// shoalctl killed before the job holds the suite leaves it suspended, so it
+// never runs; once it is in the job, the job ends it with shoalctl.
+type gate struct{ cmd *exec.Cmd }
 
-func hold(*exec.Cmd) (*gate, error) { return &gate{}, nil }
-func (*gate) started()              {}
-func (*gate) open() error           { return nil }
-func (*gate) shut()                 {}
+func hold(cmd *exec.Cmd) (*gate, error) { return &gate{cmd: cmd}, nil }
+func (*gate) started()                  {}
+
+// shut leaves the suite suspended; the caller kills it.
+func (*gate) shut() {}
+
+// open resumes the suite's threads. A suspended new process has only its
+// main thread, whose handle os/exec has already closed, so it is found by
+// a thread snapshot.
+func (g *gate) open() error {
+	pid := uint32(g.cmd.Process.Pid)
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPTHREAD, 0)
+	if err != nil {
+		return fmt.Errorf("release the held suite: snapshot threads: %w", err)
+	}
+	defer windows.CloseHandle(snap)
+	entry := windows.ThreadEntry32{Size: uint32(unsafe.Sizeof(windows.ThreadEntry32{}))}
+	resumed := 0
+	for err = windows.Thread32First(snap, &entry); err == nil; err = windows.Thread32Next(snap, &entry) {
+		if entry.OwnerProcessID != pid {
+			continue
+		}
+		th, oerr := windows.OpenThread(windows.THREAD_SUSPEND_RESUME, false, entry.ThreadID)
+		if oerr != nil {
+			return fmt.Errorf("release the held suite: open thread %d of pid %d: %w", entry.ThreadID, pid, oerr)
+		}
+		_, rerr := windows.ResumeThread(th)
+		windows.CloseHandle(th)
+		if rerr != nil {
+			return fmt.Errorf("release the held suite: resume thread %d of pid %d: %w", entry.ThreadID, pid, rerr)
+		}
+		resumed++
+	}
+	if !errors.Is(err, windows.ERROR_NO_MORE_FILES) {
+		return fmt.Errorf("release the held suite: list threads: %w", err)
+	}
+	if resumed == 0 {
+		return fmt.Errorf("release the held suite: pid %d has no threads", pid)
+	}
+	return nil
+}

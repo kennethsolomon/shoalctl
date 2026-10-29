@@ -581,11 +581,9 @@ func TestSameStart(t *testing.T) {
 
 // TestRunHoldsSuiteUntilOnStartReturns: the suite's pid must be recorded
 // before the suite does anything, or a shoalctl killed in between leaves a
-// live suite that no later command knows about.
+// live suite that no later command knows about. Unix holds it at a pipe,
+// Windows suspended.
 func TestRunHoldsSuiteUntilOnStartReturns(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the Windows job object kills the suite with shoalctl, so nothing can outlive an unrecorded start")
-	}
 	spec, dir := runSpec(t, "exit-code", "echo ran > ran")
 	ran := filepath.Join(dir, "ran")
 	var early bool
