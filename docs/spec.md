@@ -807,7 +807,7 @@ This subsection is the contract for the MVP. Where it is more specific than the 
 
 #### Requirements
 - `git` 2.31 or newer (`rev-parse --path-format`), `tmux` 3.2 or newer, `claude` on `PATH` (`claude --version` must exit 0). A missing or older tool: exit 7, naming the tool and the version found.
-- macOS and Linux. Windows is not supported in the MVP (tmux), but the binary builds there and CI runs every test that needs no tmux or POSIX shell on Windows.
+- macOS (primary) and Linux. Windows is beta: not supported for the MVP flow (tmux), but the binary builds there and CI runs every test that needs no tmux or POSIX shell on Windows, as a non-blocking job.
 
 #### Paths
 | What | Path |

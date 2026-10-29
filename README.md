@@ -89,6 +89,19 @@ Planned, not built yet: `shoalctl plan <task>` (file claims and the overlap chec
 
 Requirements: macOS or Linux, git 2.31+, tmux 3.2+, and Claude Code (`claude` on `PATH`, trusted once in the main checkout: run `claude` there and choose *Yes, I trust this folder*).
 
+Platform support:
+
+| Platform | Status |
+|----------|--------|
+| macOS | Primary, supported |
+| Linux | Supported, CI-tested |
+| Windows | **Beta**: compiles and CI-tested, but far less exercised |
+
+Known Windows limits:
+- The full flow needs tmux, which Windows has no native build of; CI on Windows runs only the tests that need no tmux or POSIX shell, and a Windows CI failure does not block `main`.
+- The suite job-object and process start-time identity code is newer than its unix counterpart.
+- If shoalctl is hard-killed between starting a suite and attaching it to its job object, the suite can stay suspended and must be killed by hand (Task Manager or `taskkill /PID <pid>`).
+
 ## How it works
 
 ```mermaid
