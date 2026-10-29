@@ -65,6 +65,10 @@ func (env Env) cmdMerge(ctx context.Context, args []string) error {
 	}
 	defer lock.Release()
 
+	stuck, err := env.settleMerging(ctx, p)
+	if err != nil {
+		return err
+	}
 	tasks, err := p.db.DoneTasks(ctx)
 	if err != nil {
 		return err
@@ -99,7 +103,103 @@ func (env Env) cmdMerge(ctx context.Context, args []string) error {
 	if len(unused) > 0 {
 		return fail(ExitUsage, "--accept-regression named target(s) that blocked nothing, so nothing was accepted under them: %s", strings.Join(unused, ", "))
 	}
+	if len(stuck) > 0 {
+		return fail(ExitState, "task(s) left at merging by an earlier merge that could not be settled safely: %s", strings.Join(stuck, ", "))
+	}
 	return nil
+}
+
+// settleMerging recovers tasks an interrupted merge left at merging (§10.4):
+// merged when the target branch already holds the task's branch head, back
+// to done when it does not. Anything ambiguous is left at merging, explained
+// on stderr, and its slug returned. The caller holds merge.lock.
+func (env Env) settleMerging(ctx context.Context, p *project) ([]string, error) {
+	tasks, err := p.db.TasksAt(ctx, store.StageMerging)
+	if err != nil {
+		return nil, err
+	}
+	var stuck []string
+	for _, t := range tasks {
+		why, err := env.settleOne(ctx, p, t)
+		if err != nil {
+			return stuck, err
+		}
+		if why != "" {
+			fmt.Fprintf(env.Stderr, "%s: left at merging: %s; fix it by hand, then set it back to done\n", t.Slug, why)
+			stuck = append(stuck, t.Slug)
+		}
+	}
+	return stuck, nil
+}
+
+// settleOne settles one task left at merging. It returns why the task was
+// left alone, or "" once it is settled.
+func (env Env) settleOne(ctx context.Context, p *project, t store.Task) (string, error) {
+	target := p.cfg.Merge.Base
+	if t.Lane == "hotfix" {
+		if strings.HasPrefix(t.BaseRef, "refs/tags/") {
+			return "a hotfix cut from a tag has no merge target", nil
+		}
+		target = t.BaseRef
+	}
+	tlock, err := p.lockTask(t, "merge")
+	if err != nil {
+		return err.Error(), nil
+	}
+	defer tlock.Release()
+	if t, err = p.db.GetTask(ctx, t.Slug); err != nil {
+		return "", err
+	}
+	if t.Stage != store.StageMerging {
+		return "", nil
+	}
+	for _, dir := range []string{"rebase-merge", "rebase-apply"} {
+		path, err := gitx.Run(ctx, t.Worktree, "rev-parse", "--path-format=absolute", "--git-path", dir)
+		if err != nil {
+			return fmt.Sprintf("cannot inspect worktree %s: %v", t.Worktree, err), nil
+		}
+		if _, err := os.Stat(path); err == nil {
+			return fmt.Sprintf("a rebase is in progress in %s (run git rebase --abort there)", t.Worktree), nil
+		}
+	}
+	head, err := gitx.Run(ctx, p.root, "rev-parse", "--verify", "--quiet", "refs/heads/"+t.Branch+"^{commit}")
+	if err != nil || head == "" {
+		return fmt.Sprintf("its branch %s is not a local branch", t.Branch), nil
+	}
+	tip, err := gitx.Run(ctx, p.root, "rev-parse", "--verify", "--quiet", "refs/heads/"+target+"^{commit}")
+	if err != nil || tip == "" {
+		return fmt.Sprintf("merge target %q is not a local branch", target), nil
+	}
+	if _, err := gitx.Run(ctx, p.root, "merge-base", "--is-ancestor", head, tip); err != nil {
+		if _, err := p.db.Update(ctx, t, []string{store.StageMerging}, "stage = ?", []any{store.StageDone}, nil); err != nil {
+			return "", err
+		}
+		fmt.Fprintf(env.Stdout, "%s: recovered: an earlier merge stopped before %s held %s; back to done\n", t.Slug, target, shortSHA(head))
+		return "", nil
+	}
+	if _, err := p.db.Update(ctx, t, []string{store.StageMerging}, "stage = ?, merged_sha = ?", []any{store.StageMerged, head},
+		func(tx *sql.Tx) error { return store.ReleaseTaskClaims(ctx, tx, t.ID) }); err != nil {
+		return "", err
+	}
+	note := fmt.Sprintf("Recovered by shoalctl merge on %s: an earlier merge fast-forwarded %s to %s but stopped before recording it, so the task was marked merged. "+
+		"That merge's gate run and any accepted regressions were not recorded; not pushed", nowUTC(), target, shortSHA(head))
+	if err := env.appendReportNote(p, t.Slug, note); err != nil {
+		return "", err
+	}
+	fmt.Fprintf(env.Stdout, "%s: recovered: %s already holds %s; marked merged\n", t.Slug, target, shortSHA(head))
+	return "", nil
+}
+
+// appendReportNote marks a task's report merged and appends note to it.
+func (env Env) appendReportNote(p *project, slug, note string) error {
+	path := filepath.Join(p.dir, "reports", slug+".md")
+	old, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read report %s: %w", path, err)
+	}
+	report := strings.Replace(string(old), "\nstatus: "+store.StageDone+"\n", "\nstatus: "+store.StageMerged+"\n", 1)
+	report = strings.TrimRight(report, "\n") + "\n\n" + note + "\n"
+	return env.writeReport(p, slug, strings.TrimLeft(report, "\n"))
 }
 
 // mergeOne takes one done task through the gate into its target branch. It

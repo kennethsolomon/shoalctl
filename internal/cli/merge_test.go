@@ -109,3 +109,57 @@ func TestMergeAcceptanceIsScopedToOneTask(t *testing.T) {
 	mustContain(t, "merged task named again", h.expectCode(ExitState, "merge", "--task", b.Slug), "merged")
 	h.expectCode(ExitNotFound, "merge", "--task", "99-nope")
 }
+
+func setStage(t *testing.T, p *project, id int64, stage string) {
+	t.Helper()
+	db := openRaw(t, p.dbPath())
+	defer db.Close()
+	if _, err := db.Exec(`UPDATE tasks SET stage = ? WHERE id = ?`, stage, id); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A crash between the fast-forward and the DB update leaves a task at
+// merging. The next merge settles it under merge.lock: merged when the target
+// already holds the task head, back to done (and merged in this run) when it
+// does not, and left alone with exit 5 when the worktree is mid-rebase.
+func TestMergeSettlesTasksLeftAtMerging(t *testing.T) {
+	h := newHarness(t).withSession()
+	p := h.initWith(junitConfig)
+	landed := startedTask(t, h, "feature", "Landed before the crash")
+	pending := startedTask(t, h, "feature", "Crashed before the fast-forward")
+	commitIn(t, landed.Worktree, "feature.txt", "x")
+	commitIn(t, pending.Worktree, "pending.txt", "x")
+	finish(t, h, landed.Slug, landed.Worktree)
+	finish(t, h, pending.Slug, pending.Worktree)
+
+	// landed: main was fast-forwarded to its head, then the process died.
+	head := testutil.Git(t, landed.Worktree, "rev-parse", "HEAD")
+	testutil.Git(t, h.repo, "merge", "-q", "--ff-only", head)
+	setStage(t, p, landed.ID, "merging")
+	setStage(t, p, pending.ID, "merging")
+
+	out := h.mustRun("merge")
+	mustContain(t, "merge", out, landed.Slug+": recovered", "merged "+pending.Slug)
+	got := h.task(landed.Slug)
+	if got.Stage != "merged" || got.MergedSHA != head {
+		t.Fatalf("landed after recovery: %+v (head %s)", got, head)
+	}
+	mustContain(t, "recovered report", reportOf(t, h, landed.Slug), "status: merged", "Recovered by shoalctl merge", shortSHA(head))
+	if got := h.task(pending.Slug); got.Stage != "merged" {
+		t.Fatalf("pending after recovery: %+v", got)
+	}
+
+	// Mid-rebase worktree: ambiguous, left at merging, exit 5.
+	stuck := startedTask(t, h, "feature", "Crashed mid-rebase")
+	commitIn(t, stuck.Worktree, "stuck.txt", "x")
+	finish(t, h, stuck.Slug, stuck.Worktree)
+	setStage(t, p, stuck.ID, "merging")
+	if err := os.MkdirAll(testutil.Git(t, stuck.Worktree, "rev-parse", "--path-format=absolute", "--git-path", "rebase-merge"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, "stuck", h.expectCode(ExitState, "merge"), stuck.Slug, "rebase")
+	if got := h.task(stuck.Slug); got.Stage != "merging" {
+		t.Fatalf("stuck after merge: %+v", got)
+	}
+}

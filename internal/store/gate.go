@@ -424,9 +424,14 @@ func UpdateSummaryCommits(ctx context.Context, tx *sql.Tx, taskID int64, commits
 
 // DoneTasks returns tasks at stage done, oldest done first (the merge order).
 func (s *Store) DoneTasks(ctx context.Context) ([]Task, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+taskColumns+` FROM tasks WHERE stage = ? ORDER BY closed_at, id`, StageDone)
+	return s.TasksAt(ctx, StageDone)
+}
+
+// TasksAt returns the tasks at stage, oldest closed first.
+func (s *Store) TasksAt(ctx context.Context, stage string) ([]Task, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+taskColumns+` FROM tasks WHERE stage = ? ORDER BY closed_at, id`, stage)
 	if err != nil {
-		return nil, fmt.Errorf("list done tasks: %w", err)
+		return nil, fmt.Errorf("list %s tasks: %w", stage, err)
 	}
 	defer rows.Close()
 	var out []Task
