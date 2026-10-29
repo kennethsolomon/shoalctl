@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,13 @@ func fakeBinary(t *testing.T, dir string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// jsonText is s as it appears inside a JSON string, so Windows paths match
+// their escaped backslashes.
+func jsonText(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b[1 : len(b)-1])
 }
 
 func TestDoctorHealthyAfterInit(t *testing.T) {
@@ -54,7 +62,7 @@ func TestDoctorFindsAndFixesMovedBinary(t *testing.T) {
 
 	h.mustRun("doctor", "--fix")
 	after := readFile(t, settings)
-	if strings.Contains(after, old) || !strings.Contains(after, h.env.Exe) {
+	if strings.Contains(after, jsonText(old)) || !strings.Contains(after, jsonText(h.env.Exe)) {
 		t.Fatalf("doctor --fix did not repoint the hooks:\n%s", after)
 	}
 	for _, keep := range []string{`"zzz": "keep & <me>"`, `"command": "echo mine"`} {
@@ -71,7 +79,7 @@ func TestDoctorReportsOutdatedAndMissingEntries(t *testing.T) {
 	settings := filepath.Join(h.repo, ".claude", "settings.local.json")
 
 	h.mustRun("init")
-	testutil.WriteFile(t, settings, `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "`+h.env.Exe+` hook stop", "timeout": 10}]}]}}`)
+	testutil.WriteFile(t, settings, `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "`+jsonText(h.env.Exe)+` hook stop", "timeout": 10}]}]}}`)
 	errOut := h.expectCode(ExitDoctor, "doctor")
 	for _, want := range []string{"SessionStart", "not registered", "Stop", "outdated"} {
 		if !strings.Contains(errOut, want) {
