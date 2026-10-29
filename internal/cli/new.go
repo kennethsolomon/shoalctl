@@ -9,6 +9,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/kennethsolomon/shoalctl/internal/store"
 )
 
 const maxSlugWords = 40
@@ -60,6 +62,8 @@ func (env Env) cmdNew(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("new", flag.ContinueOnError)
 	ask := fs.String("ask", "", "what the task should achieve (default: the title)")
 	askFile := fs.String("ask-file", "", "read the ask from a file")
+	var scope multiFlag
+	fs.Var(&scope, "scope", "a required scope item (\"also test X\"); repeatable")
 	pos, err := parseArgs(fs, args, 2)
 	if err != nil {
 		return err
@@ -73,6 +77,11 @@ func (env Env) cmdNew(ctx context.Context, args []string) error {
 	}
 	if *ask != "" && *askFile != "" {
 		return fail(ExitUsage, "use --ask or --ask-file, not both")
+	}
+	for _, item := range scope {
+		if err := validScopeText(item); err != nil {
+			return err
+		}
 	}
 	text := title
 	switch {
@@ -99,7 +108,12 @@ func (env Env) cmdNew(ctx context.Context, args []string) error {
 	}
 	defer p.close()
 	words := slugWords(title)
-	t, err := p.db.CreateTask(ctx, lane, title, strings.TrimSpace(text), func(id int64) string { return fmt.Sprintf("%d-%s", id, words) })
+	items := make([]string, len(scope))
+	for i, s := range scope {
+		items[i] = strings.TrimSpace(s)
+	}
+	t, err := p.db.CreateTaskWith(ctx, store.NewTask{Lane: lane, Title: title, Ask: strings.TrimSpace(text), Scope: items},
+		func(id int64) string { return fmt.Sprintf("%d-%s", id, words) })
 	if err != nil {
 		return err
 	}
