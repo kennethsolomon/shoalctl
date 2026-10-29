@@ -400,3 +400,95 @@ func writeConfig(t *testing.T, p *project, body string) {
 		t.Fatal(err)
 	}
 }
+
+// Ctrl-C reaches git before shoal's context is cancelled: the rebase git
+// dies of SIGINT (or a wrapper exits 130) while ctx is still live. That is
+// an interrupt, never a conflict: rebase aborted, task done, exit 130.
+func TestRebaseKilledBySignalIsInterrupt(t *testing.T) {
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, die := range map[string]string{"signaled": "kill -INT $$; sleep 5; exit 1", "exit 130": "exit 130"} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t).withSession()
+			h.initWith(junitConfig)
+			task := startedTask(t, h, "feature", "Ctrl-C hits git first")
+			commitIn(t, task.Worktree, "shared.txt", "from task\n")
+			commitIn(t, task.Worktree, "feature.txt", "x")
+			finish(t, h, task.Slug, task.Worktree)
+			commitIn(t, h.repo, "shared.txt", "from main\n")
+			mainBefore := testutil.Git(t, h.repo, "rev-parse", "main")
+			head := testutil.Git(t, task.Worktree, "rev-parse", "HEAD")
+
+			// The wrapper runs the real rebase (which stops on the conflict),
+			// then dies the way an interrupted git does.
+			bin := t.TempDir()
+			testutil.WriteFile(t, filepath.Join(bin, "git"), fmt.Sprintf(`#!/bin/sh
+case " $* " in
+*" --no-autosquash "*) %q "$@"; %s ;;
+*) exec %q "$@" ;;
+esac
+`, realGit, die, realGit))
+			if err := os.Chmod(filepath.Join(bin, "git"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			code, out, errOut := h.run("merge")
+			if code != ExitInterrupted {
+				t.Fatalf("merge: exit %d, want %d\n%s\n%s", code, ExitInterrupted, out, errOut)
+			}
+			if got := h.task(task.Slug).Stage; got != "done" {
+				t.Fatalf("task stage = %s, want done", got)
+			}
+			if testutil.Git(t, h.repo, "rev-parse", "main") != mainBefore || testutil.Git(t, task.Worktree, "rev-parse", "HEAD") != head {
+				t.Fatal("an interrupted rebase moved main or the task branch")
+			}
+			if st := testutil.Git(t, task.Worktree, "status", "--porcelain"); st != "" {
+				t.Fatalf("interrupted rebase left changes: %q", st)
+			}
+		})
+	}
+}
+
+// A signal that kills git's fast-forward leaves the task at merging (the
+// target may already hold the head); the next merge settles it from git.
+func TestFastForwardKilledBySignalIsSettled(t *testing.T) {
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newHarness(t).withSession()
+	h.initWith(junitConfig)
+	task := startedTask(t, h, "feature", "Ctrl-C hits update-ref")
+	commitIn(t, task.Worktree, "feature.txt", "x")
+	finish(t, h, task.Slug, task.Worktree)
+	testutil.Git(t, h.repo, "checkout", "-q", "--detach")
+	head := testutil.Git(t, task.Worktree, "rev-parse", "HEAD")
+
+	bin := t.TempDir()
+	testutil.WriteFile(t, filepath.Join(bin, "git"), fmt.Sprintf(`#!/bin/sh
+case " $* " in
+*" update-ref "*) %q "$@"; kill -INT $$; sleep 5; exit 1 ;;
+*) exec %q "$@" ;;
+esac
+`, realGit, realGit))
+	if err := os.Chmod(filepath.Join(bin, "git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+oldPath)
+	if code, out, errOut := h.run("merge"); code != ExitInterrupted {
+		t.Fatalf("merge: exit %d, want %d\n%s\n%s", code, ExitInterrupted, out, errOut)
+	}
+	if got := h.task(task.Slug).Stage; got != "merging" {
+		t.Fatalf("task stage = %s, want merging", got)
+	}
+
+	t.Setenv("PATH", oldPath)
+	mustContain(t, "settling merge", h.mustRun("merge"), "recovered")
+	if got := h.task(task.Slug); got.Stage != "merged" || testutil.Git(t, h.repo, "rev-parse", "main") != head {
+		t.Fatalf("after settling: %+v", got)
+	}
+}

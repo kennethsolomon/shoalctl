@@ -8,8 +8,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/kennethsolomon/shoalctl/internal/gitx"
@@ -358,6 +360,11 @@ func (env Env) mergeOne(ctx context.Context, p *project, t store.Task, acc []*ac
 	report := renderReport(in)
 
 	if err := env.fastForward(ctx, p, t, target, targetSHA, head); err != nil {
+		if codeOf(err) == ExitInterrupted {
+			// The target may or may not have moved: left at merging, the next
+			// merge settles it from what git holds (§10.4).
+			return false, err
+		}
 		return back(store.StageDone, err)
 	}
 	commits, _ := json.Marshal(nonNilStrings(in.commits))
@@ -402,7 +409,7 @@ func (env Env) rebase(ctx context.Context, p *project, t store.Task, targetSHA s
 	}
 	if _, err := gitx.Run(ctx, t.Worktree, "-c", "rebase.autoStash=false", "-c", "rebase.updateRefs=false", "rebase", "--no-autosquash", targetSHA); err != nil {
 		wctx := context.WithoutCancel(ctx)
-		if ctx.Err() != nil {
+		if interrupted(ctx, err) {
 			// Interrupted, not a conflict: undo whatever part of the rebase ran.
 			rebasing, ierr := rebaseInProgress(wctx, t.Worktree)
 			if ierr == nil && rebasing {
@@ -419,6 +426,24 @@ func (env Env) rebase(ctx context.Context, p *project, t store.Task, targetSHA s
 		return fmt.Errorf("%w: %v", errConflict, err)
 	}
 	return nil
+}
+
+// interrupted reports whether a failed git command was stopped by a signal
+// rather than failing on its own. Ctrl-C reaches git and shoal together, so
+// git can die before ctx is cancelled: a git killed by a signal, or exiting
+// 130 (128+SIGINT), is an interrupt too.
+func interrupted(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return true
+	}
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		return false
+	}
+	if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return true
+	}
+	return ee.ExitCode() == 130
 }
 
 // rebaseInProgress reports whether the worktree at wt is stopped mid-rebase.
@@ -511,6 +536,9 @@ func (env Env) fastForward(ctx context.Context, p *project, t store.Task, target
 		switch {
 		case where == "":
 			_, err := gitx.Run(ctx, p.root, "update-ref", "-m", "shoalctl merge "+t.Slug, "refs/heads/"+target, head, old)
+			if err != nil && interrupted(ctx, err) {
+				return fail(ExitInterrupted, "interrupted while fast-forwarding %s; the next shoalctl merge settles %s", target, t.Slug)
+			}
 			if err != nil {
 				return fail(ExitBusy, "%s moved while the gate ran (update-ref refused); run shoalctl merge again: %v", target, err)
 			}
@@ -530,7 +558,9 @@ func (env Env) fastForward(ctx context.Context, p *project, t store.Task, target
 			if now != old {
 				return fail(ExitBusy, "%s moved while the gate ran (%s, now %s); run shoalctl merge again", target, shortSHA(old), shortSHA(now))
 			}
-			_, err = gitx.Run(ctx, p.root, "merge", "--ff-only", "--no-edit", head)
+			if _, err = gitx.Run(ctx, p.root, "merge", "--ff-only", "--no-edit", head); err != nil && interrupted(ctx, err) {
+				return fail(ExitInterrupted, "interrupted while fast-forwarding %s; the next shoalctl merge settles %s", target, t.Slug)
+			}
 			return err
 		}
 		return fail(ExitState, "%s is checked out in another worktree (%s); shoal only fast-forwards it in the main checkout or when it is checked out nowhere", target, where)
