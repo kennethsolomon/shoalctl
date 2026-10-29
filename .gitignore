@@ -16,6 +16,8 @@
 *.out
 coverage.*
 *.coverprofile
+# Go source is never build output (internal/coverage/coverage.go matches coverage.*)
+!*.go
 
 # Go workspace
 go.work
