@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-var tomlBlock = regexp.MustCompile("(?s)```toml\n(.*?)```")
+var tomlBlock = regexp.MustCompile("(?s)```toml\r?\n(.*?)```")
 
 // TestREADMEConfigParses keeps the README's sample config in step with the
 // strict loader: every ```toml block must load with no unknown keys and pass
