@@ -20,15 +20,15 @@ import (
 
 // Exit codes (spec §4.7).
 const (
-	ExitOK          = 0
-	ExitInternal    = 1
-	ExitUsage       = 2
-	ExitConfig      = 3
-	ExitNotFound    = 4
-	ExitState       = 5
-	ExitBaseline    = 6
-	ExitDependency  = 7
-	ExitBusy        = 8
+	ExitOK         = 0
+	ExitInternal   = 1
+	ExitUsage      = 2
+	ExitConfig     = 3
+	ExitNotFound   = 4
+	ExitState      = 5
+	ExitBaseline   = 6
+	ExitDependency = 7
+	ExitBusy       = 8
 	// ExitGate (9) is declared with the gate in gate.go.
 	ExitDoneRefused = 10
 	ExitDoctor      = 11
