@@ -243,8 +243,30 @@ func (env Env) baseline(ctx context.Context, p *project, t store.Task, wt string
 		}
 		return run, err
 	}
+	if err := env.runSetup(ctx, p, t, wt); err != nil {
+		return store.Run{}, err
+	}
 	fmt.Fprintf(env.Stdout, "baseline: running the test suite at %s ...\n", shortSHA(t.BaseSHA))
 	return env.runSuite(ctx, p, t, "baseline", t.BaseSHA, wt)
+}
+
+// runSetup runs [tests].setup in the clean worktree wt before a baseline
+// there, with {root} as the main checkout (§8.2). A failure records no
+// baseline: it is an error, never a pass.
+func (env Env) runSetup(ctx context.Context, p *project, t store.Task, wt string) error {
+	if p.cfg.Tests.Setup == "" {
+		return nil
+	}
+	fmt.Fprintf(env.Stdout, "baseline: running [tests].setup in %s ...\n", wt)
+	command := strings.ReplaceAll(p.cfg.Tests.Setup, "{root}", shellWord(p.root))
+	res := env.step(ctx, p, wt, "setup", command, filepath.Join(p.dir, "runs", fmt.Sprintf("setup-%d-%d", t.ID, os.Getpid())))
+	switch {
+	case res == "PASS":
+		return nil
+	case ctx.Err() != nil:
+		return fail(ExitInterrupted, "interrupted during [tests].setup in %s", wt)
+	}
+	return fail(ExitBaseline, "[tests].setup failed in %s: %s; no baseline was recorded", wt, res)
 }
 
 // runSuite records a test run: insert running, run with no transaction open,

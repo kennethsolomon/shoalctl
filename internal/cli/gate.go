@@ -75,6 +75,9 @@ func (env Env) evaluate(ctx context.Context, p *project, base, run store.Run, ch
 	}
 	baseMap := testrun.Without(statusMap(baseRes), drop)
 	g.classes = testrun.Compare(baseMap, testrun.Without(statusMap(g.runResults), drop))
+	if err := g.blamePassedEarlier(ctx, p); err != nil {
+		return g, err
+	}
 	g.blocking = testrun.Blocking(g.classes)
 	if base.Fidelity == "suite" && baseMap[testrun.SuiteID] == "fail" && !contains(g.blocking, testrun.SuiteID) {
 		g.blocking = append(g.blocking, testrun.SuiteID)
@@ -86,6 +89,35 @@ func (env Env) evaluate(ctx context.Context, p *project, base, run store.Run, ch
 		}
 	}
 	return g, nil
+}
+
+// blamePassedEarlier turns a pre-existing failure into a regression when the
+// test passed in an earlier run of the same task. A baseline can fail a test
+// only because its clean worktree lacks an ignored file (.env, vendor), so
+// "failed at baseline" alone is no proof the task did not break it (§8.5).
+func (g *gateResult) blamePassedEarlier(ctx context.Context, p *project) error {
+	pre := g.classes[testrun.PreExisting]
+	if len(pre) == 0 || g.run.TaskID == 0 {
+		return nil
+	}
+	passed, err := p.db.PassedEarlier(ctx, g.run.TaskID, g.run.ID)
+	if err != nil {
+		return err
+	}
+	var keep []string
+	for _, id := range pre {
+		run, ok := passed[id]
+		if !ok {
+			keep = append(keep, id)
+			continue
+		}
+		g.classes[testrun.Regression] = append(g.classes[testrun.Regression], id)
+		g.notes = append(g.notes, fmt.Sprintf("%s failed at baseline run %d but passed in run %d of this task, so it counts as a regression "+
+			"(the clean baseline worktree may lack an ignored file; see [tests].setup)", id, g.base.ID, run))
+	}
+	g.classes[testrun.PreExisting] = keep
+	sort.Strings(g.classes[testrun.Regression])
+	return nil
 }
 
 func (g *gateResult) compareCoverage(ctx context.Context, p *project, changed []string) error {

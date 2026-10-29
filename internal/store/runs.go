@@ -257,6 +257,31 @@ func (s *Store) FindBaseline(ctx context.Context, sha, commandHash string) (Run,
 	return r, true, nil
 }
 
+// PassedEarlier maps each test that passed on its first attempt in a
+// completed run of the task older than beforeRun to the newest such run.
+func (s *Store) PassedEarlier(ctx context.Context, taskID, beforeRun int64) (map[string]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT r.test_id, max(t.id) FROM test_results r JOIN test_runs t ON t.id = r.run_id
+		WHERE t.task_id = ? AND t.id < ? AND t.status = 'completed' AND r.attempt <= 1 AND r.status = 'pass'
+		GROUP BY r.test_id`, taskID, beforeRun)
+	if err != nil {
+		return nil, fmt.Errorf("read earlier passes of task %d: %w", taskID, err)
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var id string
+		var run int64
+		if err := rows.Scan(&id, &run); err != nil {
+			return nil, fmt.Errorf("scan earlier pass of task %d: %w", taskID, err)
+		}
+		out[id] = run
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read earlier passes of task %d: %w", taskID, err)
+	}
+	return out, nil
+}
+
 // Results returns a run's results in test id order.
 func (s *Store) Results(ctx context.Context, runID int64) ([]Result, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT test_id, status, COALESCE(duration_ms, 0), COALESCE(message, '')

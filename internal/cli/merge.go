@@ -473,6 +473,9 @@ func (env Env) baselineInScratch(ctx context.Context, p *project, t store.Task, 
 			return err
 		})
 	}()
+	if err := env.runSetup(ctx, p, t, scratch); err != nil {
+		return store.Run{}, err
+	}
 	return env.runSuite(ctx, p, t, "baseline", sha, scratch)
 }
 

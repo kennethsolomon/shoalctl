@@ -86,6 +86,9 @@ func TestLoadErrors(t *testing.T) {
 		{"dotfile junit_path", "[tests]\njunit_path = \".e?v\"\n", "must end in .xml"},
 		{"star junit_path", "[tests]\njunit_path = \"*\"\n", "must end in .xml"},
 		{"git junit_path", "[tests]\njunit_path = \".git/*.xml\"\n", ".git"},
+		{"blank setup", "[tests]\nsetup = \"  \"\n", "[tests].setup"},
+		{"setup with junit", "[tests]\nsetup = \"cp {junit} .\"\n", "[tests].setup"},
+		{"setup with tests", "[tests]\nsetup = \"echo {tests}\"\n", "[tests].setup"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

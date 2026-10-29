@@ -43,6 +43,7 @@ type Tests struct {
 	Timeout        string `toml:"timeout"`
 	CoverageFormat string `toml:"coverage_format"`
 	CoveragePath   string `toml:"coverage_path"`
+	Setup          string `toml:"setup"`
 }
 
 type Session struct {
@@ -177,6 +178,9 @@ func (c Config) Validate() error {
 		"[tests].coverage_path %q must be a file path relative to the task worktree with no .. or wildcards (shoal deletes the old report before each run)", c.Tests.CoveragePath)
 	check(!junitPathInGit(c.Tests.CoveragePath), "[tests].coverage_path %q reaches into .git", c.Tests.CoveragePath)
 	check(c.Tests.RerunCommand == "" || strings.Contains(c.Tests.RerunCommand, "{tests}"), "[tests].rerun_command must contain {tests}, the ids of the tests to re-run")
+	check(c.Tests.Setup == "" || strings.TrimSpace(c.Tests.Setup) != "", "[tests].setup must be a command or left out")
+	check(!strings.Contains(c.Tests.Setup, "{junit}") && !strings.Contains(c.Tests.Setup, "{tests}"),
+		"[tests].setup %q may use {root} (the main checkout) only; {junit} and {tests} belong to the suite commands", c.Tests.Setup)
 	check(strings.TrimSpace(c.Session.Model) != "" && !strings.HasPrefix(c.Session.Model, "-"), "[session].model %q must be a model name", c.Session.Model)
 	check(c.Install.Stealth, "[install].stealth = false is not supported until Phase 4")
 	check(c.Lanes.QAMaxRounds >= 1, "[lanes].qa_max_rounds %d must be >= 1", c.Lanes.QAMaxRounds)

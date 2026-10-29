@@ -128,6 +128,7 @@ flaky_retries = 2                # re-runs of a failing run before a failure cou
 timeout = "30m"                  # whole-suite timeout per run
 coverage_format = ""             # "" (off) | lcov | cobertura | go-cover
 coverage_path = ""               # coverage report path, relative to the worktree
+setup = ""                       # optional: run in each clean baseline worktree before the suite; {root} = main checkout, e.g. "cp {root}/.env ."
 
 [session]
 model = "claude-opus-5-5"        # model for sessions shoalctl launches; agent definitions inherit it
@@ -463,6 +464,7 @@ Placeholders in `command`, `rerun_command`, and `junit_path`: `{junit}` is an ab
 ### 8.2 (a) Baseline
 - **When:** during `shoalctl start`, after the worktree is created at `base_sha` and before `claude` is launched. Work does not start without a baseline.
 - **What:** the full configured suite, once (plus flaky re-runs, §8.7), on the base commit, in the task worktree.
+- **Setup:** a fresh worktree has no ignored files (`.env`, `vendor/`, `node_modules/`). When `[tests].setup` is set, shoal runs it (with `sh -c`, `{root}` replaced by the shell-quoted main checkout) in every clean worktree a baseline runs in, before the suite: the new task worktree at `start` and the scratch worktrees of `merge` and `test --kind baseline`. It should be idempotent. If it fails, no baseline is recorded and the command exits 6, so a broken setup can never pass for a clean baseline.
 - **Recorded:** a `test_runs` row with `kind = 'baseline'` and `sha = base_sha`, and one `test_results` row per test. `tasks.baseline_run_id` points at it.
 - **Reuse:** if a `completed` baseline already exists for the same `sha` and the same `command_hash` (SHA-256 of `command` + `format` + `rerun_command`), shoal reuses it instead of running again. Two tasks started from the same base share one baseline.
 - **Pre-existing failures** are recorded as `fail` at baseline, listed in the brief and the report under "Pre-existing failures", and never counted against the task.
@@ -498,11 +500,12 @@ Run by `shoalctl merge` for each queued task, after rebasing it onto the latest 
 | pass | skip | `newly-skipped` | **blocks** |
 | pass | flaky (failed, then passed on re-run) | `unstable` | **blocks** (it may be a new race) |
 | absent | fail | `new-failure` | **blocks** |
-| fail | fail | `pre-existing` | reported, not blamed |
+| fail | fail | `pre-existing` | reported, not blamed, unless the test passed in an earlier run of this task (see below) |
 | fail | pass | `fixed` | reported |
 | absent | pass | `new` | reported |
 | pass | pass | `ok` | counted |
 
+   A baseline failure is not proof that the task did not break a test: the baseline's clean worktree may lack an ignored file the test needs. So a test that fails at baseline and in the gate run, but **passed in any earlier completed run of the same task** (its own baseline, `qa`, `final`, `repro`, or an earlier gate), is classified `regression` and blocks, with a note naming that run. Fail closed: a human who disagrees accepts it by name.
 5. **Coverage**, only when `coverage_format` is set: for every file that exists in both runs and appears in `git diff --name-only new_base_sha...HEAD`, line coverage (`lines_covered / lines_total`) must not drop. Any drop blocks as `coverage:<path>`. New files are reported with their coverage but do not block.
 6. **Reduced fidelity**: if the baseline `(suite)` is `fail`, shoal cannot prove the absence of a regression, so the gate blocks as `(suite)` whatever the gate run shows.
 7. Any blocking row stops the merge: the task returns to `qa` with its round count kept, the gate result is stored, and `merge` exits 9.
@@ -1121,3 +1124,5 @@ WAL, `busy_timeout`, `BEGIN IMMEDIATE` per state change, and the `tasks.version`
 | 38 | Interrupted merge (Vex HOLD fix) | Before the queue, `merge` settles every task at `merging` under `merge.lock` and the task lock: `merged` (claims released, `merged_sha` set, a recovery note in the report) when the target branch already holds the branch head; back to `done` otherwise. A mid-rebase worktree, a missing branch or a held task lock leaves it at `merging` with a message, and the run exits 5. The full `doctor` repair stays Phase 2 |
 | 39 | Rebase interrupted by a signal (Vex HOLD fix) | Checked before the conflict classification: any rebase in progress is aborted, the task stays `done`, exit 130 |
 | 40 | Where `test --kind baseline` runs (Vex HOLD fix) | In a scratch worktree detached at the base commit, like the new-base baseline of `merge`, so ignored or local-only files in the task worktree cannot reach a run that feeds the quarantine |
+| 41 | Baselines missing ignored files (Vex BLOCK fix) | Two layers, both fail closed. (a) A baseline `fail` + gate `fail` is a `regression`, not `pre-existing`, when the test passed in any earlier completed run of the same task. (b) Optional `[tests].setup` runs in every clean baseline worktree (start's new worktree, merge's and `test --kind baseline`'s scratch worktrees) before the suite; `{root}` is the main checkout; `{junit}`/`{tests}` are rejected; a failing setup records no baseline and exits 6. Setup is not part of `command_hash`, so a cached baseline from before a setup change is reused; (a) still covers it |
+| 42 | Accepting a regression needs a human (Vex BLOCK fix) | `merge` refuses any `--accept-regression` unless stdin is a terminal (exit 5, nothing merged), the same check as `scope review` and `scope check` |

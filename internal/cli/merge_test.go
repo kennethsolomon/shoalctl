@@ -222,3 +222,72 @@ func TestMergeAcceptanceNeedsHuman(t *testing.T) {
 	h.env.Terminal = func() bool { return true }
 	mustContain(t, "human acceptance", h.mustRun("merge", "--task", task.Slug, "--accept-regression", "C::a", "--reason", "on purpose"), "merged "+task.Slug)
 }
+
+// envScript makes C::a need the ignored file .env, as a test that reads
+// local secrets or a vendored dependency would.
+func envScript() string {
+	return strings.Replace(testScript, "if [ -f broken.txt ]; then", "if [ -f broken.txt ] || [ ! -f .env ]; then", 1)
+}
+
+// Vex's probe: C::a needs an ignored file, so a clean baseline worktree
+// fails it. It passed in an earlier run of the task, the task then broke it,
+// and the gate must call that a regression (exit 9), not pre-existing.
+func TestGateBlocksTestThatPassedEarlierInTheTask(t *testing.T) {
+	h := newHarness(t).withSession()
+	testutil.WriteFile(t, filepath.Join(h.repo, "test.sh"), envScript())
+	testutil.WriteFile(t, filepath.Join(h.repo, ".gitignore"), ".env\n")
+	testutil.Git(t, h.repo, "add", "test.sh", ".gitignore")
+	testutil.Git(t, h.repo, "commit", "-q", "-m", "C::a needs .env")
+	testutil.WriteFile(t, filepath.Join(h.repo, ".env"), "SECRET=x\n")
+	h.initWith(junitConfig)
+	task := startedTask(t, h, "feature", "Breaks a behind .env")
+
+	testutil.WriteFile(t, filepath.Join(task.Worktree, ".env"), "SECRET=x\n")
+	mustContain(t, "qa with .env", h.mustRun("test", "--kind", "qa", task.Slug), "fixed: C::a")
+	commitIn(t, task.Worktree, "broken.txt", "x")
+	finish(t, h, task.Slug, task.Worktree)
+	mainBefore := testutil.Git(t, h.repo, "rev-parse", "main")
+
+	code, out, errOut := h.run("merge")
+	if code != ExitGate || !strings.Contains(out, "regression: C::a") || !strings.Contains(out, "passed in run") {
+		t.Fatalf("merge: exit %d\n%s\n%s", code, out, errOut)
+	}
+	if testutil.Git(t, h.repo, "rev-parse", "main") != mainBefore || h.task(task.Slug).Stage != "qa" {
+		t.Fatal("the hidden regression was merged")
+	}
+}
+
+// [tests].setup prepares every clean worktree a baseline runs in (start's
+// fresh worktree, merge's scratch worktree); a failing setup records no
+// baseline and fails closed.
+func TestSetupPreparesCleanWorktrees(t *testing.T) {
+	h := newHarness(t).withSession()
+	testutil.WriteFile(t, filepath.Join(h.repo, "test.sh"), envScript())
+	testutil.WriteFile(t, filepath.Join(h.repo, ".gitignore"), ".env\n")
+	testutil.Git(t, h.repo, "add", "test.sh", ".gitignore")
+	testutil.Git(t, h.repo, "commit", "-q", "-m", "C::a needs .env")
+	testutil.WriteFile(t, filepath.Join(h.repo, ".env"), "SECRET=x\n")
+	p := h.initWith(junitConfig + "setup = \"cp {root}/.env .\"\n")
+	task := startedTask(t, h, "feature", "Setup copies .env")
+	if n := countRows(t, p, `SELECT count(*) FROM test_results WHERE run_id = ? AND test_id = 'C::a' AND status = 'pass'`, h.task(task.Slug).BaselineRunID); n != 1 {
+		t.Fatal("start's baseline ran without [tests].setup: C::a did not pass")
+	}
+
+	// A failing setup at merge's new base: no baseline, nothing merged.
+	commitIn(t, task.Worktree, "feature.txt", "x")
+	finish(t, h, task.Slug, task.Worktree)
+	commitIn(t, h.repo, "other.txt", "moves main")
+	mainBefore := testutil.Git(t, h.repo, "rev-parse", "main")
+	testutil.WriteFile(t, filepath.Join(p.dir, "config.toml"), junitConfig+"setup = \"exit 3\"\n")
+	mustContain(t, "failed setup", h.expectCode(ExitBaseline, "merge"), "[tests].setup failed")
+	if testutil.Git(t, h.repo, "rev-parse", "main") != mainBefore || h.task(task.Slug).Stage != "done" {
+		t.Fatal("a failed setup merged or moved the task")
+	}
+
+	testutil.WriteFile(t, filepath.Join(p.dir, "config.toml"), junitConfig+"setup = \"cp {root}/.env .\"\n")
+	mustContain(t, "merge with setup", h.mustRun("merge"), "merged "+task.Slug)
+	newBase := countRows(t, p, `SELECT max(id) FROM test_runs WHERE kind = 'baseline'`)
+	if n := countRows(t, p, `SELECT count(*) FROM test_results WHERE run_id = ? AND test_id = 'C::a' AND status = 'pass'`, newBase); n != 1 {
+		t.Fatal("merge's scratch baseline ran without [tests].setup: C::a did not pass")
+	}
+}
