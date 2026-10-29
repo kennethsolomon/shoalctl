@@ -280,8 +280,8 @@ func (env Env) runSuite(ctx context.Context, p *project, t store.Task, kind, sha
 
 // reapAbandoned handles runs of this task still marked running. The caller
 // holds the task lock, so their owner has exited. A run whose suite is still
-// alive, or might be (its start time cannot be read, parsed, or was never
-// recorded), blocks the command: two suites must never share a worktree; only
+// alive, or might be (its pid or start time cannot be read, parsed, or was
+// never recorded), blocks the command: two suites must never share a worktree; only
 // a confirmed one comes with a kill command. A dead one, or
 // one whose pid now belongs to another process (its start time differs from
 // the recorded one), is marked error, with a note in its output.log.
@@ -291,6 +291,12 @@ func (env Env) reapAbandoned(ctx context.Context, p *project, t store.Task) erro
 		return err
 	}
 	for _, r := range runs {
+		if r.PID <= 0 {
+			return fail(ExitBusy, "%s run %d of task %s is marked running but has no recorded pid, so shoal cannot tell whether its suite is still running; "+
+				"check that no test command of this task is running (its output is %s), then clear the run in %s with: "+
+				"UPDATE test_runs SET status = 'error' WHERE id = %d AND status = 'running'",
+				r.Kind, r.ID, t.Slug, r.OutputPath, p.dbPath(), r.ID)
+		}
 		if testrun.GroupAlive(r.PID) {
 			live, err := testrun.ProcessStart(r.PID)
 			if r.PIDStart == "" || err != nil || !testrun.ComparableStart(r.PIDStart, live) {

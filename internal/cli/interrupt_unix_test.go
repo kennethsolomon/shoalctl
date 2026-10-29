@@ -253,6 +253,43 @@ func TestStartRefusesUnconfirmedLiveSuite(t *testing.T) {
 	})
 }
 
+// TestStartRefusesRunWithNoPID covers a running row whose pid was never
+// recorded, as a shoalctl killed before recording it leaves behind. Nothing
+// proves its suite is gone, so start must refuse, and the message must give a
+// way to clear the row that start then accepts.
+func TestStartRefusesRunWithNoPID(t *testing.T) {
+	h := newHarness(t).withSession()
+	p := h.initWith(quickSuite)
+	h.mustRun("new", "feature", "No pid")
+	db := openRaw(t, p.dbPath())
+	_, err := db.Exec(`INSERT INTO test_runs (task_id, kind, sha, command, command_hash, format, fidelity, status,
+		output_path, started_at) VALUES (?, 'baseline', 'abc', 'true', 'h', 'exit-code', 'suite', 'running', ?, '2026-01-01T00:00:00Z')`,
+		h.task("1").ID, filepath.Join(t.TempDir(), "output.log"))
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	clear := "UPDATE test_runs SET status = 'error' WHERE id = 1 AND status = 'running'"
+	errOut := h.expectCode(ExitBusy, "start", "1")
+	for _, want := range []string{"run 1", "no recorded pid", p.dbPath(), clear} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr lacks %q: %s", want, errOut)
+		}
+	}
+	if n := countRows(t, p, `SELECT count(*) FROM test_runs`); n != 1 {
+		t.Fatalf("a second suite was started next to a run with no pid: %d runs", n)
+	}
+
+	db = openRaw(t, p.dbPath())
+	_, err = db.Exec(clear)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.mustRun("start", "1")
+}
+
 // TestStartRefusesUnparseableStartTime covers a live process group whose
 // recorded pid_start cannot be parsed: shoal cannot tell whether the pid was
 // reused, so start must refuse rather than run a second suite. A bare integer
