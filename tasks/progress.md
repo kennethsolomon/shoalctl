@@ -17,7 +17,7 @@ Plan: [todo.md](todo.md). Base: `496e05c`.
 
 ## Decisions
 
-Spec ambiguities resolved with the safest option; each is also a row in docs/spec.md §16 (25-36).
+Spec ambiguities resolved with the safest option; each is also a row in docs/spec.md §16 (25-40).
 
 - `qa` runs the gates only (contract hash, suite vs baseline, lint, build); the QA agents run in the session.
 - `done` does not require a passed QA round, nor at least one behaviour for features (keeps Phase 0 flows working).
@@ -29,3 +29,20 @@ Spec ambiguities resolved with the safest option; each is also a row in docs/spe
 - Waivers and manual checks need a terminal; decisions are recorded under git's user name.
 - `repro red` needs `--file`; proofs need per-test formats.
 - Claim overlap for two wildcard globs is conservative (fail closed).
+- `--accept-regression` needs `--task <task>`; `--task` merges only that done task (row 37).
+- `merge` settles tasks left at `merging` before the queue; anything ambiguous stays put and exits 5 (row 38).
+- A rebase interrupted by a signal is an interrupt (exit 130, task stays `done`), never a conflict (row 39).
+- `test --kind baseline` runs in a scratch worktree at the base commit (row 40).
+
+## Vex HOLD fixes
+
+Vex returned HOLD on `dce413c` with four risks; each fixed test-first in its own commit.
+
+| Risk | Fix | Test |
+|------|-----|------|
+| HIGH: one `--accept-regression` covered every task in a multi-task `merge` | `--accept-regression` requires `--task`; only that task is merged | `TestMergeAcceptanceIsScopedToOneTask` |
+| MED: a crash between fast-forward and DB update left a task at `merging` forever | `merge` settles `merging` tasks under `merge.lock` first: merged if the target holds the head, else `done`; ambiguous -> left, exit 5 | `TestMergeSettlesTasksLeftAtMerging` |
+| LOW: a rebase cancelled by Ctrl-C was classified as a conflict (needs-rebase, exit 9) | `ctx.Err()` checked first; rebase aborted, stage `done`, exit 130 | `TestRebaseCancelledIsInterruptNotConflict` |
+| LOW: ignored files in the task worktree could poison a baseline and quarantine a test | `test --kind baseline` runs in the scratch-worktree helper at the base commit | `TestBaselineIgnoresWorktreeOnlyFiles` |
+
+Remaining: `start`'s own baseline still runs in the task worktree (fresh on first start, reused on a retry after `baseline-failed`); a recovered merge cannot recover the interrupted run's gate result or accepted regressions (the report says so). Scratch baselines lack ignored dependency directories (`node_modules`, `vendor`), as merge's new-base baseline already did.

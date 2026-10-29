@@ -43,7 +43,7 @@ Each item says whether it is built or planned. See [Roadmap](#roadmap) for the p
 
 - **One task, one worktree, one tmux window** (built). Parallel work stays isolated.
 - **Baseline test run at start** (built). Every task records which tests passed before it touched anything. Flaky tests are re-run (`[tests].flaky_retries`); a test flaky at baseline is quarantined and listed in every report.
-- **Zero-regression merge gate** (built). `shoalctl merge` takes done tasks oldest first, one at a time: rebase onto the target, baseline at the new base, full suite, lint and build. A test that passed before and fails, disappears, gets skipped or turns flaky blocks the merge (exit 9), as does a coverage drop on a changed file when coverage is configured. The only override is `--accept-regression <test> --reason "<why>"`, recorded in the report. Never pushes.
+- **Zero-regression merge gate** (built). `shoalctl merge` takes done tasks oldest first, one at a time: rebase onto the target, baseline at the new base, full suite, lint and build. A test that passed before and fails, disappears, gets skipped or turns flaky blocks the merge (exit 9), as does a coverage drop on a changed file when coverage is configured. The only override is `--task <task> --accept-regression <test> --reason "<why>"`: an acceptance always names the one task it covers, and is recorded in the report. A task an interrupted merge left at `merging` is settled by the next `merge`. Never pushes.
 - **Agent team per task** (built). Eight `shoal-*` Claude Code agent definitions (lead, backend, frontend, integration, docs, three QA roles), per-agent file claims inside a task, messages in the store, and a frozen API contract the QA round checks.
 - **Scope you ask for is enforced** (built). "Also test X" becomes a case matrix (happy, boundary, invalid, empty, permission, concurrency, failure, ui-state); `done` refuses until every row is green or a human waives it.
 - **Overlap check at planning time** (planned). Each task claims file globs. Collisions trigger a one-keypress prompt: serialize, merge, or run in parallel anyway.
@@ -215,8 +215,8 @@ deny_globs = [".env*"]
 | `shoalctl status [--json]` | Board of all tasks | Built |
 | `shoalctl done <task> [--force] [--accept-large-diff --reason "<r>"]` | Final test run, proof/scope/contract/budget checks, summary and report; a hotfix creates its backport task | Built |
 | `shoalctl qa <task>` | One QA round: contract hash, suite vs baseline, lint, build. 3 rounds, then escalated | Built |
-| `shoalctl merge [--accept-regression <t> --reason "<r>"]...` | Merge done tasks oldest first through the gate, under `merge.lock`; never pushes | Built |
-| `shoalctl test <task> [--kind gate\|qa\|baseline]` | Run the suite in the worktree and compare with the baseline | Built |
+| `shoalctl merge [--task <task> [--accept-regression <t> --reason "<r>"]...]` | Merge done tasks oldest first through the gate, under `merge.lock` (only `<task>` with `--task`, which `--accept-regression` requires); never pushes | Built |
+| `shoalctl test <task> [--kind gate\|qa\|baseline]` | Run the suite in the worktree (a baseline: in a clean scratch worktree at the base commit) and compare with the baseline | Built |
 | `shoalctl test quarantine list\|release <test>` | Show or release quarantined flaky tests | Built |
 | `shoalctl repro red\|green <task> --test <id>` | Record the red, then green, run of a regression test (bugfix, hotfix) | Built |
 | `shoalctl scope add\|case\|show\|review\|check <task> ...` | Scope items, the case matrix, human waivers and manual checks | Built |
