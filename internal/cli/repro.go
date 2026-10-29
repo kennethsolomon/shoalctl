@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"strings"
 
 	"github.com/kennethsolomon/shoalctl/internal/gitx"
 	"github.com/kennethsolomon/shoalctl/internal/globx"
@@ -75,6 +76,13 @@ func (env Env) cmdRepro(ctx context.Context, args []string) error {
 		if _, err := gitx.Run(ctx, t.Worktree, "merge-base", "--is-ancestor", proof.RedSHA, head); err != nil {
 			return fail(ExitState, "HEAD %s does not descend from the red commit %s; record red again on this history", shortSHA(head), shortSHA(proof.RedSHA))
 		}
+		// A not-reproducible red (backport) proves no bug, so there is no fix to
+		// demand; a red that failed needs a later commit that changes something.
+		if proof.RedStatus == "fail" {
+			if err := requireFixCommit(ctx, t.Worktree, proof.RedSHA, head); err != nil {
+				return err
+			}
+		}
 	}
 
 	command := p.cfg.Tests.Command
@@ -135,6 +143,23 @@ func (env Env) cmdRepro(ctx context.Context, args []string) error {
 	fmt.Fprintf(env.Stdout, "green recorded: %s passes at %s (run %d)\n", *testID, shortSHA(head), run.ID)
 	if changed {
 		fmt.Fprintf(env.Stdout, "warning: %s changed after the red run; the report flags it for review\n", proof.TestFile)
+	}
+	return nil
+}
+
+// requireFixCommit refuses a green run unless head is a later commit than
+// red with a non-empty diff from it (§8.3): a test that passes on the red
+// commit itself, or on an empty commit, proves no fix.
+func requireFixCommit(ctx context.Context, wt, red, head string) error {
+	if head == red {
+		return fail(ExitGate, "HEAD is the same commit as the red run (%s): a green run needs a later commit with the fix; commit the fix, then run repro green again", shortSHA(head))
+	}
+	trees, err := gitx.Run(ctx, wt, "rev-parse", red+"^{tree}", head+"^{tree}")
+	if err != nil {
+		return err
+	}
+	if t := strings.Fields(trees); len(t) == 2 && t[0] == t[1] {
+		return fail(ExitGate, "HEAD %s changes nothing since the red commit %s (empty diff): a green run needs a commit with the fix", shortSHA(head), shortSHA(red))
 	}
 	return nil
 }

@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kennethsolomon/shoalctl/internal/testutil"
 )
 
 func TestReproRedGreen(t *testing.T) {
@@ -37,4 +40,30 @@ func TestReproRedGreen(t *testing.T) {
 
 	feature := startedTask(t, h, "feature", "Feat")
 	h.expectCode(ExitState, "repro", "red", feature.Slug, "--test", "C::a", "--file", "test.sh")
+}
+
+// A green run must come from a later commit that changes something: a test
+// that passes on the red commit itself (here through an ignored file) or on
+// an empty commit proves nothing about a fix (§8.3).
+func TestReproGreenNeedsALaterCommitWithChanges(t *testing.T) {
+	h := newHarness(t).withSession()
+	h.initWith(junitConfig + "rerun_command = \"sh ./test.sh {junit} {tests}\"\n")
+	task := startedTask(t, h, "bugfix", "Fake proof")
+	commitIn(t, task.Worktree, "tests/bug.t", "x")
+	h.mustRun("repro", "red", task.Slug, "--test", "C::bug", "--file", "tests/bug.t")
+
+	exclude := testutil.Git(t, task.Worktree, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude")
+	testutil.WriteFile(t, exclude, readFile(t, exclude)+"\nfix.txt\n")
+	testutil.WriteFile(t, filepath.Join(task.Worktree, "fix.txt"), "x")
+	mustContain(t, "green on the red commit", h.expectCode(ExitGate, "repro", "green", task.Slug, "--test", "C::bug"), "same commit")
+
+	testutil.Git(t, task.Worktree, "commit", "-q", "--allow-empty", "-m", "fake fix")
+	mustContain(t, "green on an empty commit", h.expectCode(ExitGate, "repro", "green", task.Slug, "--test", "C::bug"), "changes nothing")
+	if ps, err := h.db().Proofs(t.Context(), task.ID); err != nil || len(ps) != 1 || ps[0].GreenSHA != "" {
+		t.Fatalf("a refused green was recorded: %+v %v", ps, err)
+	}
+
+	testutil.Git(t, task.Worktree, "add", "-f", "fix.txt")
+	testutil.Git(t, task.Worktree, "commit", "-q", "-m", "real fix")
+	mustContain(t, "real green", h.mustRun("repro", "green", task.Slug, "--test", "C::bug"), "green recorded")
 }
