@@ -316,7 +316,11 @@ func TestInitRebind(t *testing.T) {
 	h.mustRun("init")
 	p := h.project()
 	meta := readFile(t, p.metaPath())
-	testutil.WriteFile(t, p.metaPath(), strings.Replace(meta, h.repo, "/somewhere/else", 1))
+	moved := strings.Replace(meta, jsonText(h.repo), "/somewhere/else", 1)
+	if moved == meta {
+		t.Fatalf("project.json does not record the repo root %s:\n%s", h.repo, meta)
+	}
+	testutil.WriteFile(t, p.metaPath(), moved)
 
 	h.expectCode(ExitConfig, "init")
 	h.expectCode(ExitConfig, "status")
