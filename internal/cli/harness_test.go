@@ -41,7 +41,12 @@ echo '</testsuite>'
 } > "$out"
 `
 
-const junitConfig = "[tests]\ncommand = \"sh ./test.sh {junit}\"\nformat = \"junit\"\n"
+// junitNoSetup leaves [tests].setup out, so every clean-baseline failure
+// blocks the merge gate (§8.5); junitConfig declares the fresh worktrees
+// enough with a no-op setup.
+const junitNoSetup = "[tests]\ncommand = \"sh ./test.sh {junit}\"\nformat = \"junit\"\n"
+
+const junitConfig = junitNoSetup + "setup = \"true\"\n"
 
 type harness struct {
 	t       *testing.T

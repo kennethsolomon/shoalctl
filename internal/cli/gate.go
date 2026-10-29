@@ -78,7 +78,7 @@ func (env Env) evaluate(ctx context.Context, p *project, base, run store.Run, ch
 	if err := g.blamePassedEarlier(ctx, p); err != nil {
 		return g, err
 	}
-	g.blocking = testrun.Blocking(g.classes)
+	g.blocking = append(testrun.Blocking(g.classes), g.unprovenWithoutSetup(p)...)
 	if base.Fidelity == "suite" && baseMap[testrun.SuiteID] == "fail" && !contains(g.blocking, testrun.SuiteID) {
 		g.blocking = append(g.blocking, testrun.SuiteID)
 		g.notes = append(g.notes, reducedFidelity)
@@ -118,6 +118,22 @@ func (g *gateResult) blamePassedEarlier(ctx context.Context, p *project) error {
 	g.classes[testrun.PreExisting] = keep
 	sort.Strings(g.classes[testrun.Regression])
 	return nil
+}
+
+// unprovenWithoutSetup returns the pre-existing failures a gate run must
+// block on when no [tests].setup is configured. Every baseline runs in a
+// fresh worktree that lacks ignored files (.env, vendor), and nothing records
+// which ignored files a run saw, so a baseline failure there proves nothing
+// about the task worktree: it blocks until setup is configured or a human
+// accepts it (§8.5, §16).
+func (g *gateResult) unprovenWithoutSetup(p *project) []string {
+	pre := g.classes[testrun.PreExisting]
+	if p.cfg.Tests.Setup != "" || g.run.Kind != "gate" || len(pre) == 0 {
+		return nil
+	}
+	g.notes = append(g.notes, fmt.Sprintf("%s failed in the clean baseline run %d, which is no proof without [tests].setup (the clean worktree lacks ignored files). "+
+		"Configure [tests].setup, or a human accepts: shoalctl merge --task <slug> --accept-regression <test> --reason \"<why>\"", strings.Join(pre, ", "), g.base.ID))
+	return pre
 }
 
 func (g *gateResult) compareCoverage(ctx context.Context, p *project, changed []string) error {

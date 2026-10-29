@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/kennethsolomon/shoalctl/internal/lockfile"
+	"github.com/kennethsolomon/shoalctl/internal/store"
 	"github.com/kennethsolomon/shoalctl/internal/testutil"
 )
 
@@ -267,7 +268,7 @@ func TestSetupPreparesCleanWorktrees(t *testing.T) {
 	testutil.Git(t, h.repo, "add", "test.sh", ".gitignore")
 	testutil.Git(t, h.repo, "commit", "-q", "-m", "C::a needs .env")
 	testutil.WriteFile(t, filepath.Join(h.repo, ".env"), "SECRET=x\n")
-	p := h.initWith(junitConfig + "setup = \"cp {root}/.env .\"\n")
+	p := h.initWith(junitNoSetup + "setup = \"cp {root}/.env .\"\n")
 	task := startedTask(t, h, "feature", "Setup copies .env")
 	if n := countRows(t, p, `SELECT count(*) FROM test_results WHERE run_id = ? AND test_id = 'C::a' AND status = 'pass'`, h.task(task.Slug).BaselineRunID); n != 1 {
 		t.Fatal("start's baseline ran without [tests].setup: C::a did not pass")
@@ -278,16 +279,68 @@ func TestSetupPreparesCleanWorktrees(t *testing.T) {
 	finish(t, h, task.Slug, task.Worktree)
 	commitIn(t, h.repo, "other.txt", "moves main")
 	mainBefore := testutil.Git(t, h.repo, "rev-parse", "main")
-	testutil.WriteFile(t, filepath.Join(p.dir, "config.toml"), junitConfig+"setup = \"exit 3\"\n")
+	testutil.WriteFile(t, filepath.Join(p.dir, "config.toml"), junitNoSetup+"setup = \"exit 3\"\n")
 	mustContain(t, "failed setup", h.expectCode(ExitBaseline, "merge"), "[tests].setup failed")
 	if testutil.Git(t, h.repo, "rev-parse", "main") != mainBefore || h.task(task.Slug).Stage != "done" {
 		t.Fatal("a failed setup merged or moved the task")
 	}
 
-	testutil.WriteFile(t, filepath.Join(p.dir, "config.toml"), junitConfig+"setup = \"cp {root}/.env .\"\n")
+	testutil.WriteFile(t, filepath.Join(p.dir, "config.toml"), junitNoSetup+"setup = \"cp {root}/.env .\"\n")
 	mustContain(t, "merge with setup", h.mustRun("merge"), "merged "+task.Slug)
 	newBase := countRows(t, p, `SELECT max(id) FROM test_runs WHERE kind = 'baseline'`)
 	if n := countRows(t, p, `SELECT count(*) FROM test_results WHERE run_id = ? AND test_id = 'C::a' AND status = 'pass'`, newBase); n != 1 {
 		t.Fatal("merge's scratch baseline ran without [tests].setup: C::a did not pass")
+	}
+}
+
+// envBreakInFirstCommit is Vex's round-3 probe: no [tests].setup, C::a needs
+// the ignored .env (in the main checkout and, copied after start, in the task
+// worktree), and the task breaks C::a in its first commit with no suite run
+// before merge. Every baseline ran in a fresh worktree without .env.
+func envBreakInFirstCommit(t *testing.T) (*harness, store.Task) {
+	t.Helper()
+	h := newHarness(t).withSession()
+	testutil.WriteFile(t, filepath.Join(h.repo, "test.sh"), envScript())
+	testutil.WriteFile(t, filepath.Join(h.repo, ".gitignore"), ".env\n")
+	testutil.Git(t, h.repo, "add", "test.sh", ".gitignore")
+	testutil.Git(t, h.repo, "commit", "-q", "-m", "C::a needs .env")
+	testutil.WriteFile(t, filepath.Join(h.repo, ".env"), "SECRET=x\n")
+	h.initWith(junitNoSetup)
+	task := startedTask(t, h, "feature", "Breaks a in its first commit")
+	testutil.WriteFile(t, filepath.Join(task.Worktree, ".env"), "SECRET=x\n")
+	commitIn(t, task.Worktree, "broken.txt", "x")
+	finish(t, h, task.Slug, task.Worktree)
+	return h, task
+}
+
+// Without [tests].setup a clean-baseline failure is no proof the test was
+// failing before the task, so the gate blocks on it (exit 9).
+func TestGateBlocksUnprovenBaselineFailureWithoutSetup(t *testing.T) {
+	h, task := envBreakInFirstCommit(t)
+	mainBefore := testutil.Git(t, h.repo, "rev-parse", "main")
+	code, out, errOut := h.run("merge")
+	if code != ExitGate {
+		t.Fatalf("merge: exit %d\n%s\n%s", code, out, errOut)
+	}
+	mustContain(t, "gate output", out, "BLOCKED by: C::a", "[tests].setup")
+	mustContain(t, "gate error", errOut, "--accept-regression C::a", "--task "+task.Slug)
+	if testutil.Git(t, h.repo, "rev-parse", "main") != mainBefore || h.task(task.Slug).Stage != "qa" {
+		t.Fatal("an unproven baseline failure was merged")
+	}
+}
+
+// The human path still works: accepting each unproven failure by name for
+// this task merges it; an agent cannot.
+func TestHumanAcceptsUnprovenBaselineFailure(t *testing.T) {
+	h, task := envBreakInFirstCommit(t)
+	accept := []string{"merge", "--task", task.Slug,
+		"--accept-regression", "C::a", "--reason", "checked by hand",
+		"--accept-regression", "C::pre", "--reason", "old bug"}
+	h.env.Terminal = func() bool { return false }
+	mustContain(t, "agent acceptance", h.expectCode(ExitState, accept...), "needs a human at a terminal")
+	h.env.Terminal = func() bool { return true }
+	mustContain(t, "human acceptance", h.mustRun(accept...), "merged "+task.Slug)
+	if got := h.task(task.Slug); got.Stage != "merged" || testutil.Git(t, h.repo, "rev-parse", "main") != got.MergedSHA {
+		t.Fatalf("after acceptance: %+v", got)
 	}
 }
