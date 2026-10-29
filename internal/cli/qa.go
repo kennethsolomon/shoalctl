@@ -45,13 +45,13 @@ func (env Env) cmdQA(ctx context.Context, args []string) error {
 	}
 	defer p.close()
 	defer lock.Release()
-	from := []string{store.StageInProgress, store.StageQA}
+	from := []string{store.StageInProgress, store.StageQA, store.StageNeedsRebase}
 	if t.Stage == store.StageEscalated {
 		return fail(ExitState, "task %s is escalated after %d QA rounds; no further automatic rounds. A human decides what happens next (see %s)",
 			t.Slug, t.QARound, filepath.Join(p.dir, "reports", t.Slug+".md"))
 	}
 	if !contains(from, t.Stage) {
-		return fail(ExitState, "task %s is at %q; qa needs in-progress or qa", t.Slug, t.Stage)
+		return fail(ExitState, "task %s is at %q; qa needs in-progress, qa or needs-rebase", t.Slug, t.Stage)
 	}
 	head, err := requireClean(ctx, t.Worktree, "a QA round")
 	if err != nil {

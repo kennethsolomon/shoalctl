@@ -87,9 +87,9 @@ func (env Env) cmdDone(ctx context.Context, args []string) error {
 	}
 	defer p.close()
 	defer lock.Release()
-	from := []string{store.StageInProgress, store.StageQA}
+	from := []string{store.StageInProgress, store.StageQA, store.StageNeedsRebase}
 	if !contains(from, t.Stage) {
-		return fail(ExitState, "task %s is at %q; done needs in-progress or qa", t.Slug, t.Stage)
+		return fail(ExitState, "task %s is at %q; done needs in-progress, qa or needs-rebase", t.Slug, t.Stage)
 	}
 	wt := t.Worktree
 	if _, err := os.Stat(wt); err != nil {
@@ -181,7 +181,7 @@ func (env Env) cmdDone(ctx context.Context, args []string) error {
 	}
 	in.ver.Lint, in.ver.Build = lint, build
 	if *largeDiff {
-		in.notes = append(in.notes, fmt.Sprintf("Large hotfix diff accepted: %d lines over the %d-line budget: %s", diffLines, p.cfg.Hotfix.MaxDiffLines, strings.TrimSpace(*reason)))
+		in.notes = append(in.notes, largeDiffNote(diffLines, p.cfg.Hotfix.MaxDiffLines, strings.TrimSpace(*reason)))
 	}
 
 	var backport *store.NewTask
@@ -252,6 +252,10 @@ func (env Env) writeReport(p *project, slug, report string) error {
 		}
 	}
 	return nil
+}
+
+func largeDiffNote(lines, budget int, reason string) string {
+	return fmt.Sprintf("Large hotfix diff accepted: %d lines over the %d-line budget: %s", lines, budget, reason)
 }
 
 func nullableString(s string) any {

@@ -132,10 +132,16 @@ func baselineResults(ctx context.Context, p *project, t store.Task) (map[string]
 	return statusMap(rs), nil
 }
 
-// humanName is git's user.name in dir, the name decisions are recorded under.
+// humanName is git's user.name in dir (or the committer name git would use),
+// the name human decisions are recorded under.
 func humanName(ctx context.Context, dir string) string {
 	if name, err := gitx.Run(ctx, dir, "config", "user.name"); err == nil && name != "" {
 		return name
+	}
+	if ident, err := gitx.Run(ctx, dir, "var", "GIT_COMMITTER_IDENT"); err == nil {
+		if name, _, ok := strings.Cut(ident, " <"); ok && strings.TrimSpace(name) != "" {
+			return strings.TrimSpace(name)
+		}
 	}
 	return "human"
 }
