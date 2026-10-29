@@ -41,8 +41,9 @@ type Spec struct {
 	Dir       string // worktree the command runs in
 	RunDir    string // absolute dir for output.log and junit.xml
 	// OnStart, when set, receives the suite's pid (its process group id on
-	// unix) right after it starts.
-	OnStart func(pid int)
+	// unix) right after it starts, before the command runs. An error stops
+	// the suite without running the command.
+	OnStart func(pid int) error
 }
 
 // killGrace is how long a suite gets to exit after SIGTERM before SIGKILL.
@@ -218,10 +219,12 @@ func Run(ctx context.Context, spec Spec) Outcome {
 }
 
 // runInGroup runs cmd in its own process group (a job object on Windows).
+// The suite is held before its first command until onStart returns nil; if
+// onStart fails, the suite is stopped without running.
 // When cmd's context ends, the whole group gets SIGTERM, then SIGKILL after
 // killGrace. Processes the suite leaves behind are killed once it exits, so
 // no test process outlives the run.
-func runInGroup(cmd *exec.Cmd, onStart func(pid int)) (runErr, startErr error) {
+func runInGroup(cmd *exec.Cmd, onStart func(pid int) error) (runErr, startErr error) {
 	var mu sync.Mutex
 	var grp *procGroup
 	var hardKill *time.Timer
@@ -236,11 +239,18 @@ func runInGroup(cmd *exec.Cmd, onStart func(pid int)) (runErr, startErr error) {
 		return g.terminate()
 	}
 	cmd.WaitDelay = killGrace + 2*time.Second
-	if err := cmd.Start(); err != nil {
+	held, err := hold(cmd)
+	if err != nil {
 		return nil, err
 	}
+	if err := cmd.Start(); err != nil {
+		held.shut()
+		return nil, err
+	}
+	held.started()
 	g, err := attach(cmd)
 	if err != nil {
+		held.shut()
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 		return nil, err
@@ -249,7 +259,12 @@ func runInGroup(cmd *exec.Cmd, onStart func(pid int)) (runErr, startErr error) {
 	grp = g
 	mu.Unlock()
 	if onStart != nil {
-		onStart(cmd.Process.Pid)
+		if err := onStart(cmd.Process.Pid); err != nil {
+			return nil, abort(cmd, g, held, err)
+		}
+	}
+	if err := held.open(); err != nil {
+		return nil, abort(cmd, g, held, err)
 	}
 	runErr = cmd.Wait()
 	mu.Lock()
@@ -260,6 +275,15 @@ func runInGroup(cmd *exec.Cmd, onStart func(pid int)) (runErr, startErr error) {
 	_ = g.kill()
 	g.close()
 	return runErr, nil
+}
+
+// abort stops a suite still held at its gate and returns why.
+func abort(cmd *exec.Cmd, g *procGroup, held *gate, why error) error {
+	held.shut()
+	_ = g.kill()
+	_ = cmd.Wait()
+	g.close()
+	return why
 }
 
 func (o Outcome) fail(problem string) Outcome {

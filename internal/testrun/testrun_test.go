@@ -2,6 +2,7 @@ package testrun
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -302,7 +303,7 @@ func TestRunCancelStopsProcessGroup(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			spec, dir := runSpec(t, "exit-code", tt.command)
 			var started int
-			spec.OnStart = func(pid int) { started = pid }
+			spec.OnStart = func(pid int) error { started = pid; return nil }
 			ctx, cancel := context.WithCancel(context.Background())
 			done := make(chan Outcome, 1)
 			go func() { done <- Run(ctx, spec) }()
@@ -575,5 +576,47 @@ func TestSameStart(t *testing.T) {
 				t.Errorf("SameStart(%q, %q) = %v, want %v", tt.recorded, tt.live, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestRunHoldsSuiteUntilOnStartReturns: the suite's pid must be recorded
+// before the suite does anything, or a shoalctl killed in between leaves a
+// live suite that no later command knows about.
+func TestRunHoldsSuiteUntilOnStartReturns(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the Windows job object kills the suite with shoalctl, so nothing can outlive an unrecorded start")
+	}
+	spec, dir := runSpec(t, "exit-code", "echo ran > ran")
+	ran := filepath.Join(dir, "ran")
+	var early bool
+	spec.OnStart = func(int) error {
+		time.Sleep(300 * time.Millisecond)
+		_, err := os.Stat(ran)
+		early = err == nil
+		return nil
+	}
+	if out := Run(context.Background(), spec); out.Status != StatusCompleted {
+		t.Fatalf("status = %s (%s), want completed", out.Status, out.Problem)
+	}
+	if early {
+		t.Fatal("the suite ran before OnStart returned")
+	}
+	if _, err := os.Stat(ran); err != nil {
+		t.Fatalf("the suite did not run after OnStart returned: %v", err)
+	}
+}
+
+func TestRunRefusesSuiteWhenOnStartFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh")
+	}
+	spec, dir := runSpec(t, "exit-code", "echo ran > ran")
+	spec.OnStart = func(int) error { return errors.New("db is locked") }
+	out := Run(context.Background(), spec)
+	if out.Status != StatusError || !strings.Contains(out.Problem, "db is locked") {
+		t.Fatalf("outcome = %s (%s), want error naming the OnStart failure", out.Status, out.Problem)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "ran")); !os.IsNotExist(err) {
+		t.Fatalf("the suite ran although its pid was not recorded: %v", err)
 	}
 }

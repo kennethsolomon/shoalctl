@@ -100,3 +100,12 @@ func parseStart(s string) (time.Time, bool) {
 	}
 	return time.Unix(0, ns), true
 }
+
+// gate is a no-op on Windows: the kill-on-close job object ends the suite
+// with shoalctl, so an unrecorded suite cannot outlive it.
+type gate struct{}
+
+func hold(*exec.Cmd) (*gate, error) { return &gate{}, nil }
+func (*gate) started()              {}
+func (*gate) open() error           { return nil }
+func (*gate) shut()                 {}

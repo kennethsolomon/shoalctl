@@ -68,3 +68,46 @@ func parseStart(s string) (time.Time, bool) {
 	t, err := time.Parse(time.ANSIC, s)
 	return t, err == nil
 }
+
+// gatePrefix makes the suite shell wait for a line on fd 3 before running
+// the command, and exit without running it if the pipe closes first.
+const gatePrefix = "IFS= read -r _ <&3 || exit 125\nexec 3<&-\n"
+
+// gate holds the suite at its first line until its pid is recorded, so a
+// shoalctl killed in between leaves no suite running that nothing knows of.
+type gate struct{ r, w *os.File }
+
+// hold arms the gate on cmd, an unstarted sh -c command with no ExtraFiles.
+func hold(cmd *exec.Cmd) (*gate, error) {
+	if len(cmd.ExtraFiles) != 0 {
+		return nil, fmt.Errorf("hold suite: cmd already has %d extra files; the gate needs fd 3", len(cmd.ExtraFiles))
+	}
+	r, w, err := os.Pipe()
+	if err != nil {
+		return nil, fmt.Errorf("hold suite: create gate pipe: %w", err)
+	}
+	cmd.ExtraFiles = []*os.File{r}
+	cmd.Args[len(cmd.Args)-1] = gatePrefix + cmd.Args[len(cmd.Args)-1]
+	return &gate{r: r, w: w}, nil
+}
+
+// started drops shoalctl's copy of the read end once the suite holds its own.
+func (g *gate) started() { g.r.Close() }
+
+// open lets the suite run.
+func (g *gate) open() error {
+	_, err := g.w.Write([]byte("\n"))
+	if cerr := g.w.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return fmt.Errorf("release the held suite: %w", err)
+	}
+	return nil
+}
+
+// shut makes a held suite exit without running its command.
+func (g *gate) shut() {
+	g.r.Close()
+	g.w.Close()
+}

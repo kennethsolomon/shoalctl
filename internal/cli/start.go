@@ -256,19 +256,18 @@ func (env Env) runSuite(ctx context.Context, p *project, t store.Task, kind, sha
 	// Bookkeeping writes outlive an interrupt, so the run is never left at
 	// running with no owner.
 	wctx := context.WithoutCancel(ctx)
-	var pidErr error
 	out := testrun.Run(ctx, testrun.Spec{Command: cfg.Command, Format: cfg.Format, JunitPath: cfg.JunitPath,
 		Timeout: p.cfg.TestTimeout(), Dir: wt, RunDir: p.runDir(run.ID),
-		OnStart: func(pid int) {
+		OnStart: func(pid int) error {
 			start, err := testrun.ProcessStart(pid)
 			if err != nil {
 				fmt.Fprintf(env.Stderr, "%s run %d: %v; a later command will treat any live process group at this pid as this suite\n", kind, run.ID, err)
 			}
-			pidErr = p.db.SetRunPID(wctx, run.ID, pid, start)
+			if err := p.db.SetRunPID(wctx, run.ID, pid, start); err != nil {
+				return fmt.Errorf("record the suite's pid %d: %w", pid, err)
+			}
+			return nil
 		}})
-	if pidErr != nil {
-		fmt.Fprintf(env.Stderr, "%s run %d: %v\n", kind, run.ID, pidErr)
-	}
 	if out.Problem != "" {
 		fmt.Fprintf(env.Stderr, "%s run %d: %s\n", kind, run.ID, out.Problem)
 	}
