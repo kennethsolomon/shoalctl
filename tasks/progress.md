@@ -17,7 +17,7 @@ Plan: [todo.md](todo.md). Base: `496e05c`.
 
 ## Decisions
 
-Spec ambiguities resolved with the safest option; each is also a row in docs/spec.md §16 (25-40).
+Spec ambiguities resolved with the safest option; each is also a row in docs/spec.md §16 (25-43).
 
 - `qa` runs the gates only (contract hash, suite vs baseline, lint, build); the QA agents run in the session.
 - `done` does not require a passed QA round, nor at least one behaviour for features (keeps Phase 0 flows working).
@@ -46,3 +46,17 @@ Vex returned HOLD on `dce413c` with four risks; each fixed test-first in its own
 | LOW: ignored files in the task worktree could poison a baseline and quarantine a test | `test --kind baseline` runs in the scratch-worktree helper at the base commit | `TestBaselineIgnoresWorktreeOnlyFiles` |
 
 Remaining: `start`'s own baseline still runs in the task worktree (fresh on first start, reused on a retry after `baseline-failed`); a recovered merge cannot recover the interrupted run's gate result or accepted regressions (the report says so). Scratch baselines lack ignored dependency directories (`node_modules`, `vendor`), as merge's new-base baseline already did.
+
+## Vex BLOCK round 2
+
+Vex returned BLOCK on `fa19076` with five items; each fixed test-first in its own commit (spec §16 rows 39, 41-43).
+
+| Item | Fix | Test |
+|------|-----|------|
+| A clean clone did not build: `coverage.*` ignored `internal/coverage/coverage.go` | `!*.go` in `.gitignore`; the file is committed. No other source file is ignored | clean `git clone` + all gates |
+| `merge --accept-regression` had no human check | `requireHuman` before the project opens; refused -> exit 5, nothing merged | `TestMergeAcceptanceNeedsHuman` |
+| A test needing an ignored file failed in the clean baseline worktree, so the task breaking it passed as pre-existing | (a) baseline fail + gate fail is a `regression` when the test passed in an earlier completed run of the task; (b) optional `[tests].setup` (`{root}` = main checkout) runs in every clean baseline worktree; a failing setup records no baseline, exit 6 | `TestGateBlocksTestThatPassedEarlierInTheTask`, `TestSetupPreparesCleanWorktrees`, `TestLoadErrors` |
+| Ctrl-C reaching git first was classified as a conflict | `interrupted()`: ctx cancelled, git killed by a signal, or exit 130 -> rebase aborted, task `done`, exit 130; an interrupted fast-forward leaves the task at `merging` for the next merge to settle | `TestRebaseKilledBySignalIsInterrupt`, `TestFastForwardKilledBySignalIsSettled` |
+| `repro green` could be recorded on the red commit | after a `fail` red, green needs a later commit with a different tree; else exit 9, nothing recorded (`not-reproducible` backports exempt) | `TestReproGreenNeedsALaterCommitWithChanges` |
+
+Remaining: `[tests].setup` is not part of `command_hash`, so a baseline cached before a setup change is reused (rule (a) still applies). Rule (a) only catches a test that passed in some earlier run of the task; a task that breaks a setup-dependent test before any run with the file, with no `[tests].setup`, still reads as pre-existing.
