@@ -142,9 +142,8 @@ func Run(ctx context.Context, spec Spec) Outcome {
 	}
 
 	runErr, startErr := runInGroup(cmd, spec.OnStart)
-	if startErr != nil {
-		return note(fmt.Sprintf("test command could not start: %v", startErr))
-	}
+	// An interrupt or timeout during the gate kills the held suite, so
+	// releasing it fails; checked first, it is reported as what it was.
 	if ctx.Err() != nil {
 		out.Status = StatusCancelled
 		out.Problem = "interrupted; the test command's processes were stopped"
@@ -156,6 +155,9 @@ func Run(ctx context.Context, spec Spec) Outcome {
 		out.Problem = fmt.Sprintf("test command ran past the %s timeout and was killed", spec.Timeout)
 		fmt.Fprintf(logf, "shoal: %s\n", out.Problem)
 		return out
+	}
+	if startErr != nil {
+		return note(fmt.Sprintf("test command could not start: %v", startErr))
 	}
 	var exitErr *exec.ExitError
 	switch {
