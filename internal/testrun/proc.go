@@ -1,9 +1,6 @@
 package testrun
 
-import (
-	"strconv"
-	"time"
-)
+import "time"
 
 // startTolerance absorbs the drift of a start time derived from the wall
 // clock (Linux ps computes it from boot time, which an NTP step shifts).
@@ -35,14 +32,4 @@ func SameStart(recorded, live string) bool {
 	}
 	d := a.Sub(b)
 	return d >= -startTolerance && d <= startTolerance
-}
-
-func parseStart(s string) (time.Time, bool) {
-	if t, err := time.Parse(time.ANSIC, s); err == nil {
-		return t, true
-	}
-	if ns, err := strconv.ParseInt(s, 10, 64); err == nil {
-		return time.Unix(0, ns), true
-	}
-	return time.Time{}, false
 }

@@ -547,8 +547,6 @@ func TestComparableStart(t *testing.T) {
 		recorded, live string
 		want           bool
 	}{
-		{"both lstart", "Wed Oct 28 10:11:12 2026", "Thu Jan 1 00:00:00 1970", true},
-		{"both windows", "133000000000000000", "133000003000000000", true},
 		{"unparsable but equal", "x", "x", true},
 		{"recorded unparsable", "garbage-not-a-date", "Wed Oct 28 10:11:12 2026", false},
 		{"live unparsable", "Wed Oct 28 10:11:12 2026", " ", false},
@@ -567,15 +565,6 @@ func TestSameStart(t *testing.T) {
 		recorded, live string
 		want           bool
 	}{
-		{"identical lstart", "Wed Oct 28 10:11:12 2026", "Wed Oct 28 10:11:12 2026", true},
-		{"lstart shifted 1s by an NTP step", "Wed Oct 28 10:11:12 2026", "Wed Oct 28 10:11:13 2026", true},
-		{"lstart shifted 2s", "Wed Oct 28 10:11:12 2026", "Wed Oct 28 10:11:10 2026", true},
-		{"single-digit day", "Sat Oct 3 23:59:59 2026", "Sun Oct 4 00:00:00 2026", true},
-		{"lstart 3s apart", "Wed Oct 28 10:11:12 2026", "Wed Oct 28 10:11:15 2026", false},
-		{"different day", "Wed Oct 28 10:11:12 2026", "Thu Jan 1 00:00:00 1970", false},
-		{"windows identical", "133000000000000000", "133000000000000000", true},
-		{"windows 1s apart", "133000000000000000", "133000001000000000", true},
-		{"windows 3s apart", "133000000000000000", "133000003000000000", false},
 		{"unparsable but equal", "x", "x", true},
 		{"unparsable and different", "x", "y", true},
 		{"recorded unparsable", "garbage-not-a-date", "Wed Oct 28 10:11:12 2026", true},

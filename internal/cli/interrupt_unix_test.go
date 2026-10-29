@@ -255,9 +255,10 @@ func TestStartRefusesUnconfirmedLiveSuite(t *testing.T) {
 
 // TestStartRefusesUnparseableStartTime covers a live process group whose
 // recorded pid_start cannot be parsed: shoal cannot tell whether the pid was
-// reused, so start must refuse rather than run a second suite.
+// reused, so start must refuse rather than run a second suite. A bare integer
+// is the Windows format, not a ps start time, so it does not parse on unix.
 func TestStartRefusesUnparseableStartTime(t *testing.T) {
-	for _, start := range []string{"garbage-not-a-date", " "} {
+	for _, start := range []string{"garbage-not-a-date", " ", "0", "1970"} {
 		t.Run(strconv.Quote(start), func(t *testing.T) {
 			h := newHarness(t).withSession()
 			p := h.initWith(quickSuite)

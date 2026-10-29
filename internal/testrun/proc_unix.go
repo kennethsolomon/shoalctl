@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // procGroup is the suite's process group: the suite shell leads it, so every
@@ -59,4 +60,11 @@ func ProcessStart(pid int) (string, error) {
 		return "", fmt.Errorf("read start time of pid %d with ps: %v (output %q)", pid, err, out)
 	}
 	return start, nil
+}
+
+// parseStart parses a ProcessStart value: ps lstart in the C locale. Any
+// other form, such as the Windows nanosecond count, does not parse here.
+func parseStart(s string) (time.Time, bool) {
+	t, err := time.Parse(time.ANSIC, s)
+	return t, err == nil
 }

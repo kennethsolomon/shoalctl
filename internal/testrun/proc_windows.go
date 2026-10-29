@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strconv"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -88,4 +89,14 @@ func ProcessStart(pid int) (string, error) {
 		return "", fmt.Errorf("read start time of process %d: %w", pid, err)
 	}
 	return strconv.FormatInt(created.Nanoseconds(), 10), nil
+}
+
+// parseStart parses a ProcessStart value: the creation time in nanoseconds
+// since the Unix epoch.
+func parseStart(s string) (time.Time, bool) {
+	ns, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return time.Unix(0, ns), true
 }
