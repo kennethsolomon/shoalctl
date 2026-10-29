@@ -186,6 +186,14 @@ func Main(args []string, env Env, version string) int {
 		err = env.cmdDoctor(ctx, args[1:])
 	case "test":
 		err = env.cmdTest(ctx, args[1:])
+	case "msg":
+		err = env.cmdMsg(ctx, args[1:])
+	case "contract":
+		err = env.cmdContract(ctx, args[1:])
+	case "claim":
+		err = env.cmdClaim(ctx, args[1:])
+	case "release":
+		err = env.cmdRelease(ctx, args[1:])
 	case "help", "-h", "--help":
 		fmt.Fprint(env.Stdout, usage)
 	default:
@@ -205,6 +213,12 @@ func Main(args []string, env Env, version string) int {
 // parseArgs parses flags that may appear before, between, or after positional
 // arguments, and checks the positional count.
 func parseArgs(fs *flag.FlagSet, args []string, positional int) ([]string, error) {
+	return parseArgsRange(fs, args, positional, positional)
+}
+
+// parseArgsRange is parseArgs with between min and max positional arguments
+// (max < 0: no limit).
+func parseArgsRange(fs *flag.FlagSet, args []string, min, max int) ([]string, error) {
 	fs.SetOutput(io.Discard)
 	var pos []string
 	for {
@@ -217,8 +231,11 @@ func parseArgs(fs *flag.FlagSet, args []string, positional int) ([]string, error
 		pos = append(pos, fs.Arg(0))
 		args = fs.Args()[1:]
 	}
-	if len(pos) != positional {
-		return nil, fail(ExitUsage, "expected %d argument(s), got %d: %q", positional, len(pos), pos)
+	switch {
+	case min == max && len(pos) != min:
+		return nil, fail(ExitUsage, "expected %d argument(s), got %d: %q", min, len(pos), pos)
+	case len(pos) < min || (max >= 0 && len(pos) > max):
+		return nil, fail(ExitUsage, "expected at least %d argument(s), got %d: %q", min, len(pos), pos)
 	}
 	return pos, nil
 }
