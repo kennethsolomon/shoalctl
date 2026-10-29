@@ -153,14 +153,10 @@ func (env Env) settleOne(ctx context.Context, p *project, t store.Task) (string,
 	if t.Stage != store.StageMerging {
 		return "", nil
 	}
-	for _, dir := range []string{"rebase-merge", "rebase-apply"} {
-		path, err := gitx.Run(ctx, t.Worktree, "rev-parse", "--path-format=absolute", "--git-path", dir)
-		if err != nil {
-			return fmt.Sprintf("cannot inspect worktree %s: %v", t.Worktree, err), nil
-		}
-		if _, err := os.Stat(path); err == nil {
-			return fmt.Sprintf("a rebase is in progress in %s (run git rebase --abort there)", t.Worktree), nil
-		}
+	if rebasing, err := rebaseInProgress(ctx, t.Worktree); err != nil {
+		return fmt.Sprintf("cannot inspect worktree %s: %v", t.Worktree, err), nil
+	} else if rebasing {
+		return fmt.Sprintf("a rebase is in progress in %s (run git rebase --abort there)", t.Worktree), nil
 	}
 	head, err := gitx.Run(ctx, p.root, "rev-parse", "--verify", "--quiet", "refs/heads/"+t.Branch+"^{commit}")
 	if err != nil || head == "" {
@@ -400,12 +396,40 @@ func (env Env) rebase(ctx context.Context, p *project, t store.Task, targetSHA s
 		return nil // already on the target's tip
 	}
 	if _, err := gitx.Run(ctx, t.Worktree, "-c", "rebase.autoStash=false", "-c", "rebase.updateRefs=false", "rebase", "--no-autosquash", targetSHA); err != nil {
-		if _, aerr := gitx.Run(context.WithoutCancel(ctx), t.Worktree, "rebase", "--abort"); aerr != nil {
+		wctx := context.WithoutCancel(ctx)
+		if ctx.Err() != nil {
+			// Interrupted, not a conflict: undo whatever part of the rebase ran.
+			rebasing, ierr := rebaseInProgress(wctx, t.Worktree)
+			if ierr == nil && rebasing {
+				_, ierr = gitx.Run(wctx, t.Worktree, "rebase", "--abort")
+			}
+			if ierr != nil {
+				return fmt.Errorf("rebase of %s was interrupted and could not be aborted; fix %s by hand: %w", t.Branch, t.Worktree, ierr)
+			}
+			return fail(ExitInterrupted, "interrupted during the rebase of %s; rebase aborted, the branch is unchanged", t.Branch)
+		}
+		if _, aerr := gitx.Run(wctx, t.Worktree, "rebase", "--abort"); aerr != nil {
 			return fmt.Errorf("rebase of %s failed (%v) and rebase --abort failed too; fix %s by hand: %w", t.Branch, err, t.Worktree, aerr)
 		}
 		return fmt.Errorf("%w: %v", errConflict, err)
 	}
 	return nil
+}
+
+// rebaseInProgress reports whether the worktree at wt is stopped mid-rebase.
+func rebaseInProgress(ctx context.Context, wt string) (bool, error) {
+	for _, dir := range []string{"rebase-merge", "rebase-apply"} {
+		path, err := gitx.Run(ctx, wt, "rev-parse", "--path-format=absolute", "--git-path", dir)
+		if err != nil {
+			return false, err
+		}
+		if _, err := os.Stat(path); err == nil {
+			return true, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return false, fmt.Errorf("inspect %s: %w", path, err)
+		}
+	}
+	return false, nil
 }
 
 // baselineAt reuses a completed baseline for sha or records one in a

@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -161,5 +164,35 @@ func TestMergeSettlesTasksLeftAtMerging(t *testing.T) {
 	mustContain(t, "stuck", h.expectCode(ExitState, "merge"), stuck.Slug, "rebase")
 	if got := h.task(stuck.Slug); got.Stage != "merging" {
 		t.Fatalf("stuck after merge: %+v", got)
+	}
+}
+
+// A rebase that fails because ctx was cancelled (Ctrl-C) is an interrupt,
+// not a conflict: any rebase in progress is aborted, the branch is back where
+// it was, and the error carries the interrupted exit code.
+func TestRebaseCancelledIsInterruptNotConflict(t *testing.T) {
+	h := newHarness(t).withSession()
+	h.initWith(junitConfig)
+	task := startedTask(t, h, "feature", "Interrupted rebase")
+	commitIn(t, task.Worktree, "shared.txt", "from task\n")
+	commitIn(t, h.repo, "shared.txt", "from main\n")
+	target := testutil.Git(t, h.repo, "rev-parse", "main")
+	head := testutil.Git(t, task.Worktree, "rev-parse", "HEAD")
+	// The interrupt arrives while git is mid-rebase, stopped on a conflict.
+	if out, err := exec.Command("git", "-C", task.Worktree, "rebase", target).CombinedOutput(); err == nil {
+		t.Fatalf("set-up rebase did not stop:\n%s", out)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := h.env.rebase(ctx, h.project(), task, target)
+	if errors.Is(err, errConflict) || codeOf(err) != ExitInterrupted {
+		t.Fatalf("cancelled rebase: code %d, err %v", codeOf(err), err)
+	}
+	if got := testutil.Git(t, task.Worktree, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("HEAD after interrupted rebase = %s, want %s", got, head)
+	}
+	if st := testutil.Git(t, task.Worktree, "status", "--porcelain"); st != "" {
+		t.Fatalf("interrupted rebase left changes: %q", st)
 	}
 }
