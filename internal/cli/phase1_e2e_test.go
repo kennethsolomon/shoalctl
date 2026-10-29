@@ -164,7 +164,7 @@ func TestPhase1MergeGateRegression(t *testing.T) {
 	mainBefore := testutil.Git(t, h.repo, "rev-parse", "main")
 
 	code, out, errOut := h.run("merge")
-	if code != ExitGate || !strings.Contains(out, "regression: C::a") || !strings.Contains(errOut, "--accept-regression C::a") {
+	if code != ExitGate || !strings.Contains(out, "regression: C::a") || !strings.Contains(errOut, "merge --task "+task.Slug+" --accept-regression C::a") {
 		t.Fatalf("merge: %d\n%s\n%s", code, out, errOut)
 	}
 	if got := h.task(task.Slug); got.Stage != "qa" || got.GateRunID == 0 {
@@ -176,10 +176,10 @@ func TestPhase1MergeGateRegression(t *testing.T) {
 
 	h.mustRun("done", "--force", task.Slug)
 	// A typo is not an acceptance: C::a still blocks.
-	h.expectCode(ExitGate, "merge", "--accept-regression", "C::aa", "--reason", "typo")
+	h.expectCode(ExitGate, "merge", "--task", task.Slug, "--accept-regression", "C::aa", "--reason", "typo")
 	h.mustRun("done", "--force", task.Slug)
-	h.expectCode(ExitUsage, "merge", "--accept-regression", "C::a")
-	out = h.mustRun("merge", "--accept-regression", "C::a", "--reason", "C::a asserted the old behaviour on purpose")
+	h.expectCode(ExitUsage, "merge", "--task", task.Slug, "--accept-regression", "C::a")
+	out = h.mustRun("merge", "--task", task.Slug, "--accept-regression", "C::a", "--reason", "C::a asserted the old behaviour on purpose")
 	mustContain(t, "merge", out, "merged "+task.Slug)
 	mustContain(t, "report", reportOf(t, h, task.Slug), "status: merged",
 		"Accepted regressions: `C::a`: \"C::a asserted the old behaviour on purpose\" (by shoal test)",
@@ -187,8 +187,8 @@ func TestPhase1MergeGateRegression(t *testing.T) {
 	if n := countRows(t, p, `SELECT count(*) FROM regression_overrides WHERE target = 'C::a' AND accepted_by = 'shoal test'`); n != 1 {
 		t.Fatalf("overrides = %d", n)
 	}
-	// An override that blocks nothing is a usage error.
-	h.expectCode(ExitUsage, "merge", "--accept-regression", "C::a", "--reason", "again")
+	// An override for a task that is no longer done is refused.
+	h.expectCode(ExitState, "merge", "--task", task.Slug, "--accept-regression", "C::a", "--reason", "again")
 }
 
 // Done when 5: a test made flaky on purpose is quarantined and listed.

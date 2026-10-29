@@ -68,5 +68,44 @@ func TestMergeRefusesDirtyMainCheckout(t *testing.T) {
 		t.Fatalf("task after refused merge: %+v", got)
 	}
 	testutil.Git(t, h.repo, "checkout", "--", "README.md")
-	h.mustRun("merge")
+	// An acceptance that blocks nothing is a usage error; the clean merge stands.
+	errOut := h.expectCode(ExitUsage, "merge", "--task", task.Slug, "--accept-regression", "C::a", "--reason", "not needed")
+	mustContain(t, "unused acceptance", errOut, "blocked nothing")
+	if got := h.task(task.Slug); got.Stage != "merged" {
+		t.Fatalf("task after clean merge: %+v", got)
+	}
+}
+
+// An acceptance covers exactly one task: --accept-regression needs --task,
+// and the named task is the only one merged in that run.
+func TestMergeAcceptanceIsScopedToOneTask(t *testing.T) {
+	h := newHarness(t).withSession()
+	p := h.initWith(junitConfig)
+	a := startedTask(t, h, "feature", "First breaks a")
+	b := startedTask(t, h, "feature", "Second breaks a")
+	commitIn(t, a.Worktree, "broken.txt", "x")
+	commitIn(t, b.Worktree, "broken.txt", "x")
+	finish(t, h, a.Slug, a.Worktree)
+	finish(t, h, b.Slug, b.Worktree)
+	mainBefore := testutil.Git(t, h.repo, "rev-parse", "main")
+
+	errOut := h.expectCode(ExitUsage, "merge", "--accept-regression", "C::a", "--reason", "meant for one task")
+	mustContain(t, "unscoped acceptance", errOut, "--task")
+	if testutil.Git(t, h.repo, "rev-parse", "main") != mainBefore || h.task(a.Slug).Stage != "done" || h.task(b.Slug).Stage != "done" {
+		t.Fatal("an unscoped acceptance merged something")
+	}
+
+	out := h.mustRun("merge", "--task", b.Slug, "--accept-regression", "C::a", "--reason", "b changes C::a on purpose")
+	mustContain(t, "scoped merge", out, "merged "+b.Slug)
+	if strings.Contains(out, a.Slug) {
+		t.Fatalf("a scoped merge touched %s:\n%s", a.Slug, out)
+	}
+	if got := h.task(a.Slug); got.Stage != "done" {
+		t.Fatalf("a after b's scoped merge: %+v", got)
+	}
+	if n := countRows(t, p, `SELECT count(*) FROM regression_overrides WHERE task_id = ?`, a.ID); n != 0 {
+		t.Fatalf("b's acceptance was recorded for a: %d", n)
+	}
+	mustContain(t, "merged task named again", h.expectCode(ExitState, "merge", "--task", b.Slug), "merged")
+	h.expectCode(ExitNotFound, "merge", "--task", "99-nope")
 }

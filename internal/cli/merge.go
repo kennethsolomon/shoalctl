@@ -28,6 +28,7 @@ type acceptance struct {
 func (env Env) cmdMerge(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("merge", flag.ContinueOnError)
 	var targets, reasons multiFlag
+	only := fs.String("task", "", "merge only this done task; required with --accept-regression, so an acceptance covers exactly one task")
 	fs.Var(&targets, "accept-regression", "a blocking target to accept: test id, coverage:<path>, (suite), (lint) or (build); repeatable")
 	fs.Var(&reasons, "reason", "why; one --reason per --accept-regression, in the same order")
 	if _, err := parseArgs(fs, args, 0); err != nil {
@@ -35,6 +36,9 @@ func (env Env) cmdMerge(ctx context.Context, args []string) error {
 	}
 	if len(targets) != len(reasons) {
 		return fail(ExitUsage, "every --accept-regression needs its own --reason (got %d targets, %d reasons)", len(targets), len(reasons))
+	}
+	if len(targets) > 0 && *only == "" {
+		return fail(ExitUsage, "--accept-regression covers one task: name it with --task <task> (shoalctl merge --task <task> --accept-regression <target> --reason \"<why>\")")
 	}
 	acc := make([]*acceptance, len(targets))
 	for i := range targets {
@@ -64,6 +68,16 @@ func (env Env) cmdMerge(ctx context.Context, args []string) error {
 	tasks, err := p.db.DoneTasks(ctx)
 	if err != nil {
 		return err
+	}
+	if *only != "" {
+		t, err := p.db.GetTask(ctx, *only)
+		if err != nil {
+			return err
+		}
+		if t.Stage != store.StageDone {
+			return fail(ExitState, "task %s is %s; merge --task needs a done task", t.Slug, t.Stage)
+		}
+		tasks = []store.Task{t}
 	}
 	merged := 0
 	for _, t := range tasks {
@@ -210,7 +224,7 @@ func (env Env) mergeOne(ctx context.Context, p *project, t store.Task, acc []*ac
 			flags = append(flags, fmt.Sprintf("--accept-regression %s --reason \"<why>\"", shellWord(o)))
 		}
 		return false, fail(ExitGate, "%s: the merge gate blocked on %s; nothing was merged and the task is back at qa (round %d kept). "+
-			"Fix it, or a human accepts each target by name: shoalctl merge %s", t.Slug, strings.Join(open, ", "), t.QARound, strings.Join(flags, " "))
+			"Fix it, or a human accepts each target by name for this task: shoalctl merge --task %s %s", t.Slug, strings.Join(open, ", "), t.QARound, t.Slug, strings.Join(flags, " "))
 	}
 
 	sm, err := summaryFromDB(ctx, p, t.ID)

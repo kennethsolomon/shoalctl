@@ -134,7 +134,7 @@ commands:
   test quarantine list [--all] | release <test>
   qa <task>
   done <task> [--force] [--accept-large-diff --reason "<text>"]
-  merge [--accept-regression <target> --reason "<text>"]...
+  merge [--task <task> [--accept-regression <target> --reason "<text>"]...]
   repro red|green <task> --test <id> [--file <path>]
   scope add <task> [--behaviour] "<text>"
   scope case <task> <item-id> --category <c> --desc "<text>" (--test <id> | --manual "<step>" | --na "<reason>")
