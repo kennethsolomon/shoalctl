@@ -230,8 +230,16 @@ func (env Env) cmdTest(ctx context.Context, args []string) error {
 	if err := env.reapAbandoned(ctx, p, t); err != nil {
 		return err
 	}
-	fmt.Fprintf(env.Stdout, "%s: running the test suite at %s ...\n", *kind, shortSHA(head))
-	run, err := env.runSuite(ctx, p, t, *kind, head, t.Worktree)
+	var run store.Run
+	if *kind == "baseline" {
+		// A baseline can quarantine tests project-wide, so it runs in a clean
+		// scratch worktree, never in the task worktree with its ignored files.
+		fmt.Fprintf(env.Stdout, "baseline: running the test suite at %s in a clean scratch worktree ...\n", shortSHA(head))
+		run, err = env.baselineInScratch(ctx, p, t, t.BaseSHA)
+	} else {
+		fmt.Fprintf(env.Stdout, "%s: running the test suite at %s ...\n", *kind, shortSHA(head))
+		run, err = env.runSuite(ctx, p, t, *kind, head, t.Worktree)
+	}
 	if err != nil {
 		return err
 	}

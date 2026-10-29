@@ -442,6 +442,14 @@ func (env Env) baselineAt(ctx context.Context, p *project, t store.Task, sha str
 		}
 		return run, err
 	}
+	fmt.Fprintf(env.Stdout, "baseline: running the test suite at %s (the merge target) ...\n", shortSHA(sha))
+	return env.baselineInScratch(ctx, p, t, sha)
+}
+
+// baselineInScratch records a baseline at sha in a scratch worktree detached
+// at sha, so nothing outside the commit (ignored or local-only files in a
+// task worktree) can reach the run or the quarantine it feeds (§8.7).
+func (env Env) baselineInScratch(ctx context.Context, p *project, t store.Task, sha string) (store.Run, error) {
 	scratch := filepath.Join(p.dir, "scratch", fmt.Sprintf("baseline-%d-%d", t.ID, os.Getpid()))
 	if err := env.withGitLock(p, t, func() error {
 		if err := os.MkdirAll(filepath.Dir(scratch), 0o700); err != nil {
@@ -460,7 +468,6 @@ func (env Env) baselineAt(ctx context.Context, p *project, t store.Task, sha str
 			return err
 		})
 	}()
-	fmt.Fprintf(env.Stdout, "baseline: running the test suite at %s (the merge target) ...\n", shortSHA(sha))
 	return env.runSuite(ctx, p, t, "baseline", sha, scratch)
 }
 

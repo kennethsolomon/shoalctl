@@ -76,3 +76,28 @@ func TestFlakyBaselineIsQuarantined(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 }
+
+// An ignored file in the task worktree must not reach a baseline: test
+// --kind baseline runs in a clean scratch worktree at the base commit, so a
+// local-only file cannot make a test flaky there and quarantine it.
+func TestBaselineIgnoresWorktreeOnlyFiles(t *testing.T) {
+	h := newHarness(t).withSession()
+	counter := filepath.Join(t.TempDir(), "flaky-ran")
+	// C::flaky is only flaky when the ignored file local.ign is present.
+	script := strings.Replace(flakyScript(counter), "if [ -f '"+counter+"' ]", "if [ ! -f local.ign ] || [ -f '"+counter+"' ]", 1)
+	testutil.WriteFile(t, filepath.Join(h.repo, "test.sh"), script)
+	testutil.WriteFile(t, filepath.Join(h.repo, ".gitignore"), "*.ign\n")
+	testutil.Git(t, h.repo, "add", "test.sh", ".gitignore")
+	testutil.Git(t, h.repo, "commit", "-q", "-m", "test depends on an ignored file")
+	h.initWith(junitConfig)
+	task := startedTask(t, h, "feature", "Poisoned baseline")
+	if !strings.Contains(h.mustRun("test", "quarantine", "list"), "no quarantined tests") {
+		t.Fatal("clean start quarantined a test")
+	}
+
+	testutil.WriteFile(t, filepath.Join(task.Worktree, "local.ign"), "x")
+	h.mustRun("test", "--kind", "baseline", task.Slug)
+	if list := h.mustRun("test", "quarantine", "list"); !strings.Contains(list, "no quarantined tests") {
+		t.Fatalf("an ignored worktree file poisoned the baseline:\n%s", list)
+	}
+}
