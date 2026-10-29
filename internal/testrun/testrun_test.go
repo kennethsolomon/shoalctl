@@ -174,6 +174,34 @@ func TestCompare(t *testing.T) {
 	}
 }
 
+func TestCompareFlakyAndBlocking(t *testing.T) {
+	base := map[string]string{"race": "pass", "bfl": Flaky, "fixfl": "fail", "skipfl": "skip", "q": "pass", "reg": "pass"}
+	final := map[string]string{"race": Flaky, "bfl": "pass", "fixfl": Flaky, "skipfl": Flaky, "newfl": Flaky, "reg": "fail", "q": "fail"}
+	got := Compare(Without(base, map[string]bool{"q": true}), Without(final, map[string]bool{"q": true}))
+	want := map[Class][]string{
+		Unstable:   {"newfl", "race", "skipfl"},
+		OK:         {"bfl"},
+		Fixed:      {"fixfl"},
+		Regression: {"reg"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v\nwant %v", got, want)
+	}
+	if b := Blocking(got); !reflect.DeepEqual(b, []string{"newfl", "race", "reg", "skipfl"}) {
+		t.Fatalf("blocking %v", b)
+	}
+	if b := Blocking(Compare(map[string]string{"a": "fail"}, map[string]string{"a": "fail", "n": "pass"})); b != nil {
+		t.Fatalf("pre-existing and new must not block: %v", b)
+	}
+}
+
+func TestRerunCommand(t *testing.T) {
+	got := RerunCommand("pytest --junitxml {junit} {tests}", []string{"C::a", "it's"})
+	if got != `pytest --junitxml {junit} 'C::a' 'it'\''s'` {
+		t.Fatalf("got %s", got)
+	}
+}
+
 func TestCommandHash(t *testing.T) {
 	if CommandHash("ab", "c", "") == CommandHash("a", "bc", "") {
 		t.Fatal("hash must separate fields")
