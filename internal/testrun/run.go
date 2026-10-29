@@ -54,6 +54,7 @@ type Result struct {
 	Status     string // pass | fail | skip
 	DurationMS int64
 	Message    string
+	Attempt    int // set by the caller for flaky re-runs; 0 means the first attempt
 }
 
 type Outcome struct {

@@ -18,6 +18,13 @@ const (
 	StageBaselineFailed = "baseline-failed"
 	StageInProgress     = "in-progress"
 	StageDone           = "done"
+
+	// Phase 1 (§6).
+	StageQA          = "qa"
+	StageEscalated   = "escalated"
+	StageNeedsRebase = "needs-rebase"
+	StageMerging     = "merging"
+	StageMerged      = "merged"
 )
 
 type Task struct {
@@ -43,6 +50,12 @@ type Task struct {
 	UpdatedAt     string
 	StartedAt     string
 	ClosedAt      string
+
+	QARound         int
+	MergedSHA       string
+	ParentTaskID    int64
+	GateRunID       int64
+	LargeDiffReason string
 }
 
 const taskColumns = `id, slug, lane, title, ask, stage,
@@ -50,36 +63,72 @@ const taskColumns = `id, slug, lane, title, ask, stage,
 	COALESCE(tmux_session, ''), COALESCE(tmux_window, ''), COALESCE(model, ''),
 	COALESCE(baseline_run_id, 0), COALESCE(final_run_id, 0),
 	COALESCE(session_id, ''), COALESCE(last_seen_at, ''), version, created_at, updated_at,
-	COALESCE(started_at, ''), COALESCE(closed_at, '')`
+	COALESCE(started_at, ''), COALESCE(closed_at, ''),
+	qa_round, COALESCE(merged_sha, ''), COALESCE(parent_task_id, 0), COALESCE(gate_run_id, 0), COALESCE(large_diff_reason, '')`
 
 func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 	var t Task
 	err := row.Scan(&t.ID, &t.Slug, &t.Lane, &t.Title, &t.Ask, &t.Stage,
 		&t.BaseRef, &t.BaseSHA, &t.Branch, &t.Worktree, &t.TmuxSession, &t.TmuxWindow, &t.Model,
 		&t.BaselineRunID, &t.FinalRunID, &t.SessionID, &t.LastSeenAt, &t.Version, &t.CreatedAt, &t.UpdatedAt,
-		&t.StartedAt, &t.ClosedAt)
+		&t.StartedAt, &t.ClosedAt,
+		&t.QARound, &t.MergedSHA, &t.ParentTaskID, &t.GateRunID, &t.LargeDiffReason)
 	return t, err
+}
+
+// NewTask is what CreateTaskWith inserts.
+type NewTask struct {
+	Lane, Title, Ask string
+	ParentID         int64    // the hotfix a backport comes from, 0 for none
+	Scope            []string // user scope items ("also test X", §8.6)
 }
 
 // CreateTask inserts a task at stage new. slug derives the slug from the new id.
 func (s *Store) CreateTask(ctx context.Context, lane, title, ask string, slug func(id int64) string) (Task, error) {
+	return s.CreateTaskWith(ctx, NewTask{Lane: lane, Title: title, Ask: ask}, slug)
+}
+
+// CreateTaskWith inserts a task at stage new together with its scope items,
+// in one transaction.
+func (s *Store) CreateTaskWith(ctx context.Context, nt NewTask, slug func(id int64) string) (Task, error) {
 	var id int64
 	err := s.write(ctx, func(tx *sql.Tx) error {
-		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) + 1 FROM tasks`).Scan(&id); err != nil {
-			return fmt.Errorf("next task id: %w", err)
-		}
-		ts := now()
-		_, err := tx.ExecContext(ctx, `INSERT INTO tasks (id, slug, lane, title, ask, stage, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, id, slug(id), lane, title, ask, StageNew, ts, ts)
-		if err != nil {
-			return fmt.Errorf("insert task %q: %w", title, err)
-		}
-		return nil
+		var err error
+		id, err = insertTask(ctx, tx, nt, slug)
+		return err
 	})
 	if err != nil {
 		return Task{}, err
 	}
 	return s.taskByID(ctx, id)
+}
+
+func insertTask(ctx context.Context, tx *sql.Tx, nt NewTask, slug func(id int64) string) (int64, error) {
+	var id int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) + 1 FROM tasks`).Scan(&id); err != nil {
+		return 0, fmt.Errorf("next task id: %w", err)
+	}
+	ts := now()
+	var parent any
+	if nt.ParentID != 0 {
+		parent = nt.ParentID
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO tasks (id, slug, lane, title, ask, stage, parent_task_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, slug(id), nt.Lane, nt.Title, nt.Ask, StageNew, parent, ts, ts)
+	if err != nil {
+		return 0, fmt.Errorf("insert task %q: %w", nt.Title, err)
+	}
+	for _, text := range nt.Scope {
+		if _, err := insertScopeItem(ctx, tx, id, ScopeUser, text); err != nil {
+			return 0, err
+		}
+	}
+	return id, nil
+}
+
+// CreateTaskTx inserts a task inside a caller's transaction and returns its id.
+func CreateTaskTx(ctx context.Context, tx *sql.Tx, nt NewTask, slug func(id int64) string) (int64, error) {
+	return insertTask(ctx, tx, nt, slug)
 }
 
 // GetTask finds a task by numeric id or slug.
@@ -213,9 +262,10 @@ type Summary struct {
 	ReportPath           string
 }
 
-// InsertSummary writes the summaries row inside a caller's transaction.
+// InsertSummary writes the summaries row inside a caller's transaction,
+// replacing the row an earlier done wrote (a task the merge gate sent back).
 func InsertSummary(ctx context.Context, tx *sql.Tx, sm Summary) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO summaries (task_id, decision, alternatives_rejected, why, verification,
+	_, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO summaries (task_id, decision, alternatives_rejected, why, verification,
 		risks, followups, changed_notes, commits, files, true_at_sha, report_path, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sm.TaskID, sm.Decision, sm.AlternativesRejected, sm.Why, sm.Verification, sm.Risks, sm.Followups,
