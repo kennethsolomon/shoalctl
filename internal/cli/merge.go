@@ -465,8 +465,7 @@ func rebaseInProgress(ctx context.Context, wt string) (bool, error) {
 // baselineAt reuses a completed baseline for sha or records one in a
 // scratch worktree detached at sha.
 func (env Env) baselineAt(ctx context.Context, p *project, t store.Task, sha string) (store.Run, error) {
-	hash := testrun.CommandHash(p.cfg.Tests.Command, p.cfg.Tests.Format, p.cfg.Tests.RerunCommand)
-	if run, ok, err := p.db.FindBaseline(ctx, sha, hash); err != nil || ok {
+	if run, ok, err := p.db.FindBaseline(ctx, sha, p.commandHash()); err != nil || ok {
 		if ok {
 			fmt.Fprintf(env.Stdout, "baseline: reusing run %d at %s\n", run.ID, shortSHA(sha))
 		}

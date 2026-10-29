@@ -346,3 +346,19 @@ func TestResolveBase(t *testing.T) {
 		}
 	}
 }
+
+// [tests].setup is part of the baseline cache key: a changed setup records a
+// new baseline instead of reusing one taken without it (§8.2).
+func TestSetupChangeInvalidatesCachedBaseline(t *testing.T) {
+	h := newHarness(t).withSession()
+	p := h.initWith(junitConfig)
+	first := startedTask(t, h, "feature", "First")
+	testutil.WriteFile(t, filepath.Join(p.dir, "config.toml"), junitNoSetup+"setup = \":\"\n")
+	h.mustRun("new", "feature", "Second")
+	out := h.mustRun("start", "2-second")
+	if strings.Contains(out, "reusing") || h.task("2-second").BaselineRunID == first.BaselineRunID {
+		t.Fatalf("a baseline cached under another setup was reused:\n%s", out)
+	}
+	h.mustRun("new", "feature", "Third")
+	mustContain(t, "same setup", h.mustRun("start", "3-third"), "reusing run")
+}

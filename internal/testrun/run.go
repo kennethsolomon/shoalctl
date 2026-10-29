@@ -77,8 +77,8 @@ func Fidelity(format string) string {
 }
 
 // CommandHash identifies a suite configuration for baseline reuse (§8.2).
-func CommandHash(command, format, rerunCommand string) string {
-	sum := sha256.Sum256([]byte(command + "\x00" + format + "\x00" + rerunCommand))
+func CommandHash(command, format, rerunCommand, setup string) string {
+	sum := sha256.Sum256([]byte(command + "\x00" + format + "\x00" + rerunCommand + "\x00" + setup))
 	return hex.EncodeToString(sum[:])
 }
 

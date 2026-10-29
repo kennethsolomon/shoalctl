@@ -203,10 +203,16 @@ func TestRerunCommand(t *testing.T) {
 }
 
 func TestCommandHash(t *testing.T) {
-	if CommandHash("ab", "c", "") == CommandHash("a", "bc", "") {
+	if CommandHash("ab", "c", "", "") == CommandHash("a", "bc", "", "") {
 		t.Fatal("hash must separate fields")
 	}
-	first, second := CommandHash("x", "junit", ""), CommandHash("x", "junit", "")
+	if CommandHash("x", "junit", "", "cp {root}/.env .") == CommandHash("x", "junit", "", "") {
+		t.Fatal("hash must change with [tests].setup")
+	}
+	if CommandHash("x", "junit", "a", "") == CommandHash("x", "junit", "", "a") {
+		t.Fatal("hash must separate rerun_command from setup")
+	}
+	first, second := CommandHash("x", "junit", "", ""), CommandHash("x", "junit", "", "")
 	if first != second || len(first) != 64 {
 		t.Fatalf("hash must be a deterministic SHA-256 hex digest, got %q and %q", first, second)
 	}

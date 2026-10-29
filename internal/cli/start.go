@@ -236,8 +236,7 @@ func writePrivate(path string, data []byte) error {
 // baseline reuses a completed baseline for the same sha and command, or runs
 // the suite now in the worktree (§8.2).
 func (env Env) baseline(ctx context.Context, p *project, t store.Task, wt string) (store.Run, error) {
-	hash := testrun.CommandHash(p.cfg.Tests.Command, p.cfg.Tests.Format, p.cfg.Tests.RerunCommand)
-	if run, ok, err := p.db.FindBaseline(ctx, t.BaseSHA, hash); err != nil || ok {
+	if run, ok, err := p.db.FindBaseline(ctx, t.BaseSHA, p.commandHash()); err != nil || ok {
 		if ok {
 			fmt.Fprintf(env.Stdout, "baseline: reusing run %d at %s (%d pass, %d fail, %d skip)\n", run.ID, shortSHA(t.BaseSHA), run.Passed, run.Failed, run.Skipped)
 		}
@@ -248,6 +247,13 @@ func (env Env) baseline(ctx context.Context, p *project, t store.Task, wt string
 	}
 	fmt.Fprintf(env.Stdout, "baseline: running the test suite at %s ...\n", shortSHA(t.BaseSHA))
 	return env.runSuite(ctx, p, t, "baseline", t.BaseSHA, wt)
+}
+
+// commandHash is the baseline cache key: everything in [tests] that changes
+// what a baseline run sees (§8.2).
+func (p *project) commandHash() string {
+	c := p.cfg.Tests
+	return testrun.CommandHash(c.Command, c.Format, c.RerunCommand, c.Setup)
 }
 
 // runSetup runs [tests].setup in the clean worktree wt before a baseline
@@ -283,7 +289,7 @@ func (env Env) runSuite(ctx context.Context, p *project, t store.Task, kind, sha
 func (env Env) runSuiteWith(ctx context.Context, p *project, t store.Task, kind, sha, wt, command string) (store.Run, error) {
 	cfg := p.cfg.Tests
 	run, err := p.db.StartRun(ctx, store.Run{TaskID: t.ID, Kind: kind, SHA: sha, Command: command,
-		CommandHash: testrun.CommandHash(cfg.Command, cfg.Format, cfg.RerunCommand), Format: cfg.Format,
+		CommandHash: p.commandHash(), Format: cfg.Format,
 		Fidelity: testrun.Fidelity(cfg.Format)},
 		func(id int64) string { return filepath.Join(p.runDir(id), "output.log") })
 	if err != nil {
