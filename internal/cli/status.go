@@ -23,6 +23,7 @@ type statusRow struct {
 	Slug     string `json:"slug"`
 	Lane     string `json:"lane"`
 	Stage    string `json:"stage"`
+	QARound  int    `json:"qa_round"`
 	Base     string `json:"base"`
 	Baseline string `json:"baseline"`
 	Window   string `json:"window"`
@@ -49,7 +50,7 @@ func (env Env) cmdStatus(ctx context.Context, args []string) error {
 	alive := env.liveWindows(ctx)
 	rows := make([]statusRow, 0, len(tasks))
 	for _, t := range tasks {
-		row := statusRow{ID: t.ID, Slug: t.Slug, Lane: t.Lane, Stage: t.Stage, Base: "-", Baseline: "-", Window: "-",
+		row := statusRow{ID: t.ID, Slug: t.Slug, Lane: t.Lane, Stage: t.Stage, QARound: t.QARound, Base: "-", Baseline: "-", Window: "-",
 			LastSeen: ago(t.LastSeenAt), Worktree: t.Worktree}
 		if t.BaseSHA != "" {
 			row.Base = t.BaseRef + "@" + shortSHA(t.BaseSHA)
@@ -78,9 +79,13 @@ func (env Env) cmdStatus(ctx context.Context, args []string) error {
 		fmt.Fprintln(env.Stdout, string(body))
 	} else {
 		tw := tabwriter.NewWriter(env.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "SLUG\tLANE\tSTAGE\tBASE\tBASELINE\tWINDOW\tLAST SEEN")
+		fmt.Fprintln(tw, "SLUG\tLANE\tSTAGE\tQA\tBASE\tBASELINE\tWINDOW\tLAST SEEN")
 		for _, r := range rows {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Slug, r.Lane, r.Stage, r.Base, r.Baseline, r.Window, r.LastSeen)
+			qa := "-"
+			if r.QARound > 0 {
+				qa = fmt.Sprintf("%d/%d", r.QARound, p.cfg.Lanes.QAMaxRounds)
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Slug, r.Lane, r.Stage, qa, r.Base, r.Baseline, r.Window, r.LastSeen)
 		}
 		if err := tw.Flush(); err != nil {
 			return err

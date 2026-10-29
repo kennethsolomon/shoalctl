@@ -128,7 +128,11 @@ func (env Env) cmdStart(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := writePrivate(filepath.Join(wt, ".shoal", "brief.md"), []byte(renderBrief(t, p.cfg, base, results))); err != nil {
+	items, err := p.db.ScopeItems(ctx, t.ID)
+	if err != nil {
+		return err
+	}
+	if err := writePrivate(filepath.Join(wt, ".shoal", "brief.md"), []byte(renderBrief(t, p.cfg, base, results, items))); err != nil {
 		return err
 	}
 
@@ -515,7 +519,48 @@ var laneRules = map[string]string{
 	"hotfix":  "Write a test that reproduces the bug and fails first, commit it, then fix. Smallest possible diff: no refactors, no dependency changes.",
 }
 
-func renderBrief(t store.Task, cfg config.Config, base store.Run, results []store.Result) string {
+// teamFor lists the agents of a lane (§7.3).
+func teamFor(lane string, hasScope bool) []string {
+	if lane == "feature" {
+		return []string{"shoal-lead", "shoal-backend / shoal-frontend / shoal-integration (whichever the plan needs)", "shoal-docs",
+			"shoal-qa-breaker", "shoal-qa-regression", "shoal-qa-scope"}
+	}
+	team := []string{"shoal-lead (trace + red test)", "one builder (shoal-backend, shoal-frontend or shoal-integration)", "shoal-qa-breaker", "shoal-qa-regression"}
+	if hasScope {
+		team = append(team, "shoal-qa-scope")
+	}
+	return team
+}
+
+func renderTeam(b *strings.Builder, t store.Task, cfg config.Config, items []store.ScopeItem) {
+	b.WriteString("\n## Team\nAct as shoal-lead and spawn the others with the Task tool (definitions: shoalctl agents install):\n")
+	for _, a := range teamFor(t.Lane, len(items) > 0) {
+		fmt.Fprintf(b, "- %s\n", a)
+	}
+	fmt.Fprintf(b, `Coordinate only through shoalctl (task %[1]s):
+- claims: shoalctl claim %[1]s --as <agent> <glob>... ; release with shoalctl release
+- messages: shoalctl msg send %[1]s --from <agent> --to <agent|*> --kind <kind> "<body>" ; shoalctl msg inbox %[1]s --as <agent>
+`, t.Slug)
+	if t.Lane == "feature" {
+		fmt.Fprintf(b, `- contract: write .shoal/contract.md, then shoalctl contract freeze %[1]s before parallel work; re-freeze with --note after any change
+- behaviours: shoalctl scope add %[1]s --behaviour "<one observable behaviour>", each covered by a new test (shoalctl scope case)
+`, t.Slug)
+	} else {
+		fmt.Fprintf(b, "- proof: shoalctl repro red %[1]s --test <id> --file <path> before the fix, shoalctl repro green %[1]s --test <id> after\n", t.Slug)
+	}
+	fmt.Fprintf(b, "- QA: shoalctl test %[1]s --kind qa; a human runs shoalctl qa %[1]s (at most %[2]d rounds, then the task escalates)\n", t.Slug, cfg.Lanes.QAMaxRounds)
+	if t.Lane == "hotfix" {
+		fmt.Fprintf(b, "- minimal diff: at most %d added + removed lines outside test files\n", cfg.Hotfix.MaxDiffLines)
+	}
+	if len(items) > 0 {
+		b.WriteString("\n## Scope (required)\nEvery item needs a case row in each category (shoal-qa-scope), each green or waived by a human, before done:\n")
+		for _, it := range items {
+			fmt.Fprintf(b, "- #%d [%s] %s\n", it.ID, it.Source, it.Text)
+		}
+	}
+}
+
+func renderBrief(t store.Task, cfg config.Config, base store.Run, results []store.Result, items []store.ScopeItem) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Task %s: %s\nLane: %s · Branch: %s · Base: %s @ %s\n\n## Ask\n%s\n\n",
 		t.Slug, t.Title, t.Lane, t.Branch, t.BaseRef, shortSHA(t.BaseSHA), t.Ask)
@@ -546,6 +591,7 @@ func renderBrief(t store.Task, cfg config.Config, base store.Run, results []stor
 	if cfg.Tests.Format != "none" {
 		fmt.Fprintf(&b, "- Test command: `%s`\n", cfg.Tests.Command)
 	}
+	renderTeam(&b, t, cfg, items)
 	b.WriteString(`
 ## When you finish
 1. Commit all work on this branch. Do not push. Do not merge.
