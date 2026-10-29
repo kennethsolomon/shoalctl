@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kennethsolomon/shoalctl/internal/diffx"
 	"github.com/kennethsolomon/shoalctl/internal/gitx"
 	"github.com/kennethsolomon/shoalctl/internal/store"
 	"github.com/kennethsolomon/shoalctl/internal/testrun"
@@ -68,29 +69,27 @@ type verification struct {
 func (env Env) cmdDone(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("done", flag.ContinueOnError)
 	force := fs.Bool("force", false, "run even though the task's claude session is still running")
+	largeDiff := fs.Bool("accept-large-diff", false, "accept a hotfix over [hotfix].max_diff_lines (needs --reason)")
+	reason := fs.String("reason", "", "why the large hotfix diff is needed; goes into the report")
 	pos, err := parseArgs(fs, args, 1)
 	if err != nil {
 		return err
 	}
-	p, err := env.openProject(ctx)
+	if *largeDiff && strings.TrimSpace(*reason) == "" {
+		return fail(ExitUsage, "--accept-large-diff needs --reason \"<text>\"")
+	}
+	if !*largeDiff && *reason != "" {
+		return fail(ExitUsage, "--reason goes with --accept-large-diff")
+	}
+	p, t, lock, err := env.lockedTask(ctx, pos[0], "done")
 	if err != nil {
 		return err
 	}
 	defer p.close()
-	t, err := p.db.GetTask(ctx, pos[0])
-	if err != nil {
-		return err
-	}
-	lock, err := p.lockTask(t, "done")
-	if err != nil {
-		return err
-	}
 	defer lock.Release()
-	if t, err = p.db.GetTask(ctx, t.Slug); err != nil {
-		return err
-	}
-	if t.Stage != store.StageInProgress {
-		return fail(ExitState, "task %s is at %q; done needs in-progress", t.Slug, t.Stage)
+	from := []string{store.StageInProgress, store.StageQA}
+	if !contains(from, t.Stage) {
+		return fail(ExitState, "task %s is at %q; done needs in-progress or qa", t.Slug, t.Stage)
 	}
 	wt := t.Worktree
 	if _, err := os.Stat(wt); err != nil {
@@ -123,6 +122,32 @@ func (env Env) cmdDone(ctx context.Context, args []string) error {
 		return err
 	}
 
+	// Refusals that need no test run come first (§8.3, §6.3, §7.4).
+	var refusals []string
+	if prob, err := proofProblem(ctx, p, t); err != nil {
+		return err
+	} else if prob != "" {
+		refusals = append(refusals, prob)
+	}
+	diffLines := 0
+	if t.Lane == "hotfix" {
+		if diffLines, err = productionDiffLines(ctx, wt, t.BaseSHA); err != nil {
+			return err
+		}
+		if diffLines > p.cfg.Hotfix.MaxDiffLines && !*largeDiff {
+			refusals = append(refusals, fmt.Sprintf("hotfix diff is %d added + removed lines outside test files, over [hotfix].max_diff_lines = %d; "+
+				"shrink it to the minimal fix, or pass --accept-large-diff --reason \"<why>\"", diffLines, p.cfg.Hotfix.MaxDiffLines))
+		}
+	}
+	if prob, err := contractProblem(ctx, p, t); err != nil {
+		return err
+	} else if prob != "" {
+		refusals = append(refusals, prob)
+	}
+	if len(refusals) > 0 {
+		return fail(ExitDoneRefused, "refused:\n  %s", strings.Join(refusals, "\n  "))
+	}
+
 	if err := env.reapAbandoned(ctx, p, t); err != nil {
 		return err
 	}
@@ -132,70 +157,152 @@ func (env Env) cmdDone(ctx context.Context, args []string) error {
 		return err
 	}
 	if final.Status == testrun.StatusCancelled {
-		return fail(ExitInterrupted, "interrupted: final run %d was cancelled and its processes stopped; the task is still in-progress, run shoalctl done %s again", final.ID, t.Slug)
+		return fail(ExitInterrupted, "interrupted: final run %d was cancelled and its processes stopped; the task is still %s, run shoalctl done %s again", final.ID, t.Stage, t.Slug)
 	}
 	lint := env.step(ctx, p, wt, "lint", p.cfg.Stack.Lint, p.runDir(final.ID))
 	build := env.step(ctx, p, wt, "build", p.cfg.Stack.Build, p.runDir(final.ID))
 	if ctx.Err() != nil {
-		return fail(ExitInterrupted, "interrupted during lint or build; the task is still in-progress, run shoalctl done %s again", t.Slug)
+		return fail(ExitInterrupted, "interrupted during lint or build; the task is still %s, run shoalctl done %s again", t.Stage, t.Slug)
 	}
 	if err := requireUnchanged(ctx, wt, head, t.Slug); err != nil {
 		return err
 	}
-
-	commitsOut, err := gitx.Run(ctx, wt, "rev-list", "--reverse", t.BaseSHA+"..HEAD")
-	if err != nil {
-		return err
-	}
-	commits := strings.Fields(commitsOut)
-	files, err := changedFiles(ctx, wt, t.BaseSHA)
-	if err != nil {
-		return err
-	}
-
 	base, err := p.db.GetRun(ctx, t.BaselineRunID)
 	if err != nil {
 		return err
 	}
-	baseResults, err := p.db.Results(ctx, base.ID)
+	in, err := env.gatherReport(ctx, p, t, sm, head, t.BaseSHA, base, final)
 	if err != nil {
 		return err
 	}
-	finalResults, err := p.db.Results(ctx, final.ID)
-	if err != nil {
-		return err
+	if open := scopeOpen(in.scope); len(open) > 0 {
+		return fail(ExitDoneRefused, "refused: %d scope row(s) are not green or waived (final run %d):\n  %s\nCover them, or a human waives them with shoalctl scope review %s",
+			len(open), final.ID, strings.Join(open, "\n  "), t.Slug)
 	}
-	var classes map[testrun.Class][]string
-	if final.Status == testrun.StatusCompleted {
-		classes = testrun.Compare(statusMap(baseResults), statusMap(finalResults))
+	in.ver.Lint, in.ver.Build = lint, build
+	if *largeDiff {
+		in.notes = append(in.notes, fmt.Sprintf("Large hotfix diff accepted: %d lines over the %d-line budget: %s", diffLines, p.cfg.Hotfix.MaxDiffLines, strings.TrimSpace(*reason)))
 	}
 
-	ver := verification{Baseline: summarizeRun(base), Final: summarizeRun(final), Classes: map[string]int{}, Lint: lint, Build: build}
-	for c, ids := range classes {
-		ver.Classes[string(c)] = len(ids)
+	var backport *store.NewTask
+	if t.Lane == "hotfix" {
+		if strings.HasPrefix(t.BaseRef, "refs/tags/") {
+			in.notes = append(in.notes, fmt.Sprintf("Production ref is the tag %s: the merge queue has no target. The branch %s is ready; tagging and releasing are human actions",
+				strings.TrimPrefix(t.BaseRef, "refs/tags/"), t.Branch))
+		}
+		kids, err := p.db.Children(ctx, t.ID)
+		if err != nil {
+			return err
+		}
+		switch {
+		case len(kids) > 0:
+			in.notes = append(in.notes, "Backport: task "+kids[0].Slug)
+		case p.cfg.Hotfix.Backport:
+			nt := backportTask(t, p.cfg.Merge.Base, in.commits, in.proofs)
+			backport = &nt
+		}
 	}
-	in := reportInput{task: t, sum: sm, head: head, commits: commits, files: files, base: base, final: final,
-		baseResults: baseResults, classes: classes, ver: ver, date: time.Now().UTC().Format("2006-01-02")}
 	report := renderReport(in)
-
 	reportPath := filepath.Join(p.dir, "reports", t.Slug+".md")
-	if err := writePrivate(reportPath, []byte(report)); err != nil {
+	row := summaryRow(t.ID, sm, in.ver, in.commits, in.files, head, reportPath)
+	var backportSlug string
+	words := ""
+	if backport != nil {
+		words = slugWords(backport.Title)
+	}
+	t, err = p.db.Update(ctx, t, from, "stage = ?, final_run_id = ?, closed_at = ?, large_diff_reason = ?",
+		[]any{store.StageDone, final.ID, nowUTC(), nullableString(strings.TrimSpace(*reason))}, func(tx *sql.Tx) error {
+			if err := store.InsertSummary(ctx, tx, row); err != nil {
+				return err
+			}
+			if backport == nil {
+				return nil
+			}
+			id, err := store.CreateTaskTx(ctx, tx, *backport, func(id int64) string { return fmt.Sprintf("%d-%s", id, words) })
+			backportSlug = fmt.Sprintf("%d-%s", id, words)
+			return err
+		})
+	if err != nil {
+		return err
+	}
+	if backportSlug != "" {
+		in.notes = append(in.notes, "Backport: task "+backportSlug+" created (bugfix lane, not started)")
+		report = renderReport(in)
+	}
+	if err := env.writeReport(p, t.Slug, report); err != nil {
+		return err
+	}
+	if backportSlug != "" {
+		fmt.Fprintf(env.Stdout, "backport task %s created; start it with shoalctl start %s\n", backportSlug, backportSlug)
+	}
+	fmt.Fprintln(env.Stdout, reportPath)
+	return nil
+}
+
+// writeReport writes the rendered report to the local sink and, when
+// configured, the notes folder.
+func (env Env) writeReport(p *project, slug, report string) error {
+	if err := writePrivate(filepath.Join(p.dir, "reports", slug+".md"), []byte(report)); err != nil {
 		return err
 	}
 	if p.cfg.Reports.Sink != "local" {
-		notes := filepath.Join(p.cfg.Reports.NotesPath, t.Slug+".md")
+		notes := filepath.Join(p.cfg.Reports.NotesPath, slug+".md")
 		if err := writeFileAtomic(notes, []byte(report), 0o600); err != nil {
 			return fail(ExitConfig, "copy report to [reports].notes_path: %v", err)
 		}
 	}
-
-	row := summaryRow(t.ID, sm, ver, commits, files, head, reportPath)
-	if _, err := p.db.Update(ctx, t, []string{store.StageInProgress}, "stage = ?, final_run_id = ?, closed_at = ?",
-		[]any{store.StageDone, final.ID, nowUTC()}, func(tx *sql.Tx) error { return store.InsertSummary(ctx, tx, row) }); err != nil {
-		return err
-	}
-	fmt.Fprintln(env.Stdout, reportPath)
 	return nil
+}
+
+func nullableString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// productionDiffLines counts added + removed lines outside test files since
+// base, for the hotfix minimal-diff rule (§6.3).
+func productionDiffLines(ctx context.Context, wt, base string) (int, error) {
+	out, err := gitx.Run(ctx, wt, "diff", "--numstat", "-z", "--no-ext-diff", base+"...HEAD")
+	if err != nil {
+		return 0, err
+	}
+	stats, err := diffx.ParseNumstatZ(out)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, s := range stats {
+		if !diffx.IsTestFile(s.Path) {
+			n += s.Added + s.Removed
+		}
+	}
+	return n, nil
+}
+
+// backportTask is the bugfix task a finished hotfix leaves behind (§6.3).
+func backportTask(t store.Task, base string, commits []string, proofs []store.Proof) store.NewTask {
+	title := "Backport: " + t.Title
+	if r := []rune(title); len(r) > 120 {
+		title = string(r[:117]) + "..."
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Backport hotfix %s (%s) to %s.\n\n", t.Slug, t.Title, base)
+	fmt.Fprintf(&b, "1. Cherry-pick the hotfix commits, oldest first, onto %s:\n", base)
+	for _, c := range commits {
+		fmt.Fprintf(&b, "   - %s\n", c)
+	}
+	b.WriteString("2. The hotfix's regression test must exist on the base branch and pass")
+	for i, pr := range proofs {
+		if i == 0 {
+			b.WriteString(":\n")
+		}
+		fmt.Fprintf(&b, "   - %s (%s)\n", pr.TestID, pr.TestFile)
+	}
+	b.WriteString("\n3. Record red first with shoalctl repro red. If the test already passes on the base branch before the cherry-pick " +
+		"(the bug never existed there), repro red records not-reproducible and the report says why.\n")
+	return store.NewTask{Lane: "bugfix", Title: title, Ask: b.String(), ParentID: t.ID}
 }
 
 // indexLockWait bounds how long done waits for a git command in the

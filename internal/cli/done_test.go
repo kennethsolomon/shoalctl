@@ -19,7 +19,7 @@ const goodSummary = `{"decision": "Stream rows to CSV", "alternatives_rejected":
  "changed": [{"path": "feature.txt", "note": "the feature"}]}`
 
 var reportSections = []string{"---\ntask: ", "\n# ", "\n## Asked\n", "\n## Decision\n", "\n## Why\n", "\n## Changed\n", "\n## Verified\n",
-	"\n## Regression check (informational)\n", "\n## Pre-existing failures\n", "\n## Risks / Follow-ups\n", "\n## Fidelity and limits\n"}
+	"\n## Regression check\n", "\n## Pre-existing failures\n", "\n## Scope\n", "\n## Untested areas\n", "\n## Risks / Follow-ups\n", "\n## Fidelity and limits\n"}
 
 func assertSections(t *testing.T, report string) {
 	t.Helper()
@@ -68,7 +68,8 @@ func TestDoneRendersReport(t *testing.T) {
 		"- A `feature.txt` - the feature", "- A `broken.txt`",
 		"- Lint: PASS", "- Build: FAIL (exit 4",
 		"1 regression", "regression: `C::a`", "1 new,", "`C::pre`", "- Risk: Slow disks", "- Follow-up: Add XLSX",
-		"Coverage and untested areas are not computed in this version", "Flaky re-runs are not applied in this version",
+		"- QA rounds: none run", "Would block the merge gate: `C::a`", "No scope items.",
+		"## Untested areas\n- `broken.txt`\n- `feature.txt`\n- Note: " + noCoverage,
 	} {
 		if !strings.Contains(report, want) {
 			t.Errorf("report lacks %q:\n%s", want, report)
@@ -149,7 +150,9 @@ func TestDoneRefusals(t *testing.T) {
 	}
 
 	testutil.WriteFile(t, summary, `{"decision": "d", "why": "w"}`)
-	h.mustRun("done", "--force", task.Slug)
+	if errOut := h.expectCode(ExitDoneRefused, "done", "--force", task.Slug); !strings.Contains(errOut, "no red/green regression proof") {
+		t.Errorf("bugfix without proof: %s", errOut)
+	}
 }
 
 func TestDoneFinalRunErrorIsReported(t *testing.T) {
