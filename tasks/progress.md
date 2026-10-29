@@ -4,12 +4,21 @@ Plan: [todo.md](todo.md). Base: `496e05c`.
 
 ## Where I am
 
-- Done: 1-15 (schema, testrun flaky/unstable + rerun command, coverage, diffx, globx,
-  store APIs, flaky re-runs + quarantine + coverage capture, `test`, `msg`,
-  `contract freeze`, `claim`/`release`, `agents install|list`).
-- Next: 16 scope commands, 17 repro, 18 qa, 19 done, 20 merge, 21 brief/status,
-  22-27 end-to-end tests, 28-30 docs, gates, review.
+- Done: 1-28 (schema, pure packages, store APIs, every Phase 1 command, the six
+  end-to-end acceptance tests in `internal/cli/phase1_e2e_test.go`, README and spec).
+- Remaining: 29 gates, 30 adversarial self-review.
 
 ## Decisions
 
-(Spec ambiguities resolved with the safest option; deviations are also noted in docs/spec.md.)
+Spec ambiguities resolved with the safest option; each is also a row in docs/spec.md §16 (25-36).
+
+- `qa` runs the gates only (contract hash, suite vs baseline, lint, build); the QA agents run in the session.
+- `done` does not require a passed QA round, nor at least one behaviour for features (keeps Phase 0 flows working).
+- Scope rows are judged against `done`'s own final run; flaky is never green, never a valid red/green.
+- Lint/build failures and missing coverage block `merge` as `(lint)`, `(build)`, `coverage:(unavailable)`, overridable by name.
+- `--accept-regression`/`--reason` pair by order; unmatched targets exit 2 after the run.
+- Only rebase merges (squash exits 3); scratch baseline worktrees are shoal-owned and removed without a prompt; tag-based hotfixes are skipped by `merge`.
+- After a clean rebase the task's base and baseline move to the merge target.
+- Waivers and manual checks need a terminal; decisions are recorded under git's user name.
+- `repro red` needs `--file`; proofs need per-test formats.
+- Claim overlap for two wildcard globs is conservative (fail closed).
