@@ -10,7 +10,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/kennethsolomon/shoalctl/blob/main/LICENSE)
 [![GitHub](https://img.shields.io/badge/github-kennethsolomon%2Fshoalctl-181717.svg?logo=github)](https://github.com/kennethsolomon/shoalctl)
 [![Go](https://img.shields.io/badge/go-1.27%2B-00ADD8.svg)](https://go.dev/)
-[![Build](https://img.shields.io/badge/build-not%20yet-lightgrey.svg)](#roadmap)
+[![CI](https://github.com/kennethsolomon/shoalctl/actions/workflows/ci.yml/badge.svg)](https://github.com/kennethsolomon/shoalctl/actions/workflows/ci.yml)
 [![Status](https://img.shields.io/badge/status-pre--alpha-orange.svg)](#status)
 
 </div>
@@ -81,7 +81,7 @@ shoalctl new bugfix "Users page shows wrong display name"   # prints the slug, e
 shoalctl start 1        # branch + worktree + baseline test run + tmux window + claude
 shoalctl status         # board of tasks
 # when the agent says it is finished, exit claude in its window (/exit), then:
-shoalctl done 1         # final test run, informational regression check, report
+shoalctl done 1         # final test run, informational regression check, report (refuses while claude still runs)
 shoalctl doctor         # check the hook entries; doctor --fix repairs them after you move the binary
 ```
 
@@ -95,7 +95,7 @@ Platform support:
 |----------|--------|
 | macOS | Primary, supported |
 | Linux | Supported, CI-tested |
-| Windows | **Beta**: compiles and CI-tested, but far less exercised |
+| Windows | **Beta**: compiles and CI-tested (non-blocking job), far less exercised |
 
 Known Windows limits:
 - The full flow needs tmux, which Windows has no native build of; CI on Windows runs only the tests that need no tmux or POSIX shell, and a Windows CI failure does not block `main`.
@@ -139,9 +139,21 @@ shoal never rewrites your `CLAUDE.md`.
 
 - **Your rules win** (planned, with conventions in Phase 4). When a proposed convention contradicts an existing rule, shoal flags it for discussion instead of overriding it.
 - **Hooks are merged.** shoal adds its two entries to `.claude/settings.local.json` and leaves every other byte of the file as it was; your own hooks stay. `shoalctl uninstall` (planned) removes only shoal's entries and block.
-- **Hooks fail open.** A shoal hook never blocks or breaks a Claude session. Handlers exit 0 within 2 seconds, print nothing, and log failures to `~/.shoal/logs/hooks.log`; `shoalctl status` warns when that log has new lines. The registered command also maps any exit status to 0 (`... || true`), so even a crash or a moved binary cannot block a session. Hooks that fail open fail silently, so after moving the binary run `shoalctl doctor`, and `shoalctl doctor --fix` to re-point the hooks.
+- **init refuses before changing anything** when `.claude/settings.local.json` is tracked by git, when it or the `.claude` directory is a symlink (the target may be tracked), or when the committed `.claude/settings.json` already registers shoalctl hooks. The error says how to fix it.
+- **Hooks fail open.** A shoal hook never blocks or breaks a Claude session. The whole hook process, logging included, finishes within 2 seconds, prints nothing, and logs failures to `~/.shoal/logs/hooks.log`; `shoalctl status` warns when that log has new lines. The binary path is quoted for the shell that runs it (bash on macOS/Linux, PowerShell on Windows), and the command maps any exit status to 0 (`|| true`, `; exit 0`), so a crash or a moved binary cannot block a session. Because failures are silent, run `shoalctl doctor` after moving the binary, and `shoalctl doctor --fix` to re-point stale hook paths.
 
 Details in [spec section 5](docs/spec.md#5-installing-into-a-project-that-already-has-a-claudemd).
+
+## Running tasks safely
+
+- **One shoalctl per task.** `start` and `done` hold a per-task lock; a second one exits 8 (busy).
+- **The suite waits for its pid.** A test run is held until its pid is recorded, so an interrupted shoalctl never leaves an untracked suite.
+- **Ctrl-C, SIGTERM, SIGHUP** (terminal closed) stop the suite's whole process group, record the run `cancelled`, and exit 130. Rerun the same command to resume.
+- **Leftover runs.** If an earlier shoalctl exited while its run was marked running, `start` and `done` check that pid. Dead, or reused by another process: the run is marked `error` and work continues. Otherwise they exit 8:
+  - still running (pid and start time match): stop it with `kill -TERM -- -<pid>`, then retry;
+  - unconfirmed (start time missing or unreadable): check it first with `pgrep -l -g <pid>`, stop it only if it is the suite;
+  - no recorded pid: make sure no test command of the task is running, then clear the run with the `UPDATE test_runs ...` statement the error prints.
+- **`done` refuses (exit 10) while the agent may still be working**: the task's claude window is still live (exit claude, or `--force` once the agent has finished), a git `index.lock` stays held (`--force` does not skip this), or HEAD or the worktree changed during the final run.
 
 ## Configuration
 
@@ -175,6 +187,11 @@ notes_path = ""       # absolute path to your notes folder, only if sink include
 deny_globs = [".env*"]
 ```
 
+`[tests].junit_path` (default `{junit}`, a file shoal owns) tells shoal where the JUnit report lands. If your runner writes its own path, set it to a path or glob relative to the task worktree. shoal deletes stale matches before each run, so it is strict:
+
+- It must end in `.xml`, stay inside the worktree (no `..`, `~`, or absolute paths), and not reach into `.git`. Dotfiles and dot directories below the pattern's fixed part are ignored.
+- Every match is checked before any is deleted; one that is a symlink, is not a regular file, resolves outside the worktree, or is tracked by git refuses the whole run.
+
 ## Commands
 
 | Command | What it does | Status |
@@ -195,6 +212,24 @@ deny_globs = [".env*"]
 | `shoalctl gc` | Clean up merged worktrees and windows | Planned (Phase 5) |
 | `shoalctl export` / `shoalctl purge` | Offboard a project's data | Planned (Phase 5) |
 | `shoalctl uninstall` | Remove shoal's hooks and CLAUDE.md block only | Planned (Phase 5) |
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Internal error |
+| 2 | Usage error |
+| 3 | Config error (not a git repo, invalid config, unsafe settings file, DB newer than the binary) |
+| 4 | Not found (unknown task) |
+| 5 | Invalid state (wrong stage, uncommitted changes, no commits) |
+| 6 | Baseline could not be recorded |
+| 7 | Missing dependency (`git`, `tmux`, `claude`) |
+| 8 | Busy (lock held, or an earlier run may still be alive) |
+| 10 | `done` refused |
+| 11 | `doctor` found problems it did not fix |
+| 12 | Claude Code has not trusted the main checkout |
+| 130 | Interrupted (SIGINT, SIGTERM, SIGHUP); a running suite was stopped and recorded `cancelled` |
 
 ## Memory & privacy
 
