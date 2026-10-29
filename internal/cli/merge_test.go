@@ -71,6 +71,7 @@ func TestMergeRefusesDirtyMainCheckout(t *testing.T) {
 		t.Fatalf("task after refused merge: %+v", got)
 	}
 	testutil.Git(t, h.repo, "checkout", "--", "README.md")
+	h.env.Terminal = func() bool { return true }
 	// An acceptance that blocks nothing is a usage error; the clean merge stands.
 	errOut := h.expectCode(ExitUsage, "merge", "--task", task.Slug, "--accept-regression", "C::a", "--reason", "not needed")
 	mustContain(t, "unused acceptance", errOut, "blocked nothing")
@@ -98,6 +99,7 @@ func TestMergeAcceptanceIsScopedToOneTask(t *testing.T) {
 		t.Fatal("an unscoped acceptance merged something")
 	}
 
+	h.env.Terminal = func() bool { return true }
 	out := h.mustRun("merge", "--task", b.Slug, "--accept-regression", "C::a", "--reason", "b changes C::a on purpose")
 	mustContain(t, "scoped merge", out, "merged "+b.Slug)
 	if strings.Contains(out, a.Slug) {
@@ -195,4 +197,28 @@ func TestRebaseCancelledIsInterruptNotConflict(t *testing.T) {
 	if st := testutil.Git(t, task.Worktree, "status", "--porcelain"); st != "" {
 		t.Fatalf("interrupted rebase left changes: %q", st)
 	}
+}
+
+// Accepting a regression is a human decision (G9, §8.5): an agent or any
+// caller without a terminal is refused before anything is merged.
+func TestMergeAcceptanceNeedsHuman(t *testing.T) {
+	h := newHarness(t).withSession()
+	p := h.initWith(junitConfig)
+	task := startedTask(t, h, "feature", "Breaks a")
+	commitIn(t, task.Worktree, "broken.txt", "x")
+	finish(t, h, task.Slug, task.Worktree)
+	mainBefore := testutil.Git(t, h.repo, "rev-parse", "main")
+
+	h.env.Terminal = func() bool { return false }
+	errOut := h.expectCode(ExitState, "merge", "--task", task.Slug, "--accept-regression", "C::a", "--reason", "agent says so")
+	mustContain(t, "agent acceptance", errOut, "needs a human at a terminal")
+	if testutil.Git(t, h.repo, "rev-parse", "main") != mainBefore || h.task(task.Slug).Stage != "done" {
+		t.Fatal("a refused acceptance merged or moved the task")
+	}
+	if n := countRows(t, p, `SELECT count(*) FROM regression_overrides`); n != 0 {
+		t.Fatalf("a refused acceptance recorded %d override(s)", n)
+	}
+
+	h.env.Terminal = func() bool { return true }
+	mustContain(t, "human acceptance", h.mustRun("merge", "--task", task.Slug, "--accept-regression", "C::a", "--reason", "on purpose"), "merged "+task.Slug)
 }

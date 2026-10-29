@@ -336,10 +336,10 @@ func (env Env) scopeShow(ctx context.Context, args []string) error {
 }
 
 // requireHuman refuses unless a person is at a terminal: agents can't waive
-// rows or record manual checks (§8.6).
+// rows, record manual checks (§8.6) or accept regressions (§8.5).
 func (env Env) requireHuman(what string) error {
 	if !env.interactive() {
-		return fail(ExitState, "%s needs a human at a terminal; agents can't waive scope rows or record manual checks", what)
+		return fail(ExitState, "%s needs a human at a terminal; agents can't waive scope rows, record manual checks or accept regressions", what)
 	}
 	return nil
 }

@@ -47,6 +47,11 @@ func (env Env) cmdMerge(ctx context.Context, args []string) error {
 		}
 		acc[i] = &acceptance{target: targets[i], reason: strings.TrimSpace(reasons[i])}
 	}
+	if len(acc) > 0 {
+		if err := env.requireHuman("--accept-regression"); err != nil {
+			return err
+		}
+	}
 	p, err := env.openProject(ctx)
 	if err != nil {
 		return err

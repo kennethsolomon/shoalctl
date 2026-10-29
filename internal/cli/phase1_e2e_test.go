@@ -175,6 +175,7 @@ func TestPhase1MergeGateRegression(t *testing.T) {
 	}
 
 	h.mustRun("done", "--force", task.Slug)
+	h.env.Terminal = func() bool { return true } // accepting a regression is a human's call
 	// A typo is not an acceptance: C::a still blocks.
 	h.expectCode(ExitGate, "merge", "--task", task.Slug, "--accept-regression", "C::aa", "--reason", "typo")
 	h.mustRun("done", "--force", task.Slug)
