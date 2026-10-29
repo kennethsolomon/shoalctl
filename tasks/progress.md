@@ -4,9 +4,16 @@ Plan: [todo.md](todo.md). Base: `496e05c`.
 
 ## Where I am
 
-- Done: 1-28 (schema, pure packages, store APIs, every Phase 1 command, the six
-  end-to-end acceptance tests in `internal/cli/phase1_e2e_test.go`, README and spec).
-- Remaining: 29 gates, 30 adversarial self-review.
+- Done: 1-30. Every Phase 1 command is built; the six Done-when rows have end-to-end
+  tests in `internal/cli/phase1_e2e_test.go`.
+- Gates (darwin host): `go vet` with GOOS=darwin|linux|windows clean; `go test -race -count=1 ./...`
+  all ok; staticcheck clean (all three GOOS); `go test -c` for every package with GOOS=linux and
+  GOOS=windows compiles. Workflows unchanged, so actionlint not needed.
+- Self-review: git and tmux calls are argv-only (test ids reach the shell only shell-quoted through
+  `rerun_command`); claim globs, `--file` and `coverage_path` are validated against traversal and
+  `coverage_path` is symlink-checked before deletion; lock order is merge.lock -> task lock -> git.lock;
+  every multi-row change is one transaction; nothing pushes.
+- Next: Phase 2 (not started).
 
 ## Decisions
 
