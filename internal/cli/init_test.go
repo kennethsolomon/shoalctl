@@ -54,8 +54,8 @@ func TestIsShoalCommand(t *testing.T) {
 			t.Errorf("isShoalCommand(%q) = %v, want %v", tt.cmd, got, tt.want)
 		}
 	}
-	if got := hookCommand("/my bins/shoalctl", "stop"); got != "'/my bins/shoalctl' hook stop || true" || !isShoalCommand(got) {
-		t.Errorf("hookCommand with a space = %q", got)
+	if got := hookCommandFor("linux", "/my bins/shoalctl", "stop"); got != "'/my bins/shoalctl' hook stop || true" || !isShoalCommand(got) {
+		t.Errorf("hookCommandFor(linux) with a space = %q", got)
 	}
 }
 
@@ -135,8 +135,8 @@ func hookCommands(t *testing.T, data []byte) map[string][]string {
 
 func TestMergeHooks(t *testing.T) {
 	exe := "/bin/shoalctl"
-	start := "/bin/shoalctl hook session-start || true|10|"
-	stop := "/bin/shoalctl hook stop || true|10|"
+	start := hookCommand(exe, "session-start") + "|10|"
+	stop := hookCommand(exe, "stop") + "|10|"
 	tests := []struct {
 		name  string
 		in    string
@@ -217,7 +217,7 @@ func TestInitIsIdempotent(t *testing.T) {
 	}
 
 	got := hookCommands(t, []byte(readFile(t, settings)))
-	if fmt.Sprint(got["Stop"]) != fmt.Sprint([]string{"say done|0|", fakeExe + " hook stop || true|10|"}) {
+	if fmt.Sprint(got["Stop"]) != fmt.Sprint([]string{"say done|0|", hookCommand(fakeExe, "stop") + "|10|"}) {
 		t.Errorf("Stop hooks = %v", got["Stop"])
 	}
 	if !strings.Contains(readFile(t, settings), `"keep-me"`) {

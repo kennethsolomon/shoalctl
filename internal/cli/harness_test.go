@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +15,14 @@ import (
 	"github.com/kennethsolomon/shoalctl/internal/testutil"
 )
 
-const fakeExe = "/opt/shoal/bin/shoalctl"
+// fakeExe is an absolute binary path on this OS that never exists; init only
+// requires it to be absolute.
+var fakeExe = func() string {
+	if runtime.GOOS == "windows" {
+		return `C:\opt\shoal\bin\shoalctl.exe`
+	}
+	return "/opt/shoal/bin/shoalctl"
+}()
 
 // testScript emits JUnit for a tiny fake suite. C::pre fails at baseline;
 // feature.txt adds a passing test and broken.txt breaks C::a.
