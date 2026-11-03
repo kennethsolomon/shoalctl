@@ -121,7 +121,7 @@ func (d *doctor) hooks(ctx context.Context, p *project) error {
 
 func (d *doctor) project(ctx context.Context, p *project) error {
 	for _, check := range []func(context.Context, *project) error{
-		d.database, d.mergeQueue, d.starting, d.runs, d.worktrees, d.gitWorktrees, d.windows, d.worktreeHooks, d.staleClaims,
+		d.database, d.mergeQueue, d.starting, d.runs, d.worktrees, d.gitWorktrees, d.windows, d.worktreeHooks, d.staleClaims, d.attentionFlags,
 	} {
 		if err := check(ctx, p); err != nil {
 			return err
@@ -580,6 +580,49 @@ func (d *doctor) worktreeHooks(ctx context.Context, p *project) error {
 	}
 	if clean {
 		d.ok("no hook entries in task worktrees")
+	}
+	return nil
+}
+
+// attentionFlags finds attention flags no watcher maintains any more (one
+// killed with SIGKILL never clears its own): the flag is set but the task's
+// watch-<id>.lock is free. The lock is released before the flag is cleared,
+// so a watcher starting meanwhile is not turned away; it sets the flag again
+// on its next tick if the dialog is still there.
+func (d *doctor) attentionFlags(ctx context.Context, p *project) error {
+	tasks, err := p.db.ListTasks(ctx, "")
+	if err != nil {
+		return err
+	}
+	clean := true
+	for _, t := range tasks {
+		if t.Attention == "" {
+			continue
+		}
+		lock, err := lockfile.Acquire(watchLockPath(p, t.ID), 0,
+			lockfile.Info{PID: os.Getpid(), Command: "doctor", Task: t.Slug, StartedAt: nowUTC()})
+		if errors.Is(err, lockfile.ErrHeld) {
+			continue // its watcher is alive and owns the flag
+		}
+		if err != nil {
+			return err
+		}
+		if err := lock.Release(); err != nil {
+			return err
+		}
+		what := fmt.Sprintf("%s: attention flag %q is set, but no watcher runs (killed?)", t.Slug, t.Attention)
+		if !d.fix {
+			clean = false
+			d.problem("%s; --fix clears it", what)
+			continue
+		}
+		if _, err := p.db.SetAttention(ctx, t.ID, ""); err != nil {
+			return err
+		}
+		d.fixed("%s; cleared", what)
+	}
+	if clean {
+		d.ok("attention flags")
 	}
 	return nil
 }

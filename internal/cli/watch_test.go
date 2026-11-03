@@ -147,3 +147,32 @@ func TestWatchRunsOncePerTask(t *testing.T) {
 	defer l.Release()
 	mustContain(t, "second watcher", r.h.mustRun("watch", r.slug), "already watched")
 }
+
+// TestDoctorClearsAnAttentionFlagNobodyWatches: a watcher killed with
+// SIGKILL never clears its flag. doctor reports it when watch-<id>.lock is
+// free and --fix clears it; a flag whose watcher still holds the lock stays.
+func TestDoctorClearsAnAttentionFlagNobodyWatches(t *testing.T) {
+	h := newHarness(t)
+	p := h.initWith(junitConfig)
+	a := newTask(t, h, "bugfix", "Watcher killed")
+	sqlExec(t, p, `UPDATE tasks SET attention = 'Allow edit?', attention_at = ? WHERE slug = ?`, nowUTC(), a)
+
+	_, out, errOut := h.run("doctor")
+	mustContain(t, "doctor", errOut, a+": attention flag \"Allow edit?\" is set, but no watcher runs", "--fix clears it")
+	h.run("doctor", "--fix")
+	if got := h.task(a); got.Attention != "" || got.AttentionAt != "" {
+		t.Fatalf("flag kept after --fix: %+v\n%s", got, out)
+	}
+
+	sqlExec(t, p, `UPDATE tasks SET attention = 'Allow edit?', attention_at = ? WHERE slug = ?`, nowUTC(), a)
+	lock, err := lockfile.Acquire(filepath.Join(p.dir, "locks", fmt.Sprintf("watch-%d.lock", h.task(a).ID)), 0, lockfile.Info{PID: os.Getpid(), Command: "watch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Release()
+	_, out, errOut = h.run("doctor", "--fix")
+	if got := h.task(a); got.Attention != "Allow edit?" {
+		t.Fatalf("a live watcher's flag was cleared: %+v\n%s\n%s", got, out, errOut)
+	}
+	mustContain(t, "doctor with a watcher", out, "attention flags")
+}

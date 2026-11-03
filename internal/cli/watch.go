@@ -38,7 +38,7 @@ func (env Env) cmdWatch(ctx context.Context, args []string) error {
 		return err
 	}
 	defer p.close()
-	lock, err := lockfile.Acquire(filepath.Join(p.dir, "locks", fmt.Sprintf("watch-%d.lock", t.ID)), 0,
+	lock, err := lockfile.Acquire(watchLockPath(p, t.ID), 0,
 		lockfile.Info{PID: os.Getpid(), Command: "watch", Task: t.Slug, StartedAt: nowUTC()})
 	if errors.Is(err, lockfile.ErrHeld) {
 		fmt.Fprintf(env.Stdout, "%s is already watched (%v)\n", t.Slug, err)
@@ -49,6 +49,11 @@ func (env Env) cmdWatch(ctx context.Context, args []string) error {
 	}
 	defer lock.Release()
 	return env.watchTask(ctx, p, t.ID, watchInterval)
+}
+
+// watchLockPath is the lock one task's watcher holds while it runs.
+func watchLockPath(p *project, id int64) string {
+	return filepath.Join(p.dir, "locks", fmt.Sprintf("watch-%d.lock", id))
 }
 
 // watchTask is the watcher's loop: one capture per tick, never busier.
