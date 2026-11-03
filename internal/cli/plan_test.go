@@ -153,3 +153,28 @@ func TestPlanRefusesAFoldThatWouldDeadlock(t *testing.T) {
 		t.Fatalf("x: %+v", got)
 	}
 }
+
+// TestLiveWindowKeepsAnOldClaim: a started task whose heartbeat is long past
+// stale_after but whose tmux window is still open is alive. doctor --fix must
+// not release its claim and plan must still see the overlap.
+func TestLiveWindowKeepsAnOldClaim(t *testing.T) {
+	h := newHarness(t).withSession()
+	p := h.initWith(junitConfig)
+	a, b := newTask(t, h, "bugfix", "Long run"), newTask(t, h, "bugfix", "Next")
+	h.mustRun("plan", a, "api/**")
+	h.mustRun("start", a)
+	if h.task(a).TmuxWindow == "" {
+		t.Fatal("start recorded no tmux window")
+	}
+	sqlExec(t, p, `UPDATE tasks SET last_seen_at = '2026-01-01T00:00:00Z', started_at = '2026-01-01T00:00:00Z' WHERE slug = ?`, a)
+	sqlExec(t, p, `UPDATE file_claims SET created_at = '2026-01-01T00:00:00Z'`)
+	mustContain(t, "plan overlap", h.expectCode(ExitState, "plan", b, "api/x.go"), "nothing was planned", a+" (in-progress)")
+	_, out, errOut := h.run("doctor", "--fix")
+	if strings.Contains(out+errOut, "is stale") || !strings.Contains(out, "no stale claims") {
+		t.Fatalf("doctor --fix treated a live window's claim as stale:\n%s\n%s", out, errOut)
+	}
+	if cl, _ := h.db().Claims(context.Background(), h.task(a).ID); len(cl) != 1 {
+		t.Fatalf("claims of the live task: %+v", cl)
+	}
+	mustContain(t, "plan overlap", h.expectCode(ExitState, "plan", b, "api/x.go"), "nothing was planned", a+" (in-progress)")
+}
