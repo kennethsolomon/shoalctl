@@ -69,8 +69,10 @@ func TestPhase2MigrationQueuesDoneTasks(t *testing.T) {
 
 func planReq(t Task, globs []string, decisions map[int64]byte) PlanRequest {
 	return PlanRequest{Task: t, Globs: globs, Decisions: decisions, Human: "human",
-		Overlaps: func(a, b string) bool { return a == b || strings.HasPrefix(b, strings.TrimSuffix(a, "**")) || strings.HasPrefix(a, strings.TrimSuffix(b, "**")) },
-		Stale:    func(Task, Claim) bool { return false }}
+		Overlaps: func(a, b string) bool {
+			return a == b || strings.HasPrefix(b, strings.TrimSuffix(a, "**")) || strings.HasPrefix(a, strings.TrimSuffix(b, "**"))
+		},
+		Stale: func(Task, Claim) bool { return false }}
 }
 
 func newTasks(t *testing.T, s *Store, n int) []Task {

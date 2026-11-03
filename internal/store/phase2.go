@@ -114,7 +114,7 @@ type PlanResult struct {
 	Overlaps  []Overlap // every overlapping task, stale ones included
 	Undecided []Overlap // overlaps that still need a choice; nothing was written
 	Applied   bool
-	Task      Task  // the task after the change
+	Task      Task // the task after the change
 	Blockers  []int64
 	Folded    *Task // the task this one was folded into
 }
