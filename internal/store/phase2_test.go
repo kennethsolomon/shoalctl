@@ -12,18 +12,18 @@ import (
 func TestPhase2Schema(t *testing.T) {
 	s, _ := openTest(t)
 	snap := schemaSnapshot(t, s)
-	for _, want := range []string{"table:task_blockers:", "table:merge_queue:", "prev_stage TEXT", "folded_into INTEGER", "attention TEXT", "attention_at TEXT",
+	for _, want := range []string{"table:task_blockers:", "table:merge_queue:", "prev_stage TEXT", "folded_into INTEGER", "attention TEXT", "attention_at TEXT", "tmux_socket TEXT",
 		"index:file_claims_open:", "'waiting','rebasing','testing','merged','failed'"} {
 		if !strings.Contains(snap, want) {
 			t.Errorf("schema lacks %q", want)
 		}
 	}
 	migs, _ := Migrations()
-	if len(migs) != 4 || migs[3].Name != "phase2" {
+	if len(migs) != 5 || migs[3].Name != "phase2" || migs[4].Name != "tmux_socket" {
 		t.Fatalf("migrations: %+v", migs)
 	}
 	var v int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 4 {
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 5 {
 		t.Fatalf("user_version = %d, %v", v, err)
 	}
 }
@@ -54,8 +54,11 @@ func TestPhase2MigrationQueuesDoneTasks(t *testing.T) {
 	}
 	defer s.Close()
 	var v int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 4 {
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 5 {
 		t.Fatalf("user_version = %d, %v", v, err)
+	}
+	if old, err := s.taskByID(ctx, 3); err != nil || old.TmuxSocket != "" {
+		t.Fatalf("a task from before migration 5: %+v, %v", old, err)
 	}
 	q, err := s.Queue(ctx)
 	if err != nil || len(q) != 2 || q[0].TaskID != 2 || q[1].TaskID != 1 || q[0].State != QueueWaiting {

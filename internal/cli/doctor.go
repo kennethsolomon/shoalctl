@@ -497,18 +497,19 @@ func (d *doctor) windows(ctx context.Context, p *project) error {
 	if err != nil {
 		return err
 	}
-	live, known := d.env.windowsKnown(ctx)
+	wins := d.env.tmuxWindows(ctx, tasks)
 	clean := true
 	for _, t := range tasks {
 		if t.TmuxWindow == "" || t.Stage == store.StageMerged || t.Stage == store.StageFolded {
 			continue
 		}
+		alive, known := wins.alive(t)
 		if !known {
-			d.problem("tmux did not answer, so the window %s of %s cannot be checked", t.TmuxWindow, t.Slug)
+			d.problem("tmux did not answer%s, so the window %s of %s cannot be checked", socketNote(t.TmuxSocket), t.TmuxWindow, t.Slug)
 			clean = false
 			continue
 		}
-		if live[t.TmuxWindow] {
+		if alive {
 			continue
 		}
 		clean = false
@@ -581,6 +582,13 @@ func (d *doctor) worktreeHooks(ctx context.Context, p *project) error {
 		d.ok("no hook entries in task worktrees")
 	}
 	return nil
+}
+
+func socketNote(socket string) string {
+	if socket == "" {
+		return ""
+	}
+	return " on socket " + socket
 }
 
 func (d *doctor) staleClaims(ctx context.Context, p *project) error {

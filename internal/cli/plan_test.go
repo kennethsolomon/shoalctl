@@ -2,7 +2,10 @@ package cli
 
 import (
 	"context"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -99,12 +102,15 @@ func TestPlanFoldsIntoEarlierTask(t *testing.T) {
 }
 
 func TestPlanIgnoresStaleClaims(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed: without it no claim is ever stale")
+	}
 	h := newHarness(t)
 	p := h.initWith(junitConfig)
 	a, b := newTask(t, h, "bugfix", "Abandoned"), newTask(t, h, "bugfix", "Next")
 	h.mustRun("plan", a, "api/**")
 	// a started long ago and its window is gone.
-	sqlExec(t, p, `UPDATE tasks SET stage = 'in-progress', tmux_window = '@999', last_seen_at = '2026-01-01T00:00:00Z', started_at = '2026-01-01T00:00:00Z' WHERE slug = ?`, a)
+	sqlExec(t, p, `UPDATE tasks SET stage = 'in-progress', tmux_window = '@999', tmux_socket = ?, last_seen_at = '2026-01-01T00:00:00Z', started_at = '2026-01-01T00:00:00Z' WHERE slug = ?`, shortSocketPath(t), a)
 	sqlExec(t, p, `UPDATE file_claims SET created_at = '2026-01-01T00:00:00Z'`)
 	mustContain(t, "stale", h.mustRun("plan", b, "api/x.go"), "stale: "+a+" (in-progress)", "doctor --fix releases", "ready")
 	// A recent heartbeat makes the claim live again.
@@ -177,4 +183,82 @@ func TestLiveWindowKeepsAnOldClaim(t *testing.T) {
 		t.Fatalf("claims of the live task: %+v", cl)
 	}
 	mustContain(t, "plan overlap", h.expectCode(ExitState, "plan", b, "api/x.go"), "nothing was planned", a+" (in-progress)")
+}
+
+// TestStartRecordsTheTmuxSocket: doctor run from cron or an IDE has a
+// different (or no) default tmux server; it still finds the live window on
+// the socket start recorded, and keeps the claim.
+func TestStartRecordsTheTmuxSocket(t *testing.T) {
+	h := newHarness(t).withSession()
+	p := h.initWith(junitConfig)
+	a, b := newTask(t, h, "bugfix", "Long run"), newTask(t, h, "bugfix", "Next")
+	h.mustRun("plan", a, "api/**")
+	h.mustRun("start", a)
+	if got := h.task(a); got.TmuxSocket == "" || !filepath.IsAbs(got.TmuxSocket) {
+		t.Fatalf("start recorded socket %q", got.TmuxSocket)
+	}
+	sqlExec(t, p, `UPDATE tasks SET last_seen_at = '2026-01-01T00:00:00Z', started_at = '2026-01-01T00:00:00Z' WHERE slug = ?`, a)
+	sqlExec(t, p, `UPDATE file_claims SET created_at = '2026-01-01T00:00:00Z'`)
+	h.env.TmuxArgs = []string{"-S", filepath.Join(t.TempDir(), "other-server")} // not the server the task runs on
+	_, out, errOut := h.run("doctor", "--fix")
+	if strings.Contains(out+errOut, "is stale") || strings.Contains(out+errOut, "is gone") {
+		t.Fatalf("doctor from another tmux server released a live claim:\n%s\n%s", out, errOut)
+	}
+	h.expectCode(ExitState, "plan", b, "api/x.go")
+}
+
+// TestUnknownTmuxNeverExpiresClaims: a missing tmux binary or an unexpected
+// tmux error is unknown, not "no windows"; only a clean "no server" on the
+// recorded socket lets an old claim go stale.
+func TestUnknownTmuxNeverExpiresClaims(t *testing.T) {
+	h := newHarness(t)
+	p := h.initWith(junitConfig)
+	a, b := newTask(t, h, "bugfix", "Abandoned"), newTask(t, h, "bugfix", "Next")
+	h.mustRun("plan", a, "api/**")
+	gone := shortSocketPath(t)
+	sqlExec(t, p, `UPDATE tasks SET stage = 'in-progress', tmux_window = '@7', tmux_socket = ?, last_seen_at = '2026-01-01T00:00:00Z', started_at = '2026-01-01T00:00:00Z' WHERE slug = ?`, gone, a)
+	sqlExec(t, p, `UPDATE file_claims SET created_at = '2026-01-01T00:00:00Z'`)
+
+	h.env.Tmux = filepath.Join(t.TempDir(), "no-tmux-here")
+	h.expectCode(ExitState, "plan", b, "api/x.go")
+	_, out, errOut := h.run("doctor", "--fix")
+	mustContain(t, "doctor without tmux", out+errOut, "tmux did not answer")
+	if strings.Contains(out+errOut, "released") || strings.Contains(out+errOut, "forgot") {
+		t.Fatalf("doctor without tmux released claims:\n%s\n%s", out, errOut)
+	}
+	if got := h.task(a); got.TmuxWindow != "@7" {
+		t.Fatalf("window forgotten without tmux: %+v", got)
+	}
+
+	if _, err := exec.LookPath("tmux"); err == nil && runtime.GOOS != "windows" {
+		fake := filepath.Join(t.TempDir(), "tmux")
+		testutil.WriteFile(t, fake, "#!/bin/sh\necho 'error connecting to "+gone+" (Permission denied)' >&2\nexit 1\n")
+		if err := os.Chmod(fake, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		h.env.Tmux = fake
+		h.expectCode(ExitState, "plan", b, "api/x.go")
+
+		h.env.Tmux = "tmux"
+		mustContain(t, "clean no server", h.mustRun("plan", b, "api/x.go"), "stale: "+a, "ready")
+	}
+}
+
+// shortSocketPath is a socket path nothing listens on, short enough for a
+// unix socket (t.TempDir() on macOS is not).
+func shortSocketPath(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp(shortTempRoot(), "shoal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return filepath.Join(dir, "dead-server")
+}
+
+func shortTempRoot() string {
+	if runtime.GOOS == "windows" {
+		return ""
+	}
+	return "/tmp"
 }

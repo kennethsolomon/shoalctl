@@ -46,6 +46,7 @@ type Task struct {
 	Worktree      string
 	TmuxSession   string
 	TmuxWindow    string
+	TmuxSocket    string // absolute socket path of the window's tmux server; empty before migration 5
 	Model         string
 	BaselineRunID int64
 	FinalRunID    int64
@@ -77,7 +78,8 @@ const taskColumns = `id, slug, lane, title, ask, stage,
 	COALESCE(session_id, ''), COALESCE(last_seen_at, ''), version, created_at, updated_at,
 	COALESCE(started_at, ''), COALESCE(closed_at, ''),
 	qa_round, COALESCE(merged_sha, ''), COALESCE(parent_task_id, 0), COALESCE(gate_run_id, 0), COALESCE(large_diff_reason, ''),
-	COALESCE(blocked_by, 0), COALESCE(prev_stage, ''), COALESCE(folded_into, 0), COALESCE(attention, ''), COALESCE(attention_at, '')`
+	COALESCE(blocked_by, 0), COALESCE(prev_stage, ''), COALESCE(folded_into, 0), COALESCE(attention, ''), COALESCE(attention_at, ''),
+	COALESCE(tmux_socket, '')`
 
 func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 	var t Task
@@ -86,7 +88,8 @@ func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 		&t.BaselineRunID, &t.FinalRunID, &t.SessionID, &t.LastSeenAt, &t.Version, &t.CreatedAt, &t.UpdatedAt,
 		&t.StartedAt, &t.ClosedAt,
 		&t.QARound, &t.MergedSHA, &t.ParentTaskID, &t.GateRunID, &t.LargeDiffReason,
-		&t.BlockedBy, &t.PrevStage, &t.FoldedInto, &t.Attention, &t.AttentionAt)
+		&t.BlockedBy, &t.PrevStage, &t.FoldedInto, &t.Attention, &t.AttentionAt,
+		&t.TmuxSocket)
 	return t, err
 }
 

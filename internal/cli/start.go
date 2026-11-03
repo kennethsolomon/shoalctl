@@ -148,9 +148,15 @@ func (env Env) cmdStart(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Liveness checks (stale claims, doctor) ask this server, whatever
+	// default tmux server the caller has.
+	socket, err := env.tmux(ctx, "display-message", "-p", "-t", window, "#{socket_path}")
+	if err != nil {
+		return fmt.Errorf("read the tmux socket of window %s: %w", window, err)
+	}
 	if _, err = p.db.Update(ctx, t, []string{store.StageStarting},
-		"stage = ?, tmux_session = ?, tmux_window = ?, model = ?, started_at = ?",
-		[]any{store.StageInProgress, session, window, *model, nowUTC()}, nil); err != nil {
+		"stage = ?, tmux_session = ?, tmux_window = ?, tmux_socket = ?, model = ?, started_at = ?",
+		[]any{store.StageInProgress, session, window, socket, *model, nowUTC()}, nil); err != nil {
 		return err
 	}
 	if t, err = p.db.GetTask(ctx, t.Slug); err != nil {

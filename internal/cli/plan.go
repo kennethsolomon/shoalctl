@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -245,20 +246,24 @@ var staleStages = []string{store.StageInProgress, store.StageQA, store.StageNeed
 
 // staleCheck returns the rule for a stale claim (§10.4): its task's tmux
 // window no longer exists and the task's last sign of life (heartbeat, start,
-// or the claim itself) is older than [claims].stale_after. tmux is asked
-// once, now; when it cannot answer, nothing counts as stale.
+// or the claim itself) is older than [claims].stale_after. Each recorded tmux
+// server is asked once, now; when it cannot answer, nothing on it is stale.
 func (env Env) staleCheck(ctx context.Context, p *project) (func(store.Task, store.Claim) bool, error) {
 	after, err := time.ParseDuration(p.cfg.Claims.StaleAfter)
 	if err != nil {
 		return nil, fail(ExitConfig, "[claims].stale_after %q: %v", p.cfg.Claims.StaleAfter, err)
 	}
-	live, known := env.windowsKnown(ctx)
+	tasks, err := p.db.ListTasks(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	wins := env.tmuxWindows(ctx, tasks)
 	now := time.Now()
 	return func(owner store.Task, c store.Claim) bool {
-		if !known || !contains(staleStages, owner.Stage) {
+		if !contains(staleStages, owner.Stage) {
 			return false
 		}
-		if owner.TmuxWindow != "" && live[owner.TmuxWindow] {
+		if alive, known := wins.alive(owner); !known || alive {
 			return false
 		}
 		last := latestTime(owner.LastSeenAt, owner.StartedAt, c.CreatedAt)
@@ -276,20 +281,71 @@ func latestTime(ts ...string) time.Time {
 	return out
 }
 
-// windowsKnown lists every tmux window id and reports whether the list can
-// be trusted: no tmux server (or no tmux at all) means no windows; any other
-// failure means unknown.
-func (env Env) windowsKnown(ctx context.Context) (map[string]bool, bool) {
-	out, err := env.tmux(ctx, "list-windows", "-a", "-F", "#{window_id}")
-	live := map[string]bool{}
-	if err != nil {
-		msg := err.Error()
-		gone := strings.Contains(msg, "no server running") || strings.Contains(msg, "error connecting") ||
-			strings.Contains(msg, "executable file not found") || strings.Contains(msg, "no such file or directory")
-		return live, gone
+// windowList is what one tmux server said: its window ids, and whether the
+// answer can be trusted.
+type windowList struct {
+	live  map[string]bool
+	known bool
+}
+
+// tmuxServers holds one answer per tmux socket, asked up front so no tmux
+// call runs inside a database transaction.
+type tmuxServers map[string]windowList
+
+// tmuxWindows asks every tmux server a task recorded (and the caller's own
+// server, for tasks started before sockets were recorded) for its windows.
+func (env Env) tmuxWindows(ctx context.Context, tasks []store.Task) tmuxServers {
+	out := tmuxServers{}
+	for _, t := range tasks {
+		if _, ok := out[t.TmuxSocket]; !ok {
+			out[t.TmuxSocket] = env.listWindows(ctx, t.TmuxSocket)
+		}
 	}
+	return out
+}
+
+// alive reports whether t's window is open on its server, and whether that
+// server answered. A server not asked (a task newer than the list) is unknown.
+func (s tmuxServers) alive(t store.Task) (alive, known bool) {
+	l, ok := s[t.TmuxSocket]
+	if !ok || !l.known {
+		return false, false
+	}
+	return t.TmuxWindow != "" && l.live[t.TmuxWindow], true
+}
+
+// listWindows lists the window ids of one tmux server: the socket start
+// recorded, or the caller's own server when none was. Only a clean "no
+// server" on that socket means no windows. A missing tmux binary, or any
+// other error, is unknown, so no claim ever expires on a guess.
+func (env Env) listWindows(ctx context.Context, socket string) windowList {
+	e := env
+	if socket != "" {
+		e.TmuxArgs = []string{"-S", socket}
+	}
+	out, err := e.tmux(ctx, "list-windows", "-a", "-F", "#{window_id}")
+	if err != nil {
+		return windowList{known: noTmuxServer(err, socket)}
+	}
+	live := map[string]bool{}
 	for _, id := range strings.Fields(out) {
 		live[id] = true
 	}
-	return live, true
+	return windowList{live: live, known: true}
+}
+
+// noTmuxServer reports whether tmux ran and said that nothing listens on
+// socket: "no server running on <socket>", or, for a recorded socket, that
+// the socket file is gone. With no recorded socket only the first counts.
+func noTmuxServer(err error, socket string) bool {
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		return false // tmux did not run: not installed, not on PATH, or not executable
+	}
+	msg := err.Error()
+	if socket == "" {
+		return strings.Contains(msg, "no server running on ")
+	}
+	return strings.Contains(msg, "no server running on "+socket) ||
+		strings.Contains(msg, "error connecting to "+socket+" (No such file or directory)")
 }
