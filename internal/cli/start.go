@@ -153,6 +153,12 @@ func (env Env) cmdStart(ctx context.Context, args []string) error {
 		[]any{store.StageInProgress, session, window, *model, nowUTC()}, nil); err != nil {
 		return err
 	}
+	if t, err = p.db.GetTask(ctx, t.Slug); err != nil {
+		return err
+	}
+	if err := env.startWatcher(p, t); err != nil {
+		fmt.Fprintf(env.Stderr, "warning: the attention watcher did not start (%v); status will not flag dialogs in window %s\n", err, window)
+	}
 	fmt.Fprintf(env.Stdout, "started %s in tmux window %s (session %s, model %s)\nworktree %s\n", t.Slug, window, session, *model, wt)
 	if created {
 		fmt.Fprintf(env.Stdout, "attach with: tmux attach -t %s\n", session)

@@ -29,6 +29,32 @@ type statusRow struct {
 	Window   string `json:"window"`
 	LastSeen string `json:"last_seen"`
 	Worktree string `json:"worktree"`
+	// Phase 2: what needs a human or orders the task (§9).
+	Attention string `json:"attention"`
+	BlockedBy string `json:"blocked_by"`
+	Queue     string `json:"queue"` // "<target> #<n>" while waiting to merge
+	Claims    int    `json:"claims"`
+}
+
+// note is the NOTE column: everything in a row a human may need to act on.
+func (r statusRow) note() string {
+	var parts []string
+	if r.Attention != "" {
+		parts = append(parts, "NEEDS ATTENTION: "+r.Attention)
+	}
+	if r.BlockedBy != "" {
+		parts = append(parts, "blocked by "+r.BlockedBy)
+	}
+	if r.Queue != "" {
+		parts = append(parts, "queued "+r.Queue)
+	}
+	if r.Claims > 0 {
+		parts = append(parts, fmt.Sprintf("%d claim(s)", r.Claims))
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, "; ")
 }
 
 func (env Env) cmdStatus(ctx context.Context, args []string) error {
@@ -48,6 +74,22 @@ func (env Env) cmdStatus(ctx context.Context, args []string) error {
 		return err
 	}
 	alive := env.liveWindows(ctx)
+	slugs := map[int64]string{}
+	for _, t := range tasks {
+		slugs[t.ID] = t.Slug
+	}
+	queued, err := p.db.QueuedTasks(ctx)
+	if err != nil {
+		return err
+	}
+	place := map[int64]string{}
+	perTarget := map[string]int{}
+	for _, q := range queued {
+		if target, ok := mergeTarget(p, q); ok {
+			perTarget[target]++
+			place[q.ID] = fmt.Sprintf("%s #%d", target, perTarget[target])
+		}
+	}
 	rows := make([]statusRow, 0, len(tasks))
 	for _, t := range tasks {
 		row := statusRow{ID: t.ID, Slug: t.Slug, Lane: t.Lane, Stage: t.Stage, QARound: t.QARound, Base: "-", Baseline: "-", Window: "-",
@@ -61,6 +103,20 @@ func (env Env) cmdStatus(ctx context.Context, args []string) error {
 				return err
 			}
 			row.Baseline = baselineLabel(run)
+		}
+		row.Attention, row.Queue = t.Attention, place[t.ID]
+		if t.BlockedBy != 0 && t.Stage == store.StageBlocked {
+			row.BlockedBy = slugs[t.BlockedBy]
+			if row.BlockedBy == "" {
+				row.BlockedBy = fmt.Sprint(t.BlockedBy)
+			}
+		}
+		if t.Stage != store.StageMerged && t.Stage != store.StageFolded {
+			cl, err := p.db.Claims(ctx, t.ID)
+			if err != nil {
+				return err
+			}
+			row.Claims = len(cl)
 		}
 		if t.TmuxWindow != "" {
 			row.Window = "gone"
@@ -79,13 +135,13 @@ func (env Env) cmdStatus(ctx context.Context, args []string) error {
 		fmt.Fprintln(env.Stdout, string(body))
 	} else {
 		tw := tabwriter.NewWriter(env.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "SLUG\tLANE\tSTAGE\tQA\tBASE\tBASELINE\tWINDOW\tLAST SEEN")
+		fmt.Fprintln(tw, "SLUG\tLANE\tSTAGE\tQA\tBASE\tBASELINE\tWINDOW\tLAST SEEN\tNOTE")
 		for _, r := range rows {
 			qa := "-"
 			if r.QARound > 0 {
 				qa = fmt.Sprintf("%d/%d", r.QARound, p.cfg.Lanes.QAMaxRounds)
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Slug, r.Lane, r.Stage, qa, r.Base, r.Baseline, r.Window, r.LastSeen)
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Slug, r.Lane, r.Stage, qa, r.Base, r.Baseline, r.Window, r.LastSeen, r.note())
 		}
 		if err := tw.Flush(); err != nil {
 			return err

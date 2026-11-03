@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/kennethsolomon/shoalctl/internal/store"
 )
 
 // asBinaryEnv makes the test binary behave as shoalctl, so tests can run real
@@ -21,6 +23,9 @@ func TestMain(m *testing.M) {
 		env.Exe = os.Getenv("SHOALCTL_TEST_EXE")
 		env.Claude = os.Getenv("SHOALCTL_TEST_CLAUDE")
 		env.TmuxArgs = strings.Fields(os.Getenv("SHOALCTL_TEST_TMUX_ARGS"))
+		// Subprocess starts in tests launch no watcher; the attention test
+		// runs start in-process with the real spawner.
+		env.SpawnWatcher = func(*project, store.Task) error { return nil }
 		os.Exit(Main(os.Args[1:], env, "test"))
 	}
 	os.Exit(m.Run())

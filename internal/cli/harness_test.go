@@ -65,7 +65,8 @@ func newHarness(t *testing.T) *harness {
 	testutil.Git(t, repo, "commit", "-q", "-m", "add test script")
 	h := &harness{t: t, home: home, repo: repo, argsLog: filepath.Join(t.TempDir(), "claude-args.log")}
 	h.env = Env{Dir: repo, Exe: fakeExe, Claude: "claude-not-installed-for-this-test", Tmux: "tmux",
-		TmuxArgs: []string{"-L", "shoal-test-unused-" + filepath.Base(t.TempDir())}}
+		TmuxArgs:     []string{"-L", "shoal-test-unused-" + filepath.Base(t.TempDir())},
+		SpawnWatcher: func(*project, store.Task) error { return nil }}
 	return h
 }
 

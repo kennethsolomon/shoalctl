@@ -51,6 +51,9 @@ type Env struct {
 	// Terminal reports whether a human is at the keyboard; nil means stdin
 	// is a character device. Waivers and manual checks need one (§8.6).
 	Terminal func() bool
+	// SpawnWatcher starts the attention watcher of a started task; nil runs
+	// `<Exe> watch <task>` detached.
+	SpawnWatcher func(p *project, t store.Task) error
 }
 
 // interactive reports whether stdin is a terminal a human types into.
@@ -148,6 +151,7 @@ commands:
   msg send <task> --from <agent> --to <agent|*> --kind <kind> [--subject "<s>"] [--reply-to <id>] "<body>"
   msg inbox <task> --as <agent> [--all]
   doctor [--fix]      check shoal's state; --fix repairs what is safe (exit 11 while a problem remains)
+  watch <task>        internal: the attention watcher start launches
   version
 `
 
@@ -187,6 +191,8 @@ func Main(args []string, env Env, version string) int {
 		err = env.cmdDone(ctx, args[1:])
 	case "doctor":
 		err = env.cmdDoctor(ctx, args[1:])
+	case "watch":
+		err = env.cmdWatch(ctx, args[1:])
 	case "test":
 		err = env.cmdTest(ctx, args[1:])
 	case "merge":
