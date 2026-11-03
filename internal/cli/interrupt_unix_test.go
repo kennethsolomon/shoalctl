@@ -478,3 +478,48 @@ esac
 		t.Fatalf("after settling: %+v", got)
 	}
 }
+
+// TestFailureAfterFastForwardNeverRollsBackALandedTask: once the target has
+// moved, the task has landed. git failing after update-ref (here: every diff)
+// must not send it back to done; it is merged, or left at merging for the
+// next merge to settle.
+func TestFailureAfterFastForwardNeverRollsBackALandedTask(t *testing.T) {
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newHarness(t).withSession()
+	h.initWith(junitConfig)
+	task := startedTask(t, h, "feature", "Diff fails after landing")
+	commitIn(t, task.Worktree, "feature.txt", "x")
+	finish(t, h, task.Slug, task.Worktree)
+	testutil.Git(t, h.repo, "checkout", "-q", "--detach")
+	head := testutil.Git(t, task.Worktree, "rev-parse", "HEAD")
+
+	bin := t.TempDir()
+	marker := filepath.Join(bin, "landed")
+	testutil.WriteFile(t, filepath.Join(bin, "git"), fmt.Sprintf(`#!/bin/sh
+case " $* " in
+*" update-ref "*) %q "$@" && : > %q; exit $? ;;
+*" diff "*) [ -e %q ] && { echo "injected diff failure" >&2; exit 1; }; exec %q "$@" ;;
+*) exec %q "$@" ;;
+esac
+`, realGit, marker, marker, realGit, realGit))
+	if err := os.Chmod(filepath.Join(bin, "git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+oldPath)
+	code, out, errOut := h.run("merge")
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("update-ref never ran: exit %d\n%s\n%s", code, out, errOut)
+	}
+	if got := h.task(task.Slug).Stage; got != "merged" && got != "merging" {
+		t.Fatalf("landed task rolled back to %s (exit %d)\n%s\n%s", got, code, out, errOut)
+	}
+	t.Setenv("PATH", oldPath)
+	h.mustRun("merge")
+	if got := h.task(task.Slug); got.Stage != "merged" || testutil.Git(t, h.repo, "rev-parse", "main") != head {
+		t.Fatalf("after settling: %+v", got)
+	}
+}

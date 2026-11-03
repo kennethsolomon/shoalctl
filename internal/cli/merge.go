@@ -388,6 +388,14 @@ func (env Env) mergeOne(ctx context.Context, p *project, t store.Task, acc []*ac
 		}
 	}
 	report := renderReport(in)
+	// Open tasks into the same target whose claims cover a file this merge
+	// changes must rebase before their next QA round (§9.4 step 5). Computed
+	// before the fast-forward: once the target moves the task has landed, and
+	// every failure from there on leaves it at merging for settleMerging.
+	hits, err := env.claimsHit(ctx, p, t, target, targetSHA)
+	if err != nil {
+		return back(store.StageDone, err)
+	}
 
 	if err := env.fastForward(ctx, p, t, target, targetSHA, head); err != nil {
 		if codeOf(err) == ExitInterrupted {
@@ -395,12 +403,6 @@ func (env Env) mergeOne(ctx context.Context, p *project, t store.Task, acc []*ac
 			// merge settles it from what git holds (§10.4).
 			return false, err
 		}
-		return back(store.StageDone, err)
-	}
-	// Open tasks into the same target whose claims cover a file this merge
-	// changes must rebase before their next QA round (§9.4 step 5).
-	hits, err := env.claimsHit(ctx, p, t, target, targetSHA)
-	if err != nil {
 		return back(store.StageDone, err)
 	}
 	var unblocked, rebase []int64
