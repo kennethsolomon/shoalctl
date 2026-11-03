@@ -36,7 +36,7 @@ func validAgent(name string) error {
 }
 
 // closedStages end a task's working life: no claims or messages after them.
-var closedStages = []string{store.StageMerged}
+var closedStages = []string{store.StageMerged, store.StageFolded}
 
 func (env Env) cmdMsg(ctx context.Context, args []string) error {
 	if len(args) == 0 {

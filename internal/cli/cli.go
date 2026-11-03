@@ -128,6 +128,7 @@ const usage = `usage: shoalctl <command> [args]
 commands:
   init [--commit-config] [--rebind]
   new <feature|bugfix|hotfix> "<title>" [--ask "<text>" | --ask-file <path>] [--scope "<text>"]...
+  plan <task> [--todo <file>] <glob>...    expected file claims; asks on overlap (s/m/p/?)
   start <task> [--model <model>]
   status [--json]
   test <task> [--kind gate|qa|baseline]
@@ -176,6 +177,8 @@ func Main(args []string, env Env, version string) int {
 		err = env.cmdInit(ctx, args[1:])
 	case "new":
 		err = env.cmdNew(ctx, args[1:])
+	case "plan":
+		err = env.cmdPlan(ctx, args[1:])
 	case "start":
 		err = env.cmdStart(ctx, args[1:])
 	case "status":

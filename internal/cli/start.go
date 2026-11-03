@@ -56,9 +56,12 @@ func (env Env) cmdStart(ctx context.Context, args []string) error {
 	if t, err = p.db.GetTask(ctx, t.Slug); err != nil {
 		return err
 	}
-	resumable := []string{store.StageNew, store.StageStarting, store.StageBaselineFailed}
+	if t.Stage == store.StageBlocked {
+		return env.blockedError(ctx, p, t)
+	}
+	resumable := []string{store.StageNew, store.StageReady, store.StageStarting, store.StageBaselineFailed}
 	if !contains(resumable, t.Stage) {
-		return fail(ExitState, "task %s is at %q; start needs new, starting or baseline-failed", t.Slug, t.Stage)
+		return fail(ExitState, "task %s is at %q; start needs new, ready, starting or baseline-failed", t.Slug, t.Stage)
 	}
 
 	if err := env.checkTmux(ctx); err != nil {
@@ -86,7 +89,9 @@ func (env Env) cmdStart(ctx context.Context, args []string) error {
 	}
 	branch := t.Lane + "/" + t.Slug
 	wt := p.worktree(t.Slug)
-	if t, err = p.db.Update(ctx, t, resumable, "stage = ?, base_ref = ?, base_sha = ?, branch = ?, worktree = ?",
+	// prev_stage remembers where a crash mid-start rolls back to (§10.4).
+	if t, err = p.db.Update(ctx, t, resumable, "prev_stage = CASE WHEN stage = '"+store.StageStarting+"' THEN prev_stage ELSE stage END, "+
+		"stage = ?, base_ref = ?, base_sha = ?, branch = ?, worktree = ?",
 		[]any{store.StageStarting, baseRef, baseSHA, branch, wt}, nil); err != nil {
 		return err
 	}
@@ -100,6 +105,9 @@ func (env Env) cmdStart(ctx context.Context, args []string) error {
 		}
 	}
 	if err := writeTaskFile(wt, taskFile{ProjectID: p.id, TaskID: t.ID, Slug: t.Slug}); err != nil {
+		return err
+	}
+	if err := copyPlanTodo(p, t.Slug, wt); err != nil {
 		return err
 	}
 
@@ -132,7 +140,7 @@ func (env Env) cmdStart(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := writePrivate(filepath.Join(wt, ".shoal", "brief.md"), []byte(renderBrief(t, p.cfg, base, results, items))); err != nil {
+	if err := writePrivate(filepath.Join(wt, ".shoal", "brief.md"), []byte(renderBrief(t, p.cfg, base, results, items, fileExists(filepath.Join(wt, ".shoal", "todo.md"))))); err != nil {
 		return err
 	}
 
@@ -150,6 +158,40 @@ func (env Env) cmdStart(ctx context.Context, args []string) error {
 		fmt.Fprintf(env.Stdout, "attach with: tmux attach -t %s\n", session)
 	}
 	return nil
+}
+
+// blockedError explains why a serialized task cannot start yet (§9.2 s).
+func (env Env) blockedError(ctx context.Context, p *project, t store.Task) error {
+	ids, err := p.db.Blockers(ctx, t.ID)
+	if err != nil {
+		return err
+	}
+	var names []string
+	for _, id := range ids {
+		b, err := p.db.GetTask(ctx, fmt.Sprint(id))
+		if err != nil {
+			return err
+		}
+		names = append(names, fmt.Sprintf("%s (%s)", b.Slug, b.Stage))
+	}
+	return fail(ExitState, "task %s is blocked: it was serialized behind %s and starts after it merges. "+
+		"To run it in parallel anyway, plan it again and press p", t.Slug, strings.Join(names, ", "))
+}
+
+// copyPlanTodo puts the todo.md plan stored into the worktree once.
+func copyPlanTodo(p *project, slug, wt string) error {
+	data, err := os.ReadFile(planTodoPath(p, slug))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read the plan's todo.md: %w", err)
+	}
+	dst := filepath.Join(wt, ".shoal", "todo.md")
+	if _, err := os.Stat(dst); err == nil {
+		return nil
+	}
+	return writePrivate(dst, data)
 }
 
 // resolveBase finds the start point: [merge].base for feature and bugfix,
@@ -588,7 +630,12 @@ func renderTeam(b *strings.Builder, t store.Task, cfg config.Config, items []sto
 	}
 }
 
-func renderBrief(t store.Task, cfg config.Config, base store.Run, results []store.Result, items []store.ScopeItem) string {
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func renderBrief(t store.Task, cfg config.Config, base store.Run, results []store.Result, items []store.ScopeItem, hasTodo bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Task %s: %s\nLane: %s · Branch: %s · Base: %s @ %s\n\n## Ask\n%s\n\n",
 		t.Slug, t.Title, t.Lane, t.Branch, t.BaseRef, shortSHA(t.BaseSHA), t.Ask)
@@ -614,6 +661,9 @@ func renderBrief(t store.Task, cfg config.Config, base store.Run, results []stor
 			}
 		}
 		b.WriteString("\n")
+	}
+	if hasTodo {
+		b.WriteString("## Plan\nYour todo.md is .shoal/todo.md (from shoalctl plan). Keep it current.\n\n")
 	}
 	fmt.Fprintf(&b, "## Rules for this lane\n- %s\n- Do not break any test listed as passing at baseline.\n", laneRules[t.Lane])
 	if cfg.Tests.Format != "none" {
