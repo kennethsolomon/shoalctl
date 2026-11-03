@@ -70,7 +70,9 @@ type doctor struct {
 
 func (d *doctor) ok(format string, a ...any) { fmt.Fprintf(d.env.Stdout, "ok   "+format+"\n", a...) }
 
-func (d *doctor) fixed(format string, a ...any) { fmt.Fprintf(d.env.Stdout, "fixed "+format+"\n", a...) }
+func (d *doctor) fixed(format string, a ...any) {
+	fmt.Fprintf(d.env.Stdout, "fixed "+format+"\n", a...)
+}
 
 func (d *doctor) problem(format string, a ...any) {
 	d.problems++
