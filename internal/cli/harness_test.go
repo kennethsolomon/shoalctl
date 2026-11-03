@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -174,4 +175,18 @@ func waitFor(t *testing.T, cond func() bool) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+func readPID(t *testing.T, path string) int {
+	t.Helper()
+	waitFor(t, func() bool {
+		data, err := os.ReadFile(path)
+		return err == nil && strings.TrimSpace(string(data)) != ""
+	})
+	data, _ := os.ReadFile(path)
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("pid in %s: %v", path, err)
+	}
+	return pid
 }

@@ -25,20 +25,6 @@ func longSuite(dir string) string {
 
 const quickSuite = "[tests]\ncommand = \"true\"\nformat = \"exit-code\"\n"
 
-func readPID(t *testing.T, path string) int {
-	t.Helper()
-	waitFor(t, func() bool {
-		data, err := os.ReadFile(path)
-		return err == nil && strings.TrimSpace(string(data)) != ""
-	})
-	data, _ := os.ReadFile(path)
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil {
-		t.Fatalf("pid in %s: %v", path, err)
-	}
-	return pid
-}
-
 func alive(pid int) bool { return syscall.Kill(pid, 0) == nil }
 
 func waitGone(t *testing.T, within time.Duration, pids ...int) {
