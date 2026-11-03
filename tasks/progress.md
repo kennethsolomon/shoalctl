@@ -1,3 +1,50 @@
+# Phase 2 progress
+
+Plan: [todo.md](todo.md). Base: `6d33f87`.
+
+## Where I am
+
+- Done: 1-17. `plan`, the merge queue, the full `doctor`, the attention watcher and the merge-output
+  fix are built; the three Done-when rows plus the watcher and merge output have end-to-end tests in
+  `internal/cli/phase2_e2e_test.go`.
+- Gates run from a fresh clone at the final HEAD (see the report): vet and staticcheck x3 GOOS,
+  `go test -race -count=1 ./...`, `go test -c` per package for linux and windows, no ignored source file.
+- Next: Phase 3 (not started).
+
+## Decisions
+
+Spec ambiguities resolved with the safest option; each is a row in docs/spec.md §16 (46-57).
+
+- `plan` runs before `start` (new/ready/blocked); planning stays optional, `start` still runs from `new`.
+- Only a human at a terminal resolves an overlap; otherwise nothing is written, exit 5. Key + Enter, like `scope review`.
+- Plan claims belong to `(plan)` and never conflict with per-agent claims of the same task.
+- `s` against several tasks: one `task_blockers` row each; ready when all merged; `s` refused when it would deadlock.
+- `m` folds claims, user scope items and the ask into an unfinished task, messages its agents, closes the task as `folded`.
+- Stale = started task, window gone, last sign of life older than `stale_after`; computed on read (`expires_at` unused).
+- Wildcard overlap is now exact (fixes the Phase 1 open risk); literal globs cover their subtree against literals too.
+- Queue target derived per task, not stored; `merge` keeps Phase 1's stop-at-first-error.
+- After a merge only in-progress/qa tasks of the same target are marked `needs-rebase`; `qa` rebases them first.
+- `doctor`: rollback via `prev_stage`; settle via `settleMerging`; abort a merge's rebase only after a human `y`;
+  no-pid running runs marked error (the suite gate means they never ran); prune only shoal's gone worktrees;
+  `worktree-missing` stays a problem until the worktree is back.
+- Watcher: detached `shoalctl watch`, 2 s ticker, `watch-<id>.lock`, flag without a version bump, stops on
+  window/pane gone, stage change or signal; spawn failure is a warning.
+
+## Deviations from the spec
+
+- Spec §14 step 5 (Bug A's lesson in Bug B's brief) needs the Phase 3 lessons table; the e2e covers steps 1-5 otherwise.
+- "Overlap found late (from actual claims)" in §9.2 needs `PostToolUse` (Phase 3).
+- The overlap prompt reads a line (key + Enter), not a raw keypress.
+
+## Open risks
+
+- The detector is a heuristic over the visible pane; a Claude Code redesign of its dialogs needs new fixtures.
+- A start killed between opening the tmux window and recording it leaves a window doctor cannot link to the task.
+- `needs-rebase` marking is computed from claims read just before the merge's transaction (merge.lock held); a claim
+  added in that gap is missed, and that task is still rebased by `merge` itself when its turn comes.
+
+---
+
 # Phase 1 progress
 
 Plan: [todo.md](todo.md). Base: `496e05c`.

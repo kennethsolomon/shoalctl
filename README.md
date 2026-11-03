@@ -19,7 +19,7 @@
 
 ## Status
 
-> **Pre-alpha, not yet released.** Phases 0 and 1 are built: `init`, `new`, `start`, `status`, `done`, a minimal `doctor`, the `shoal-*` agent team (`agents`, `msg`, `contract`, `claim`/`release`), the QA loop (`qa`), the scope matrix (`scope`), red/green proofs (`repro`), the `test` command, and the zero-regression `merge` gate. Everything else (`plan`, `recall`, `why`, injecting hooks, and the rest) is **planned**; each feature and command below is marked, and the [Roadmap](#roadmap) gives the phase. [`docs/spec.md`](docs/spec.md) is the full design. Screenshots are mockups.
+> **Pre-alpha, not yet released.** Phases 0, 1 and 2 are built: `init`, `new`, `plan` (cross-task claims and the overlap prompt), `start` (with an attention watcher), `status`, `done`, the full `doctor`, the `shoal-*` agent team (`agents`, `msg`, `contract`, `claim`/`release`), the QA loop (`qa`), the scope matrix (`scope`), red/green proofs (`repro`), the `test` command, and the zero-regression `merge` gate with its per-branch queue. Everything else (`recall`, `why`, injecting hooks, and the rest) is **planned**; each feature and command below is marked, and the [Roadmap](#roadmap) gives the phase. [`docs/spec.md`](docs/spec.md) is the full design. Screenshots are mockups.
 
 ## What is shoal
 
@@ -43,10 +43,13 @@ Each item says whether it is built or planned. See [Roadmap](#roadmap) for the p
 
 - **One task, one worktree, one tmux window** (built). Parallel work stays isolated.
 - **Baseline test run at start** (built). Every task records which tests passed before it touched anything. Flaky tests are re-run (`[tests].flaky_retries`); a test flaky at baseline is quarantined and listed in every report.
-- **Zero-regression merge gate** (built). `shoalctl merge` takes done tasks oldest first, one at a time: rebase onto the target, baseline at the new base, full suite, lint and build. A test that passed before and fails, disappears, gets skipped or turns flaky blocks the merge (exit 9). So does a test that fails at the baseline but passed earlier in the task (a clean baseline worktree has no ignored files such as `.env`; `[tests].setup` can copy them in, and a failing setup stops the merge with exit 6). With no `[tests].setup`, any test failing at the baseline blocks too, since a clean worktree's failure proves nothing about the task's; configure `setup` (`"true"` if a clean worktree is enough) or accept it as a human. Also blocking: a coverage drop on a changed file when coverage is configured. The only override is `--task <task> --accept-regression <test> --reason "<why>"`: an acceptance always names the one task it covers, needs a human at a terminal (an agent is refused, exit 5), and is recorded in the report. A task an interrupted merge left at `merging` is settled by the next `merge`. Never pushes.
+- **Zero-regression merge gate** (built). `shoalctl merge` takes done tasks oldest first, one at a time: rebase onto the target, baseline at the new base, full suite, lint and build. A test that passed before and fails, disappears, gets skipped or turns flaky blocks the merge (exit 9). So does a test that fails at the baseline but passed earlier in the task (a clean baseline worktree has no ignored files such as `.env`; `[tests].setup` can copy them in, and a failing setup stops the merge with exit 6). With no `[tests].setup`, any test failing at the baseline blocks too, since a clean worktree's failure proves nothing about the task's; configure `setup` (`"true"` if a clean worktree is enough) or accept it as a human. Also blocking: a coverage drop on a changed file when coverage is configured. The only override is `--task <task> --accept-regression <test> --reason "<why>"`: an acceptance always names the one task it covers, needs a human at a terminal (an agent is refused, exit 5), and is recorded in the report. `merge` prints each accepted row with its reason before `merged`; if anything still blocks, nothing is recorded and the task goes back to `qa`, and the message lists both. A task an interrupted merge left at `merging` is settled by the next `merge`. Never pushes.
 - **Agent team per task** (built). Eight `shoal-*` Claude Code agent definitions (lead, backend, frontend, integration, docs, three QA roles), per-agent file claims inside a task, messages in the store, and a frozen API contract the QA round checks.
 - **Scope you ask for is enforced** (built). "Also test X" becomes a case matrix (happy, boundary, invalid, empty, permission, concurrency, failure, ui-state); `done` refuses until every row is green or a human waives it.
-- **Overlap check at planning time** (planned). Each task claims file globs. Collisions trigger a one-keypress prompt: serialize, merge, or run in parallel anyway.
+- **Overlap check at planning time** (built). `shoalctl plan <task> <glob>...` records the files a task expects to touch. An overlap with another open task asks a human, one key: `s` serialize (the task waits and starts after the other merges), `m` merge (fold it into the other task), `p` run in parallel anyway, `?` show the paths and both `todo.md` heads. Without a human at a terminal nothing is planned (exit 5). Two plans can never both win one path. A claim of a session that died (window gone, silent past `[claims].stale_after`) is shown as stale and never blocks.
+- **Merge queue per target branch** (built). `done` queues the task; `merge` takes the queue in order. A merge unblocks the tasks serialized behind it and marks tasks whose claims cover a merged file `needs-rebase`; their next `qa` rebases them onto the new base first.
+- **Needs-attention flag** (built). `start` launches a watcher that reads the session's tmux pane every 2 s; while Claude Code shows a trust or permission dialog (or any y/n prompt), `status` shows `NEEDS ATTENTION`. shoal never answers a dialog.
+- **Crash recovery** (built). `shoalctl doctor --fix` rolls back a task killed mid-`start`, settles an interrupted merge, clears abandoned test runs, releases stale claims, prunes gone worktrees and forgets closed windows. It asks before aborting a rebase and never deletes your files.
 - **Three lanes: feature, bugfix, hotfix** (built). Features list each new behaviour and need a new passing test for it; bugfixes and hotfixes need a recorded red-then-green regression test (`repro`; green must be on a later commit that changes something, but shoal cannot prove that commit is the real fix: a whitespace-only or unrelated change passes, so the reviewer judges the diff); hotfixes branch from production, keep to a line budget, merge back into the production branch, and leave a backport task. QA is capped at 3 rounds, then the task escalates to you.
 - **File-scoped memory** (planned). Hooks inject only the lessons and decisions that match the file being touched, once per session. Session-start brief stays under ~1k tokens.
 - **`shoalctl why`** (planned). Stored root cause plus live `git log`, so a regression points at the commit that undid the fix.
@@ -55,7 +58,7 @@ Each item says whether it is built or planned. See [Roadmap](#roadmap) for the p
 
 ## Screenshots
 
-> Mockups of the intended design. `status` and the task report exist with plainer output; the overlap prompt and `shoalctl why` are planned.
+> Mockups of the intended design. `status`, the task report and the overlap prompt exist with plainer output; `shoalctl why` is planned.
 
 | | |
 |---|---|
@@ -80,16 +83,17 @@ cd your-repo
 shoalctl init           # register the project, wire hooks (stealth, nothing committed); prints the config path
                         # edit that config: set [tests].command, or format = "none" if there are no tests
 shoalctl new bugfix "Users page shows wrong display name"   # prints the slug, e.g. 1-users-page-shows-wrong-display-name
-shoalctl start 1        # branch + worktree + baseline test run + tmux window + claude
+shoalctl plan 1 app/Models/User.php 'resources/js/users/**'  # optional: expected files; asks on overlap with another task
+shoalctl start 1        # branch + worktree + baseline test run + tmux window + claude + attention watcher
 shoalctl status         # board of tasks
 # when the agent says it is finished, exit claude in its window (/exit), then:
 shoalctl qa 1           # one QA round: contract, suite vs baseline, lint, build (3 rounds max, then escalated)
 shoalctl done 1         # final run; refuses without a red/green proof, with open scope rows, or over the hotfix budget
-shoalctl merge          # gate + fast-forward of every done task, oldest first; never pushes
-shoalctl doctor         # check the hook entries; doctor --fix repairs them after you move the binary
+shoalctl merge          # gate + fast-forward of every queued task, in order; never pushes
+shoalctl doctor         # check hooks, DB, stuck tasks and runs, worktrees, windows, claims; --fix repairs what is safe
 ```
 
-Once per machine, `shoalctl agents install` puts the `shoal-*` agent definitions in `~/.claude/agents/` (or the repo's `.claude/agents/` with `--commit`). Planned, not built yet: `shoalctl plan <task>` (cross-task file claims and the overlap check, Phase 2).
+Once per machine, `shoalctl agents install` puts the `shoal-*` agent definitions in `~/.claude/agents/` (or the repo's `.claude/agents/` with `--commit`). Planning is optional: `start` also runs a task straight from `new`.
 
 Requirements: macOS or Linux, git 2.31+, tmux 3.2+, and Claude Code (`claude` on `PATH`, trusted once in the main checkout: run `claude` there and choose *Yes, I trust this folder*).
 
@@ -122,7 +126,7 @@ flowchart LR
     D -. decisions, bugs .-> H
 ```
 
-The diagram is the full design. Built today: `new` → `start` → `qa` → `done` → `merge`; `plan` and the cross-task claims arrive in Phase 2.
+The diagram is the full design. Built today: `new` → `plan` → `start` → `qa` → `done` → `merge`; the memory and injecting hooks arrive in Phase 3.
 
 - Sessions never talk to each other. They coordinate through one SQLite file in WAL mode.
 - Claude Code hooks call the shoalctl binary (today shoal registers `SessionStart` and `Stop` as silent heartbeats; the injecting `PreToolUse` and `PostToolUse` handlers are planned), which is why it's written in Go: hooks fire on every file touch, so startup time matters. A hook-shaped call (open the DB, run one FTS5 query) measured about 8-12 ms, against about 40-65 ms for Python just to import `sqlite3` ([Phase 0 results](docs/phase-0-results.md)).
@@ -173,6 +177,7 @@ timeout = "30m"
 coverage_format = ""                                # "" (off) | lcov | cobertura | go-cover
 coverage_path = ""                                  # report path relative to the worktree
 setup = ""                                          # optional; runs in each clean baseline worktree first, e.g. "cp {root}/.env ."
+                                                    # setup = "true" turns the no-setup safety block off without doing any setup (it reopens the ignored-file hole)
 
 [stack]
 name  = "laravel"
@@ -212,8 +217,9 @@ deny_globs = [".env*"]
 |---------|--------------|--------|
 | `shoalctl init` | Register the project and wire hooks (stealth by default) | Built |
 | `shoalctl new <feature\|bugfix\|hotfix> "<title>"` | Create a task | Built |
-| `shoalctl start <task> [--model <m>]` | Branch + worktree + baseline test run + tmux window + `claude` | Built |
-| `shoalctl status [--json]` | Board of all tasks | Built |
+| `shoalctl plan <task> [--todo <file>] <glob>...` | Expected file claims and `todo.md` before start; one-keypress overlap prompt (`s`/`m`/`p`/`?`) | Built |
+| `shoalctl start <task> [--model <m>]` | Branch + worktree + baseline test run + tmux window + `claude` + attention watcher; refuses a `blocked` task | Built |
+| `shoalctl status [--json]` | Board of all tasks; NOTE shows needs-attention, blocked-by, queue position, claims | Built |
 | `shoalctl done <task> [--force] [--accept-large-diff --reason "<r>"]` | Final test run, proof/scope/contract/budget checks, summary and report; a hotfix creates its backport task | Built |
 | `shoalctl qa <task>` | One QA round: contract hash, suite vs baseline, lint, build. 3 rounds, then escalated | Built |
 | `shoalctl merge [--task <task> [--accept-regression <t> --reason "<r>"]...]` | Merge done tasks oldest first through the gate, under `merge.lock` (only `<task>` with `--task`, which `--accept-regression` requires); never pushes | Built |
@@ -225,9 +231,9 @@ deny_globs = [".env*"]
 | `shoalctl contract freeze <task>` | Freeze `contract.md`; later changes need a new version and a note | Built |
 | `shoalctl claim` / `release <task> --as <agent> <glob>...` | Per-agent file claims inside one task | Built |
 | `shoalctl msg send\|inbox <task> ...` | Messages between the agents of one task | Built |
-| `shoalctl doctor [--fix]` | Check, and repair, shoal's hook entries (the full doctor is Phase 2) | Built (minimal) |
+| `shoalctl doctor [--fix]` | Check hooks, DB integrity and migrations, the merge queue, stuck tasks and runs, worktrees, tmux windows and stale claims; `--fix` repairs what is safe | Built |
+| `shoalctl watch <task>` | Internal: the attention watcher `start` launches | Built |
 | `shoalctl brief` | Print the session-start brief (also run by the `SessionStart` hook) | Planned (Phase 3) |
-| `shoalctl plan <task>` | Write `todo.md` and file claims, run the overlap check | Planned (Phase 2) |
 | `shoalctl recall <query>` | Full-text search over decisions, lessons, bugs, conventions | Planned (Phase 3) |
 | `shoalctl why <file\|sha\|bug>` | Stored WHY plus live `git log` | Planned (Phase 3) |
 | `shoalctl convention propose\|agree\|retire` | Manage conventions | Planned (Phase 4) |
@@ -244,13 +250,13 @@ deny_globs = [".env*"]
 | 2 | Usage error |
 | 3 | Config error (not a git repo, invalid config, unsafe settings file, DB newer than the binary) |
 | 4 | Not found (unknown task) |
-| 5 | Invalid state (wrong stage, uncommitted changes, no commits) |
+| 5 | Invalid state (wrong stage, a `blocked` task at `start`, an overlap at `plan` with no human at a terminal, uncommitted changes, no commits) |
 | 6 | Baseline could not be recorded |
 | 7 | Missing dependency (`git`, `tmux`, `claude`) |
 | 8 | Busy (lock held, or an earlier run may still be alive) |
-| 9 | Gate blocked: a regression at `merge`, `qa` or `test`, a failed `repro`, or a rebase conflict |
+| 9 | Gate blocked: a regression at `merge`, `qa` or `test`, a failed `repro`, or a rebase conflict (at `merge`, or when `qa` rebases a `needs-rebase` task) |
 | 10 | `done` refused (no red/green proof, open scope rows, changed contract, hotfix over budget) |
-| 11 | `doctor` found problems it did not fix |
+| 11 | `doctor` found problems it did not fix (with `--fix`: problems a human has to decide) |
 | 12 | Claude Code has not trusted the main checkout |
 | 130 | Interrupted (SIGINT, SIGTERM, SIGHUP); a running suite was stopped and recorded `cancelled` |
 
@@ -269,7 +275,7 @@ deny_globs = [".env*"]
 | Design | Spec, README, mockups | **Done** |
 | 0: MVP | `init`, `new`, `start`, `status`, `done`, minimal hook-only `doctor`, baseline test run, report render | **Built** (not yet released) |
 | 1: Agent team + merge gate | `shoal-*` agents, messages, contracts, QA loop, scope matrix, hotfix backport, zero-regression merge gate, serialized `merge` | **Built** (not yet released) |
-| 2: Claims + queue | Cross-task file claims, overlap prompt, per-target merge queue, full `doctor` | Planned |
+| 2: Claims + queue | Cross-task file claims, overlap prompt, per-target merge queue, full `doctor`, attention watcher | **Built** (not yet released) |
 | 3: Memory + hooks | Lessons, decisions, bugs, FTS5, injecting hooks, `why`, `recall` | Planned |
 | 4: Conventions | Convention lifecycle, lesson promotion, managed CLAUDE.md block | Planned |
 | 5: Publish | `export`/`purge`/`uninstall`, releases, Homebrew tap | Planned |
