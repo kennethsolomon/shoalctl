@@ -223,7 +223,7 @@ func TestUnknownTmuxNeverExpiresClaims(t *testing.T) {
 	h.env.Tmux = filepath.Join(t.TempDir(), "no-tmux-here")
 	h.expectCode(ExitState, "plan", b, "api/x.go")
 	_, out, errOut := h.run("doctor", "--fix")
-	mustContain(t, "doctor without tmux", out+errOut, "tmux did not answer")
+	mustContain(t, "doctor without tmux", out+errOut, "the window @7 of "+a, "cannot be checked", "tmux could not run")
 	if strings.Contains(out+errOut, "released") || strings.Contains(out+errOut, "forgot") {
 		t.Fatalf("doctor without tmux released claims:\n%s\n%s", out, errOut)
 	}
@@ -366,4 +366,41 @@ func TestClaimsHitMatchesFilesInBracketedDirectories(t *testing.T) {
 	if err != nil || len(hits) != 1 || hits[0].task.Slug != b || hits[0].paths[0] != "app/[slug]/page.tsx" {
 		t.Fatalf("hits = %+v, %v", hits, err)
 	}
+}
+
+// TestMissingDefaultSocketMeansNoServer: after a reboot the default tmux
+// socket file is gone and tmux says "error connecting to ... (No such file or
+// directory)". For a task with no recorded socket that is "no server", so its
+// old claim goes stale; with a -S/-L override it stays unknown, and doctor
+// says exactly why.
+func TestMissingDefaultSocketMeansNoServer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake tmux is a shell script")
+	}
+	h := newHarness(t)
+	p := h.initWith(junitConfig)
+	a, b := newTask(t, h, "bugfix", "Before reboot"), newTask(t, h, "bugfix", "Next")
+	h.mustRun("plan", a, "api/**")
+	sqlExec(t, p, `UPDATE tasks SET stage = 'in-progress', tmux_window = '@3', tmux_socket = '', last_seen_at = '2026-01-01T00:00:00Z', started_at = '2026-01-01T00:00:00Z' WHERE slug = ?`, a)
+	sqlExec(t, p, `UPDATE file_claims SET created_at = '2026-01-01T00:00:00Z'`)
+	fake := filepath.Join(t.TempDir(), "tmux")
+	missing := fmt.Sprintf("/private/tmp/tmux-%d/default", os.Getuid())
+	testutil.WriteFile(t, fake, "#!/bin/sh\necho 'error connecting to "+missing+" (No such file or directory)' >&2\nexit 1\n")
+	if err := os.Chmod(fake, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h.env.Tmux = fake
+
+	h.env.TmuxArgs = []string{"-L", "elsewhere"} // not the default socket
+	h.expectCode(ExitState, "plan", b, "api/x.go")
+	_, out, errOut := h.run("doctor")
+	mustContain(t, "doctor with an override", out+errOut, "the window @3 of "+a+" cannot be checked", "elsewhere", "No such file or directory")
+
+	other := filepath.Join(t.TempDir(), "notdefault")
+	testutil.WriteFile(t, fake, "#!/bin/sh\necho 'error connecting to "+other+" (No such file or directory)' >&2\nexit 1\n")
+	h.env.TmuxArgs = nil
+	h.expectCode(ExitState, "plan", b, "api/x.go") // a missing socket that is not tmux-<uid>/default
+
+	testutil.WriteFile(t, fake, "#!/bin/sh\necho 'error connecting to "+missing+" (No such file or directory)' >&2\nexit 1\n")
+	mustContain(t, "missing default socket", h.mustRun("plan", b, "api/x.go"), "stale: "+a, "ready")
 }

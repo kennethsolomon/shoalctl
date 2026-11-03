@@ -62,7 +62,7 @@ Vex returned HOLD on `783d968`; each fix is test-first in its own commit (spec Â
 - Watcher: not restarted when a task goes back from `done` to `qa`; one write transaction every 2 s; exits on the
   first DB error (its flag is then cleared, or left for `doctor --fix` if it was killed).
 - Tasks started before migration 0005 have no recorded socket: their liveness asks the caller's default tmux server,
-  accepting only "no server running on" as gone. A window on another server reads as gone once that server says so.
+  accepting "no server running on", or a missing default socket file (`tmux-<uid>/default`), as gone. A window on another server reads as gone once that server says so.
 - `status` WINDOW still asks the caller's default tmux server (display only; never releases anything).
 
 ---

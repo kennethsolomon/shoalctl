@@ -282,10 +282,11 @@ func latestTime(ts ...string) time.Time {
 }
 
 // windowList is what one tmux server said: its window ids, and whether the
-// answer can be trusted.
+// answer can be trusted; why says what went wrong when it cannot.
 type windowList struct {
 	live  map[string]bool
 	known bool
+	why   string
 }
 
 // tmuxServers holds one answer per tmux socket, asked up front so no tmux
@@ -314,6 +315,14 @@ func (s tmuxServers) alive(t store.Task) (alive, known bool) {
 	return t.TmuxWindow != "" && l.live[t.TmuxWindow], true
 }
 
+// why says why t's window cannot be checked.
+func (s tmuxServers) why(t store.Task) string {
+	if l, ok := s[t.TmuxSocket]; ok {
+		return l.why
+	}
+	return "its tmux server was not asked"
+}
+
 // listWindows lists the window ids of one tmux server: the socket start
 // recorded, or the caller's own server when none was. Only a clean "no
 // server" on that socket means no windows. A missing tmux binary, or any
@@ -325,7 +334,14 @@ func (env Env) listWindows(ctx context.Context, socket string) windowList {
 	}
 	out, err := e.tmux(ctx, "list-windows", "-a", "-F", "#{window_id}")
 	if err != nil {
-		return windowList{known: noTmuxServer(err, socket)}
+		var ee *exec.ExitError
+		switch {
+		case !errors.As(err, &ee):
+			return windowList{why: "tmux could not run: " + err.Error()} // not installed, not on PATH, or not executable
+		case noTmuxServer(err, socket, len(e.TmuxArgs) == 0):
+			return windowList{known: true}
+		}
+		return windowList{why: err.Error()}
 	}
 	live := map[string]bool{}
 	for _, id := range strings.Fields(out) {
@@ -334,18 +350,27 @@ func (env Env) listWindows(ctx context.Context, socket string) windowList {
 	return windowList{live: live, known: true}
 }
 
-// noTmuxServer reports whether tmux ran and said that nothing listens on
-// socket: "no server running on <socket>", or, for a recorded socket, that
-// the socket file is gone. With no recorded socket only the first counts.
-func noTmuxServer(err error, socket string) bool {
-	var ee *exec.ExitError
-	if !errors.As(err, &ee) {
-		return false // tmux did not run: not installed, not on PATH, or not executable
-	}
+// noTmuxServer reports whether tmux said that nothing listens on socket: "no
+// server running on <socket>", or that the socket file is gone. With no
+// recorded socket the file counts as gone only for the default socket
+// (tmux-<uid>/default, which a reboot removes, and only with no -S/-L
+// override); a missing socket elsewhere stays unknown.
+func noTmuxServer(err error, socket string, defaultServer bool) bool {
 	msg := err.Error()
-	if socket == "" {
-		return strings.Contains(msg, "no server running on ")
+	if socket != "" {
+		return strings.Contains(msg, "no server running on "+socket) ||
+			strings.Contains(msg, "error connecting to "+socket+" (No such file or directory)")
 	}
-	return strings.Contains(msg, "no server running on "+socket) ||
-		strings.Contains(msg, "error connecting to "+socket+" (No such file or directory)")
+	if strings.Contains(msg, "no server running on ") {
+		return true
+	}
+	if !defaultServer {
+		return false
+	}
+	_, rest, ok := strings.Cut(msg, "error connecting to ")
+	if !ok {
+		return false
+	}
+	path, _, ok := strings.Cut(rest, " (No such file or directory)")
+	return ok && strings.HasSuffix(path, fmt.Sprintf("/tmux-%d/default", os.Getuid()))
 }

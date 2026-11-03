@@ -505,7 +505,7 @@ func (d *doctor) windows(ctx context.Context, p *project) error {
 		}
 		alive, known := wins.alive(t)
 		if !known {
-			d.problem("tmux did not answer%s, so the window %s of %s cannot be checked", socketNote(t.TmuxSocket), t.TmuxWindow, t.Slug)
+			d.problem("the window %s of %s%s cannot be checked, so its claims never go stale: %s", t.TmuxWindow, t.Slug, socketNote(t.TmuxSocket), wins.why(t))
 			clean = false
 			continue
 		}
