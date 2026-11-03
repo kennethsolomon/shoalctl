@@ -92,12 +92,14 @@ func (env Env) watchTask(ctx context.Context, p *project, id int64, every time.D
 			return err
 		}
 		reason, _ := attention.Detect(screen)
-		changed, err := p.db.SetAttention(ctx, id, reason)
-		if err != nil {
-			return quietOnCancel(ctx, err)
-		}
-		if changed && reason != "" {
-			fmt.Fprintf(env.Stdout, "%s %s needs attention: %s\n", nowUTC(), t.Slug, reason)
+		if reason != t.Attention { // a steady pane writes nothing
+			changed, err := p.db.SetAttention(ctx, id, reason)
+			if err != nil {
+				return quietOnCancel(ctx, err)
+			}
+			if changed && reason != "" {
+				fmt.Fprintf(env.Stdout, "%s %s needs attention: %s\n", nowUTC(), t.Slug, reason)
+			}
 		}
 		select {
 		case <-ctx.Done():

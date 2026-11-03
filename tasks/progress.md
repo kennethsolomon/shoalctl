@@ -59,7 +59,7 @@ Vex returned HOLD on `783d968`; each fix is test-first in its own commit (spec ย
   the merge's transaction is missed, and that task is still rebased by `merge` itself when its turn comes.
 - `merge` stops at the first error across all targets, so a blocked `main` task holds back a hotfix queued after it
   (spec row 52, ยง9.4; README no longer says "per target"). `merge --task <task>` merges one task.
-- Watcher: not restarted when a task goes back from `done` to `qa`; one write transaction every 2 s; exits on the
+- Watcher: not restarted when a task goes back from `done` to `qa`; writes only when the flag changes; exits on the
   first DB error (its flag is then cleared, or left for `doctor --fix` if it was killed).
 - Tasks started before migration 0005 have no recorded socket: their liveness asks the caller's default tmux server,
   accepting "no server running on", or a missing default socket file (`tmux-<uid>/default`), as gone. A window on another server reads as gone once that server says so.

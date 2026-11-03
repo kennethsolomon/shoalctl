@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,7 +14,7 @@ import (
 )
 
 // fakeTmux answers display-message with the contents of <dir>/dead and
-// capture-pane with <dir>/screen; when <dir>/gone exists it fails like tmux
+// capture-pane with <dir>/screen (counting captures in <dir>/captures); when <dir>/gone exists it fails like tmux
 // does for a closed window.
 func fakeTmux(t *testing.T, dir string) string {
 	t.Helper()
@@ -25,7 +26,7 @@ if [ -f "$d/gone" ]; then echo "can't find window: @1" >&2; exit 1; fi
 for a in "$@"; do
   case "$a" in
     display-message) cat "$d/dead" 2>/dev/null || echo 0; exit 0 ;;
-    capture-pane) cat "$d/screen" 2>/dev/null; exit 0 ;;
+    capture-pane) echo x >> "$d/captures"; cat "$d/screen" 2>/dev/null; exit 0 ;;
   esac
 done
 exit 0
@@ -116,6 +117,44 @@ func TestWatchFlagsAndClearsAttention(t *testing.T) {
 	if a := r.attention(t); a != "" {
 		t.Fatalf("flag left after the window closed: %q", a)
 	}
+}
+
+// TestWatchSteadyStateDoesNotWrite: while the pane keeps showing the same
+// dialog the flag is already set, so the watcher writes nothing. Another
+// connection holds the write lock; the watcher must keep capturing.
+func TestWatchSteadyStateDoesNotWrite(t *testing.T) {
+	r := newWatchRig(t)
+	r.screen(t, fixture(t, "trust.txt"))
+	done := r.run(t, context.Background())
+	waitFor(t, func() bool { return r.attention(t) != "" })
+
+	db := openRaw(t, r.p.dbPath())
+	defer db.Close()
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
+		t.Fatal(err)
+	}
+	captures := func() int { return strings.Count(readFile(t, filepath.Join(r.dir, "captures")), "x") }
+	before := captures()
+	time.Sleep(300 * time.Millisecond)
+	got := captures() - before
+	if _, err := conn.ExecContext(context.Background(), "ROLLBACK"); err != nil {
+		t.Fatal(err)
+	}
+	if got < 3 {
+		t.Fatalf("watcher captured %d time(s) in 300ms while another writer held the lock: it is writing each tick", got)
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("watcher stopped while steady: %v", err)
+	default:
+	}
+	testutil.WriteFile(t, filepath.Join(r.dir, "gone"), "")
+	wait(t, done)
 }
 
 func TestWatchStopsOnSignalDeadPaneAndStage(t *testing.T) {
