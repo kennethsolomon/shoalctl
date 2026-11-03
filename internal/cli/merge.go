@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/kennethsolomon/shoalctl/internal/gitx"
+	"github.com/kennethsolomon/shoalctl/internal/globx"
 	"github.com/kennethsolomon/shoalctl/internal/lockfile"
 	"github.com/kennethsolomon/shoalctl/internal/store"
 	"github.com/kennethsolomon/shoalctl/internal/testrun"
@@ -76,7 +77,7 @@ func (env Env) cmdMerge(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	tasks, err := p.db.DoneTasks(ctx)
+	tasks, err := p.db.QueuedTasks(ctx)
 	if err != nil {
 		return err
 	}
@@ -174,16 +175,23 @@ func (env Env) settleOne(ctx context.Context, p *project, t store.Task) (string,
 		return fmt.Sprintf("merge target %q is not a local branch", target), nil
 	}
 	if _, err := gitx.Run(ctx, p.root, "merge-base", "--is-ancestor", head, tip); err != nil {
-		if _, err := p.db.Update(ctx, t, []string{store.StageMerging}, "stage = ?", []any{store.StageDone}, nil); err != nil {
+		if _, err := p.db.Update(ctx, t, []string{store.StageMerging}, "stage = ?", []any{store.StageDone},
+			func(tx *sql.Tx) error { return store.SetQueueState(ctx, tx, t.ID, store.QueueWaiting) }); err != nil {
 			return "", err
 		}
 		fmt.Fprintf(env.Stdout, "%s: recovered: an earlier merge stopped before %s held %s; back to done\n", t.Slug, target, shortSHA(head))
 		return "", nil
 	}
+	var unblocked []int64
 	if _, err := p.db.Update(ctx, t, []string{store.StageMerging}, "stage = ?, merged_sha = ?", []any{store.StageMerged, head},
-		func(tx *sql.Tx) error { return store.ReleaseTaskClaims(ctx, tx, t.ID) }); err != nil {
+		func(tx *sql.Tx) error {
+			var err error
+			unblocked, err = landed(ctx, tx, t.ID)
+			return err
+		}); err != nil {
 		return "", err
 	}
+	env.printUnblocked(ctx, p, unblocked)
 	note := fmt.Sprintf("Recovered by shoalctl merge on %s: an earlier merge fast-forwarded %s to %s but stopped before recording it, so the task was marked merged. "+
 		"That merge's gate run and any accepted regressions were not recorded; not pushed", nowUTC(), target, shortSHA(head))
 	if err := env.appendReportNote(p, t.Slug, note); err != nil {
@@ -222,12 +230,16 @@ func (env Env) mergeOne(ctx context.Context, p *project, t store.Task, acc []*ac
 		return false, err
 	}
 	defer tlock.Release()
-	if t, err = p.db.Update(ctx, t, []string{store.StageDone}, "stage = ?", []any{store.StageMerging}, nil); err != nil {
+	if t, err = p.db.Update(ctx, t, []string{store.StageDone}, "stage = ?", []any{store.StageMerging}, queueState(ctx, t.ID, store.QueueRebasing)); err != nil {
 		return false, err
 	}
 	wctx := context.WithoutCancel(ctx)
 	back := func(stage string, cause error) (bool, error) {
-		if _, err := p.db.Update(wctx, t, []string{store.StageMerging}, "stage = ?", []any{stage}, nil); err != nil {
+		state := store.QueueFailed
+		if stage == store.StageDone {
+			state = store.QueueWaiting
+		}
+		if _, err := p.db.Update(wctx, t, []string{store.StageMerging}, "stage = ?", []any{stage}, queueState(wctx, t.ID, state)); err != nil {
 			return false, errors.Join(cause, err)
 		}
 		return false, cause
@@ -253,7 +265,7 @@ func (env Env) mergeOne(ctx context.Context, p *project, t store.Task, acc []*ac
 		return back(store.StageDone, err)
 	}
 	// The branch now sits on targetSHA, so that is the task's base from here on.
-	if t, err = p.db.Update(ctx, t, []string{store.StageMerging}, "base_sha = ?", []any{targetSHA}, nil); err != nil {
+	if t, err = p.db.Update(ctx, t, []string{store.StageMerging}, "base_sha = ?", []any{targetSHA}, queueState(ctx, t.ID, store.QueueTesting)); err != nil {
 		return false, err
 	}
 
@@ -319,7 +331,7 @@ func (env Env) mergeOne(ctx context.Context, p *project, t store.Task, acc []*ac
 		accepted = append(accepted, hit)
 	}
 	if len(open) > 0 {
-		if _, err := p.db.Update(wctx, t, []string{store.StageMerging}, "stage = ?, gate_run_id = ?", []any{store.StageQA, gate.ID}, nil); err != nil {
+		if _, err := p.db.Update(wctx, t, []string{store.StageMerging}, "stage = ?, gate_run_id = ?", []any{store.StageQA, gate.ID}, queueState(wctx, t.ID, store.QueueFailed)); err != nil {
 			return false, err
 		}
 		var flags []string
@@ -367,6 +379,13 @@ func (env Env) mergeOne(ctx context.Context, p *project, t store.Task, acc []*ac
 		}
 		return back(store.StageDone, err)
 	}
+	// Open tasks into the same target whose claims cover a file this merge
+	// changes must rebase before their next QA round (§9.4 step 5).
+	hits, err := env.claimsHit(ctx, p, t, target, targetSHA)
+	if err != nil {
+		return back(store.StageDone, err)
+	}
+	var unblocked, rebase []int64
 	commits, _ := json.Marshal(nonNilStrings(in.commits))
 	ver, _ := json.Marshal(in.ver)
 	if _, err := p.db.Update(wctx, t, []string{store.StageMerging}, "stage = ?, merged_sha = ?, gate_run_id = ?",
@@ -379,18 +398,136 @@ func (env Env) mergeOne(ctx context.Context, p *project, t store.Task, acc []*ac
 					return err
 				}
 			}
-			if err := store.ReleaseTaskClaims(ctx, tx, t.ID); err != nil {
+			if unblocked, err = landed(ctx, tx, t.ID); err != nil {
+				return err
+			}
+			if rebase, err = store.MarkNeedsRebase(ctx, tx, overlapIDs(hits)); err != nil {
 				return err
 			}
 			return store.UpdateSummaryCommits(ctx, tx, t.ID, string(commits), head, string(ver))
 		}); err != nil {
 		return false, fmt.Errorf("%s was fast-forwarded to %s, but recording the merge failed: %w", target, shortSHA(head), err)
 	}
+	env.printUnblocked(ctx, p, unblocked)
+	for _, o := range hits {
+		if contains64(rebase, o.task.ID) {
+			fmt.Fprintf(env.Stdout, "%s: needs-rebase: its claims overlap %s, which %s changed; its next shoalctl qa rebases it onto %s\n",
+				o.task.Slug, strings.Join(o.paths, ", "), t.Slug, target)
+		}
+	}
 	if err := env.writeReport(p, t.Slug, report); err != nil {
 		return true, err
 	}
 	fmt.Fprintf(env.Stdout, "merged %s into %s at %s\n", t.Slug, target, shortSHA(head))
 	return true, nil
+}
+
+// queueState returns an Update extra that records the task's queue state.
+func queueState(ctx context.Context, id int64, state string) func(*sql.Tx) error {
+	return func(tx *sql.Tx) error { return store.SetQueueState(ctx, tx, id, state) }
+}
+
+// landed does the bookkeeping of a task now on its target, inside the
+// merge's transaction: queue row merged, claims released, tasks serialized
+// behind it unblocked (returned).
+func landed(ctx context.Context, tx *sql.Tx, id int64) ([]int64, error) {
+	if err := store.SetQueueState(ctx, tx, id, store.QueueMerged); err != nil {
+		return nil, err
+	}
+	if err := store.ReleaseTaskClaims(ctx, tx, id); err != nil {
+		return nil, err
+	}
+	return store.UnblockAfterMerge(ctx, tx, id)
+}
+
+func (env Env) printUnblocked(ctx context.Context, p *project, ids []int64) {
+	for _, id := range ids {
+		if u, err := p.db.GetTask(ctx, fmt.Sprint(id)); err == nil {
+			fmt.Fprintf(env.Stdout, "%s: unblocked, ready to start from the new base: shoalctl start %s\n", u.Slug, u.Slug)
+		} else {
+			fmt.Fprintf(env.Stderr, "task %d was unblocked, but reading it failed: %v\n", id, err)
+		}
+	}
+}
+
+// mergeTarget is the branch a task merges into, and false for a hotfix cut
+// from a tag, which has none (§6.3).
+func mergeTarget(p *project, t store.Task) (string, bool) {
+	if t.Lane != "hotfix" {
+		return p.cfg.Merge.Base, true
+	}
+	if strings.HasPrefix(t.BaseRef, "refs/tags/") {
+		return "", false
+	}
+	return t.BaseRef, true
+}
+
+type claimHit struct {
+	task  store.Task
+	paths []string
+}
+
+func overlapIDs(hits []claimHit) []int64 {
+	out := make([]int64, len(hits))
+	for i, h := range hits {
+		out[i] = h.task.ID
+	}
+	return out
+}
+
+func contains64(ids []int64, id int64) bool {
+	for _, x := range ids {
+		if x == id {
+			return true
+		}
+	}
+	return false
+}
+
+// claimsHit lists the other open tasks at in-progress or qa that merge into
+// target and hold a claim on a file the merging task changes since base.
+func (env Env) claimsHit(ctx context.Context, p *project, t store.Task, target, base string) ([]claimHit, error) {
+	files, err := changedFiles(ctx, t.Worktree, base)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, f := range files {
+		paths = append(paths, f.Path)
+		if f.From != "" {
+			paths = append(paths, f.From)
+		}
+	}
+	open, err := p.db.OpenClaims(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []claimHit
+	idx := map[int64]int{}
+	for _, c := range open {
+		o := c.Owner
+		if o.ID == t.ID || (o.Stage != store.StageInProgress && o.Stage != store.StageQA) {
+			continue
+		}
+		if tg, ok := mergeTarget(p, o); !ok || tg != target {
+			continue
+		}
+		for _, path := range paths {
+			if !globx.Overlaps(c.Glob, path) {
+				continue
+			}
+			i, seen := idx[o.ID]
+			if !seen {
+				i = len(out)
+				idx[o.ID] = i
+				out = append(out, claimHit{task: o})
+			}
+			if !contains(out[i].paths, path) {
+				out[i].paths = append(out[i].paths, path)
+			}
+		}
+	}
+	return out, nil
 }
 
 var errConflict = errors.New("rebase conflict")

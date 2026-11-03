@@ -215,6 +215,9 @@ func (env Env) cmdDone(ctx context.Context, args []string) error {
 			if err := store.InsertSummary(ctx, tx, row); err != nil {
 				return err
 			}
+			if err := store.Enqueue(ctx, tx, t.ID); err != nil {
+				return err
+			}
 			if backport == nil {
 				return nil
 			}

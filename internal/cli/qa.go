@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"path/filepath"
 	"strings"
 
+	"github.com/kennethsolomon/shoalctl/internal/gitx"
 	"github.com/kennethsolomon/shoalctl/internal/store"
 	"github.com/kennethsolomon/shoalctl/internal/testrun"
 )
@@ -53,11 +55,16 @@ func (env Env) cmdQA(ctx context.Context, args []string) error {
 	if !contains(from, t.Stage) {
 		return fail(ExitState, "task %s is at %q; qa needs in-progress, qa or needs-rebase", t.Slug, t.Stage)
 	}
-	head, err := requireClean(ctx, t.Worktree, "a QA round")
-	if err != nil {
+	if err := env.reapAbandoned(ctx, p, t); err != nil {
 		return err
 	}
-	if err := env.reapAbandoned(ctx, p, t); err != nil {
+	if t.Stage == store.StageNeedsRebase {
+		if t, err = env.rebaseForQA(ctx, p, t); err != nil {
+			return err
+		}
+	}
+	head, err := requireClean(ctx, t.Worktree, "a QA round")
+	if err != nil {
 		return err
 	}
 	round := t.QARound + 1
@@ -141,6 +148,55 @@ func (env Env) cmdQA(ctx context.Context, args []string) error {
 		return env.escalate(ctx, p, t, failures)
 	}
 	return fail(ExitGate, "qa round %d of %d failed (sent to shoal-lead as a qa-failure message):\n  %s", round, maxRounds, strings.Join(failures, "\n  "))
+}
+
+// rebaseForQA rebases a needs-rebase task onto its target's tip and moves
+// its base and baseline there, so the round compares against what it will
+// merge into (§9.4 step 5). A conflict is aborted and the task stays put.
+func (env Env) rebaseForQA(ctx context.Context, p *project, t store.Task) (store.Task, error) {
+	target, ok := mergeTarget(p, t)
+	if !ok {
+		return t, nil
+	}
+	if rebasing, err := rebaseInProgress(ctx, t.Worktree); err != nil {
+		return t, err
+	} else if rebasing {
+		return t, fail(ExitState, "a rebase is in progress in %s; finish it (git rebase --continue) or abort it (git rebase --abort), then run shoalctl qa %s again",
+			t.Worktree, t.Slug)
+	}
+	if _, err := requireClean(ctx, t.Worktree, "rebasing for QA"); err != nil {
+		return t, err
+	}
+	tip, err := gitx.Run(ctx, p.root, "rev-parse", "--verify", "--quiet", "refs/heads/"+target+"^{commit}")
+	if err != nil || tip == "" {
+		return t, fail(ExitConfig, "merge target %q is not a local branch", target)
+	}
+	if err := env.rebase(ctx, p, t, tip); err != nil {
+		if errors.Is(err, errConflict) {
+			return t, fail(ExitGate, "%s: rebase onto %s@%s conflicts; rebase aborted, the branch is unchanged and the task stays needs-rebase. "+
+				"Rebase it yourself in %s (git rebase %s), then run shoalctl qa %s again", t.Slug, target, shortSHA(tip), t.Worktree, target, t.Slug)
+		}
+		return t, err
+	}
+	if tip == t.BaseSHA {
+		return t, nil
+	}
+	base, err := env.baselineAt(ctx, p, t, tip)
+	if err != nil {
+		return t, err
+	}
+	if base.Status != testrun.StatusCompleted {
+		if base.Status == testrun.StatusCancelled {
+			return t, fail(ExitInterrupted, "interrupted: baseline run %d was cancelled", base.ID)
+		}
+		return t, fail(ExitBaseline, "baseline run %d at %s %s; see %s", base.ID, shortSHA(tip), base.Status, base.OutputPath)
+	}
+	t, err = p.db.Update(ctx, t, []string{store.StageNeedsRebase}, "base_sha = ?, baseline_run_id = ?", []any{tip, base.ID}, nil)
+	if err != nil {
+		return t, err
+	}
+	fmt.Fprintf(env.Stdout, "qa: rebased %s onto %s@%s; baseline is now run %d\n", t.Slug, target, shortSHA(tip), base.ID)
+	return t, nil
 }
 
 // escalate marks the tmux window and writes the escalation report (§6.4).
