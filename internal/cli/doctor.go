@@ -16,6 +16,7 @@ import (
 	"github.com/kennethsolomon/shoalctl/internal/gitx"
 	"github.com/kennethsolomon/shoalctl/internal/lockfile"
 	"github.com/kennethsolomon/shoalctl/internal/store"
+	"github.com/kennethsolomon/shoalctl/internal/testrun"
 )
 
 // cmdDoctor checks shoal's state and, with --fix, repairs what is safe to
@@ -344,6 +345,9 @@ func (d *doctor) runs(ctx context.Context, p *project) error {
 		}
 		if !d.fix {
 			d.problem("%s run %d of %s is marked running, but no shoalctl holds %s; --fix marks it error once its suite is gone", r.Kind, r.ID, t.Slug, t.Slug)
+		} else if err := d.clearUnstarted(ctx, p, t, runs); err != nil {
+			lock.Release()
+			return err
 		} else if err := d.env.reapAbandoned(ctx, p, t); err != nil {
 			if codeOf(err) != ExitBusy {
 				lock.Release()
@@ -357,6 +361,28 @@ func (d *doctor) runs(ctx context.Context, p *project) error {
 	}
 	if len(runs) == 0 {
 		d.ok("no test run stuck at running")
+	}
+	return nil
+}
+
+// clearUnstarted marks error the task's running runs that never recorded a
+// pid. The caller holds the task lock, so their shoalctl is gone, and a suite
+// runs nothing until its pid is recorded (§15.1 "Stopping a suite"), so none
+// of them ever ran. start and done refuse them (exit 8); doctor --fix is the
+// documented way out.
+func (d *doctor) clearUnstarted(ctx context.Context, p *project, t store.Task, runs []store.Run) error {
+	for _, r := range runs {
+		if r.TaskID != t.ID || r.PID > 0 {
+			continue
+		}
+		if f, err := os.OpenFile(r.OutputPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600); err == nil {
+			fmt.Fprintf(f, "shoal: doctor --fix at %s: marked error; its shoalctl exited before recording a pid, so the suite never ran\n", nowUTC())
+			f.Close()
+		}
+		if _, err := p.db.FinishRun(ctx, r.ID, testrun.StatusError, nil, nil); err != nil {
+			return err
+		}
+		d.fixed("%s run %d of %s never recorded a pid (its suite never ran); marked error", r.Kind, r.ID, t.Slug)
 	}
 	return nil
 }

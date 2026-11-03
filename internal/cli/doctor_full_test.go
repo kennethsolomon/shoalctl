@@ -39,6 +39,10 @@ func TestDoctorFullChecksAndFixes(t *testing.T) {
 	finish(t, h, c.Slug, c.Worktree)
 	setStage(t, p, c.ID, store.StageMerging)
 	sqlExec(t, p, `UPDATE merge_queue SET state = 'rebasing' WHERE task_id = ?`, c.ID)
+	sqlExec(t, p, `INSERT INTO test_runs (task_id, kind, sha, command, command_hash, format, fidelity, status, output_path, started_at)
+		VALUES (?, 'gate', 'x', 'true', 'h', 'junit', 'per-test', 'running', ?, '2026-01-01T00:00:00Z')`,
+		a.ID, filepath.Join(t.TempDir(), "output.log"))
+	mustContain(t, "no pid blocks start", h.expectCode(ExitBusy, "qa", a.Slug), "no recorded pid")
 	sqlExec(t, p, `INSERT INTO test_runs (task_id, kind, sha, command, command_hash, format, fidelity, status, output_path, pid, started_at)
 		VALUES (?, 'qa', 'x', 'true', 'h', 'junit', 'per-test', 'running', ?, ?, '2026-01-01T00:00:00Z')`,
 		a.ID, filepath.Join(t.TempDir(), "output.log"), deadPID(t))
@@ -49,7 +53,7 @@ func TestDoctorFullChecksAndFixes(t *testing.T) {
 	errOut := h.expectCode(ExitDoctor, "doctor")
 	mustContain(t, "report", errOut, a.Slug+": tmux window "+a.TmuxWindow+" is gone", b.Slug+" (in-progress): its worktree "+b.Worktree+" is missing",
 		stray+" has no task", "git still lists 1 gone shoal worktree", "merge queue: "+c.Slug+" is at rebasing", c.Slug+" is at merging",
-		"qa run", "no shoalctl holds "+a.Slug, "registers shoal hooks a second time")
+		"no shoalctl holds "+a.Slug, "registers shoal hooks a second time")
 	if h.task(c.Slug).Stage != store.StageMerging || h.task(b.Slug).Stage != store.StageInProgress {
 		t.Fatal("doctor without --fix changed a task")
 	}
@@ -59,7 +63,7 @@ func TestDoctorFullChecksAndFixes(t *testing.T) {
 		t.Fatalf("doctor --fix: %d\n%s\n%s", code, out, errOut)
 	}
 	mustContain(t, "fixed", out, "fixed "+a.Slug+": forgot the gone tmux window", "fixed git worktree prune", "fixed merge queue: "+c.Slug+" from rebasing back to waiting",
-		c.Slug+": recovered", "fixed abandoned run(s) of "+a.Slug, "fixed removed shoal's hook entries from "+wtSettings)
+		c.Slug+": recovered", "fixed abandoned run(s) of "+a.Slug, "never recorded a pid (its suite never ran); marked error", "fixed removed shoal's hook entries from "+wtSettings)
 	mustContain(t, "left for a human", errOut, b.Slug+": its worktree "+b.Worktree+" is missing; marked worktree-missing (was in-progress)", stray+" has no task")
 	if got := h.task(c.Slug); got.Stage != store.StageDone {
 		t.Fatalf("c not settled: %+v", got)
