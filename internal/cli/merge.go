@@ -312,7 +312,7 @@ func (env Env) mergeOne(ctx context.Context, p *project, t store.Task, acc []*ac
 			g.notes = append(g.notes, strings.Trim(s.id, "()")+": "+s.res)
 		}
 	}
-	g.print(env.Stdout, "gate")
+	g.printRows(env.Stdout, "gate")
 
 	var accepted []*acceptance
 	var open []string
@@ -330,16 +330,35 @@ func (env Env) mergeOne(ctx context.Context, p *project, t store.Task, acc []*ac
 		hit.used = true
 		accepted = append(accepted, hit)
 	}
+	by := humanName(ctx, p.root)
+	var acceptedText []string
+	for _, a := range accepted {
+		fmt.Fprintf(env.Stdout, "accepted by %s for %s: %s: %q\n", by, t.Slug, g.labelOf(a.target), a.reason)
+		acceptedText = append(acceptedText, fmt.Sprintf("%s (%q)", g.labelOf(a.target), a.reason))
+	}
 	if len(open) > 0 {
+		fmt.Fprintf(env.Stdout, "BLOCKED by: %s\n", strings.Join(open, ", "))
 		if _, err := p.db.Update(wctx, t, []string{store.StageMerging}, "stage = ?, gate_run_id = ?", []any{store.StageQA, gate.ID}, queueState(wctx, t.ID, store.QueueFailed)); err != nil {
 			return false, err
 		}
 		var flags []string
+		for _, a := range accepted {
+			flags = append(flags, fmt.Sprintf("--accept-regression %s --reason %s", shellWord(a.target), shellWord(a.reason)))
+		}
 		for _, o := range open {
 			flags = append(flags, fmt.Sprintf("--accept-regression %s --reason \"<why>\"", shellWord(o)))
 		}
+		still := strings.Join(open, ", ")
+		if len(accepted) > 0 {
+			return false, fail(ExitGate, "%s: accepted %s, but the merge gate still blocks on %s, so nothing was merged, the acceptances were not recorded, "+
+				"and the task is back at qa (round %d kept). Fix what still blocks, or a human accepts every target by name in one run: shoalctl merge --task %s %s",
+				t.Slug, strings.Join(acceptedText, ", "), still, t.QARound, t.Slug, strings.Join(flags, " "))
+		}
 		return false, fail(ExitGate, "%s: the merge gate blocked on %s; nothing was merged and the task is back at qa (round %d kept). "+
-			"Fix it, or a human accepts each target by name for this task: shoalctl merge --task %s %s", t.Slug, strings.Join(open, ", "), t.QARound, t.Slug, strings.Join(flags, " "))
+			"Fix it, or a human accepts each target by name for this task: shoalctl merge --task %s %s", t.Slug, still, t.QARound, t.Slug, strings.Join(flags, " "))
+	}
+	if len(accepted) > 0 {
+		fmt.Fprintf(env.Stdout, "gate: every blocking row was accepted (%d); merging\n", len(accepted))
 	}
 
 	sm, err := summaryFromDB(ctx, p, t.ID)
@@ -350,7 +369,6 @@ func (env Env) mergeOne(ctx context.Context, p *project, t store.Task, acc []*ac
 	if err != nil {
 		return back(store.StageDone, err)
 	}
-	by := humanName(ctx, p.root)
 	for _, a := range accepted {
 		in.overrides = append(in.overrides, store.Override{TaskID: t.ID, GateRunID: gate.ID, Target: a.target, Reason: a.reason, AcceptedBy: by})
 	}

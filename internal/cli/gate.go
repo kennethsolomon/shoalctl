@@ -169,8 +169,26 @@ func (g *gateResult) compareCoverage(ctx context.Context, p *project, changed []
 	return nil
 }
 
-// print writes the class counts and the blocking rows.
+// print writes the class counts, the blocking rows and the verdict.
 func (g gateResult) print(w io.Writer, label string) {
+	g.printRows(w, label)
+	if len(g.blocking) > 0 {
+		fmt.Fprintf(w, "BLOCKED by: %s\n", strings.Join(g.blocking, ", "))
+	}
+}
+
+// labelOf names a blocking row with its class: "regression C::a", "(lint)".
+func (g gateResult) labelOf(id string) string {
+	for _, c := range testrun.BlockingClasses {
+		if contains(g.classes[c], id) {
+			return fmt.Sprintf("%s %s", c, id)
+		}
+	}
+	return id
+}
+
+// printRows writes the class counts and the rows, without a verdict.
+func (g gateResult) printRows(w io.Writer, label string) {
 	if g.classes != nil {
 		var counts []string
 		for _, c := range testrun.Classes {
@@ -202,9 +220,6 @@ func (g gateResult) print(w io.Writer, label string) {
 			ids[i] = q.TestID
 		}
 		fmt.Fprintf(w, "  quarantined (ignored): %s\n", strings.Join(ids, ", "))
-	}
-	if len(g.blocking) > 0 {
-		fmt.Fprintf(w, "BLOCKED by: %s\n", strings.Join(g.blocking, ", "))
 	}
 }
 
