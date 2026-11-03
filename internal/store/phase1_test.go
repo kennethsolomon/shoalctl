@@ -18,7 +18,7 @@ func TestPhase1Schema(t *testing.T) {
 		}
 	}
 	migs, _ := Migrations()
-	if len(migs) != 3 || migs[2].Name != "phase1" {
+	if len(migs) < 3 || migs[2].Name != "phase1" {
 		t.Fatalf("migrations: %+v", migs)
 	}
 }

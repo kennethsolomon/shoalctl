@@ -25,6 +25,12 @@ const (
 	StageNeedsRebase = "needs-rebase"
 	StageMerging     = "merging"
 	StageMerged      = "merged"
+
+	// Phase 2 (§6, §9.2, §10.4).
+	StageReady           = "ready"
+	StageBlocked         = "blocked"
+	StageFolded          = "folded"
+	StageWorktreeMissing = "worktree-missing"
 )
 
 type Task struct {
@@ -56,6 +62,12 @@ type Task struct {
 	ParentTaskID    int64
 	GateRunID       int64
 	LargeDiffReason string
+
+	BlockedBy   int64
+	PrevStage   string
+	FoldedInto  int64
+	Attention   string
+	AttentionAt string
 }
 
 const taskColumns = `id, slug, lane, title, ask, stage,
@@ -64,7 +76,8 @@ const taskColumns = `id, slug, lane, title, ask, stage,
 	COALESCE(baseline_run_id, 0), COALESCE(final_run_id, 0),
 	COALESCE(session_id, ''), COALESCE(last_seen_at, ''), version, created_at, updated_at,
 	COALESCE(started_at, ''), COALESCE(closed_at, ''),
-	qa_round, COALESCE(merged_sha, ''), COALESCE(parent_task_id, 0), COALESCE(gate_run_id, 0), COALESCE(large_diff_reason, '')`
+	qa_round, COALESCE(merged_sha, ''), COALESCE(parent_task_id, 0), COALESCE(gate_run_id, 0), COALESCE(large_diff_reason, ''),
+	COALESCE(blocked_by, 0), COALESCE(prev_stage, ''), COALESCE(folded_into, 0), COALESCE(attention, ''), COALESCE(attention_at, '')`
 
 func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 	var t Task
@@ -72,7 +85,8 @@ func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 		&t.BaseRef, &t.BaseSHA, &t.Branch, &t.Worktree, &t.TmuxSession, &t.TmuxWindow, &t.Model,
 		&t.BaselineRunID, &t.FinalRunID, &t.SessionID, &t.LastSeenAt, &t.Version, &t.CreatedAt, &t.UpdatedAt,
 		&t.StartedAt, &t.ClosedAt,
-		&t.QARound, &t.MergedSHA, &t.ParentTaskID, &t.GateRunID, &t.LargeDiffReason)
+		&t.QARound, &t.MergedSHA, &t.ParentTaskID, &t.GateRunID, &t.LargeDiffReason,
+		&t.BlockedBy, &t.PrevStage, &t.FoldedInto, &t.Attention, &t.AttentionAt)
 	return t, err
 }
 

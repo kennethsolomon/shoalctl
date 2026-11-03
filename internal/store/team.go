@@ -181,6 +181,14 @@ type Claim struct {
 	Glob       string
 	Kind       string
 	ReleasedAt string
+	CreatedAt  string
+	Version    int64
+}
+
+const claimColumns = `id, task_id, agent, path_glob, kind, COALESCE(released_at, ''), created_at, version`
+
+func scanClaim(row interface{ Scan(...any) error }, c *Claim) error {
+	return row.Scan(&c.ID, &c.TaskID, &c.Agent, &c.Glob, &c.Kind, &c.ReleasedAt, &c.CreatedAt, &c.Version)
 }
 
 // Claims returns a task's open claims, oldest first.
@@ -191,7 +199,7 @@ func (s *Store) Claims(ctx context.Context, taskID int64) ([]Claim, error) {
 func claims(ctx context.Context, q interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }, taskID int64) ([]Claim, error) {
-	rows, err := q.QueryContext(ctx, `SELECT id, task_id, agent, path_glob, kind, COALESCE(released_at, '') FROM file_claims
+	rows, err := q.QueryContext(ctx, `SELECT `+claimColumns+` FROM file_claims
 		WHERE task_id = ? AND released_at IS NULL ORDER BY id`, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("read claims of task %d: %w", taskID, err)
@@ -200,7 +208,7 @@ func claims(ctx context.Context, q interface {
 	var out []Claim
 	for rows.Next() {
 		var c Claim
-		if err := rows.Scan(&c.ID, &c.TaskID, &c.Agent, &c.Glob, &c.Kind, &c.ReleasedAt); err != nil {
+		if err := scanClaim(rows, &c); err != nil {
 			return nil, fmt.Errorf("scan claim of task %d: %w", taskID, err)
 		}
 		out = append(out, c)
@@ -227,7 +235,7 @@ func (s *Store) AddClaims(ctx context.Context, taskID int64, agent string, globs
 				switch {
 				case c.Agent == agent && c.Glob == g:
 					held = true
-				case c.Agent != agent && overlaps(c.Glob, g):
+				case c.Agent != agent && c.Agent != PlanAgent && overlaps(c.Glob, g):
 					return fmt.Errorf("%w: %s overlaps %s, held by %s", ErrClaimConflict, g, c.Glob, c.Agent)
 				}
 			}
