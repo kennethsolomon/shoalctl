@@ -9,6 +9,7 @@ Plan: [todo.md](todo.md). Base: `6d33f87`.
   `internal/cli/phase2_e2e_test.go`.
 - Gates run from a fresh clone at the final HEAD (see the report): vet and staticcheck x3 GOOS,
   `go test -race -count=1 ./...`, `go test -c` per package for linux and windows, no ignored source file.
+- Vex HOLD round 1 on `783d968`: seven findings fixed test-first, one commit each (table below); the rest are open risks.
 - Next: Phase 3 (not started).
 
 ## Decisions
@@ -36,12 +37,35 @@ Spec ambiguities resolved with the safest option; each is a row in docs/spec.md 
 - "Overlap found late (from actual claims)" in §9.2 needs `PostToolUse` (Phase 3).
 - The overlap prompt reads a line (key + Enter), not a raw keypress.
 
+## Vex HOLD round 1
+
+Vex returned HOLD on `783d968`; each fix is test-first in its own commit (spec §16 rows 48-54, 56, §9.4).
+
+| Issue | Fix | Test |
+|-------|-----|------|
+| HIGH: a literal directory claim missed wildcards reaching into it (`src/pkg` vs `**/x.go`), so `plan` made both tasks ready | `globx.under` also meets the wildcard against `dir/**` | `TestLiteralDirectoryMeetsWildcardsReachingIntoIt`, `TestOverlapsNeverMissesACoveredPath`, `TestPlanSeesWildcardReachingIntoALiteralDirectory` |
+| MED: fold moved waiters with no cycle check (x->me, y->x, fold me into y: x->y->x) | `foldCycle`: `m` not offered (`FoldCycle` names the waiter) when the target already waits on a waiter | `TestFoldRefusedWhenMovingAWaitClosesACycle`, `TestFoldMovesWaitersWhenNoCycle`, `TestPlanRefusesAFoldThatWouldDeadlock` |
+| MED: `claimsHit` failing after the fast-forward rolled a landed task back to `done` | hits computed before `fastForward`; nothing after it calls `back` | `TestFailureAfterFastForwardNeverRollsBackALandedTask` (git diff injected to fail after update-ref) |
+| MED: the live-window guard in `staleCheck` was untested | test only | `TestLiveWindowKeepsAnOldClaim` (mutation-checked: fails with the guard disabled) |
+| tmux missing or unreachable read as "no windows", so `doctor --fix` from cron could release live claims | `start` records `tmux_socket` (migration 0005); liveness asks that socket; only a clean "no server" is gone, else unknown and nothing expires | `TestStartRecordsTheTmuxSocket`, `TestUnknownTmuxNeverExpiresClaims` (mutation-checked) |
+| A task at `starting` when an overlapping merge landed was never flagged | merge counts `starting` candidates; `start`, after recording `in-progress`, checks whether the target moved and changed a claimed file (`rebaseIfTargetMoved`) | `TestMergeLandingDuringStartFlagsNeedsRebase`, `TestClaimsHitIncludesStartingTasks` |
+| A SIGKILLed watcher left its attention flag forever | `doctor` reports a flag whose `watch-<id>.lock` is free; `--fix` clears it | `TestDoctorClearsAnAttentionFlagNobodyWatches` |
+
 ## Open risks
 
 - The detector is a heuristic over the visible pane; a Claude Code redesign of its dialogs needs new fixtures.
 - A start killed between opening the tmux window and recording it leaves a window doctor cannot link to the task.
-- `needs-rebase` marking is computed from claims read just before the merge's transaction (merge.lock held); a claim
-  added in that gap is missed, and that task is still rebased by `merge` itself when its turn comes.
+- `needs-rebase` hits are computed from claims read before the fast-forward (merge.lock held); a claim added before
+  the merge's transaction is missed, and that task is still rebased by `merge` itself when its turn comes.
+- Bracketed directories (`app/[slug]`, Next.js/SvelteKit routes) parse as globs with a class, so a claim on one does
+  not cover its files; no escape is supported. Claim the parent (`app/**`) instead (spec row 51).
+- `merge` stops at the first error across all targets, so a blocked `main` task holds back a hotfix queued after it
+  (spec row 52, §9.4; README no longer says "per target"). `merge --task <task>` merges one task.
+- Watcher: not restarted when a task goes back from `done` to `qa`; one write transaction every 2 s; exits on the
+  first DB error (its flag is then cleared, or left for `doctor --fix` if it was killed).
+- Tasks started before migration 0005 have no recorded socket: their liveness asks the caller's default tmux server,
+  accepting only "no server running on" as gone. A window on another server reads as gone once that server says so.
+- `status` WINDOW still asks the caller's default tmux server (display only; never releases anything).
 
 ---
 
