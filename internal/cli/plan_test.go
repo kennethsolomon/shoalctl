@@ -113,3 +113,20 @@ func TestPlanIgnoresStaleClaims(t *testing.T) {
 	// Started tasks are not re-planned.
 	h.expectCode(ExitState, "plan", a, "api/**")
 }
+
+// TestPlanSeesWildcardReachingIntoALiteralDirectory: a plan on the literal
+// directory src/pkg holds every file below it, so a wildcard plan that can
+// match one of them is an overlap, not a second ready task.
+func TestPlanSeesWildcardReachingIntoALiteralDirectory(t *testing.T) {
+	for _, pair := range [][2]string{{"src/pkg", "**/x.go"}, {"src/pkg", "src/*/x.go"}, {"internal/store", "**/*_test.go"},
+		{"**/x.go", "src/pkg"}} {
+		h := newHarness(t)
+		h.initWith(junitConfig)
+		a, b := newTask(t, h, "bugfix", "Bug A"), newTask(t, h, "bugfix", "Bug B")
+		h.mustRun("plan", a, pair[0])
+		mustContain(t, "overlap "+pair[0]+" vs "+pair[1], h.expectCode(ExitState, "plan", b, pair[1]), "nothing was planned", a+" (ready)")
+		if got := h.task(b); got.Stage != store.StageNew {
+			t.Fatalf("%v: b planned anyway: %+v", pair, got)
+		}
+	}
+}

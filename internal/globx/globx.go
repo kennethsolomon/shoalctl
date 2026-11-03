@@ -310,7 +310,16 @@ func pathsMeet(a, b []segment) bool {
 }
 
 // under reports whether a claim on the literal directory dir would hold a
-// path g can match (a claim on "api" covers "api/**").
+// path g can match: dir covers dir/**, so any wildcard that can reach a
+// path below it ("**/x.go", "src/*/x.go" against "src/pkg") is under it.
 func under(g, dir string) bool {
-	return Match(g, dir) || strings.HasPrefix(g, dir+"/")
+	if Match(g, dir) || strings.HasPrefix(g, dir+"/") {
+		return true
+	}
+	sg, okg := parseGlob(g)
+	sd, okd := parseGlob(dir + "/**")
+	if !okg || !okd {
+		return true // unparseable: fail closed
+	}
+	return pathsMeet(sg, sd)
 }

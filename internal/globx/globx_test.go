@@ -1,6 +1,9 @@
 package globx
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidate(t *testing.T) {
 	for _, g := range []string{"api/**", "src/*.go", "README.md", "a/[bc]/d", "**/*_test.go"} {
@@ -113,6 +116,74 @@ func TestOverlapsNeverMissesASharedPath(t *testing.T) {
 			for _, p := range paths {
 				if Match(a, p) && Match(b, p) {
 					t.Errorf("Overlaps(%q, %q) = false, but %q matches both", a, b, p)
+					break
+				}
+			}
+		}
+	}
+}
+
+// TestLiteralDirectoryMeetsWildcardsReachingIntoIt: a literal claim covers
+// its subtree, so a wildcard that can match a path below it overlaps it.
+func TestLiteralDirectoryMeetsWildcardsReachingIntoIt(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"src/pkg", "**/x.go", true},
+		{"src/pkg", "src/*/x.go", true},
+		{"internal/store", "**/*_test.go", true},
+		{"src/pkg", "src/*", true},
+		{"src/pkg", "**", true},
+		{"src/pkg", "src/pk?/**", true},
+		{"src/pkg", "src/*.go", false},
+		{"src/pkg", "lib/**/x.go", false},
+		{"src/pkg", "src/*/y/*.go", true},
+		{"src/pkg", "src/[^p]*/x.go", false},
+	}
+	for _, c := range cases {
+		if got := Overlaps(c.a, c.b); got != c.want {
+			t.Errorf("Overlaps(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+		if got := Overlaps(c.b, c.a); got != c.want {
+			t.Errorf("Overlaps(%q, %q) = %v, want %v (swapped)", c.b, c.a, got, c.want)
+		}
+	}
+}
+
+// covers is the claim semantics: a literal covers itself and its subtree,
+// a wildcard exactly the paths it matches.
+func covers(g, p string) bool {
+	if literal(g) {
+		return p == g || strings.HasPrefix(p, g+"/")
+	}
+	return Match(g, p)
+}
+
+// TestOverlapsNeverMissesACoveredPath is the brute-force check under claim
+// semantics, where a literal also covers everything below it.
+func TestOverlapsNeverMissesACoveredPath(t *testing.T) {
+	globs := []string{"**", "*", "a", "a/b", "b", "a/**", "**/a", "*/b", "a/*", "a/*/c.go", "**/*.go", "**/c.go", "a/*/*",
+		"*/*/c.go", "[ab]/*", "?/b/**", "a/b/c.go", "b/*.go"}
+	segs := []string{"a", "b", "c", "c.go", "a.go"}
+	var paths []string
+	for _, s1 := range segs {
+		paths = append(paths, s1)
+		for _, s2 := range segs {
+			paths = append(paths, s1+"/"+s2)
+			for _, s3 := range segs {
+				paths = append(paths, s1+"/"+s2+"/"+s3)
+			}
+		}
+	}
+	for _, a := range globs {
+		for _, b := range globs {
+			if Overlaps(a, b) {
+				continue
+			}
+			for _, p := range paths {
+				if covers(a, p) && covers(b, p) {
+					t.Errorf("Overlaps(%q, %q) = false, but both cover %q", a, b, p)
 					break
 				}
 			}
