@@ -87,7 +87,7 @@ func (env Env) cmdPlan(ctx context.Context, args []string) error {
 				"(shoalctl plan %s %s):\n  %s", t.Slug, t.Slug, strings.Join(globs, " "), strings.Join(lines, "\n  "))
 		}
 		for _, o := range res.Undecided {
-			d, err := env.askOverlap(in, p, t, o)
+			d, err := env.askOverlap(in, p, t, o, todoBody)
 			if err != nil {
 				return err
 			}
@@ -124,7 +124,8 @@ func overlapLine(o store.Overlap) string {
 }
 
 // askOverlap shows one overlap and reads the human's key (§9.2).
-func (env Env) askOverlap(in *bufio.Reader, p *project, t store.Task, o store.Overlap) (byte, error) {
+// todo is the todo.md being planned now (nil: none given), shown for t.
+func (env Env) askOverlap(in *bufio.Reader, p *project, t store.Task, o store.Overlap, todo []byte) (byte, error) {
 	w := env.Stdout
 	fmt.Fprintf(w, "overlap: %s and %s (%s, %q) claim the same paths:\n", t.Slug, o.Task.Slug, o.Task.Stage, o.Task.Title)
 	for _, pr := range o.Pairs {
@@ -164,9 +165,12 @@ func (env Env) askOverlap(in *bufio.Reader, p *project, t store.Task, o store.Ov
 			for _, pr := range o.Pairs {
 				fmt.Fprintf(w, "  %s (%s)  ~  %s (%s)\n", pr[0], t.Slug, pr[1], o.Task.Slug)
 			}
-			for _, x := range []store.Task{t, o.Task} {
-				fmt.Fprintf(w, "todo.md of %s:\n%s\n", x.Slug, indent(strings.TrimRight(todoHead(p, x, 10), "\n")))
+			mine := todoHead(p, t, 10)
+			if todo != nil {
+				mine = head(string(todo), 10)
 			}
+			fmt.Fprintf(w, "todo.md of %s:\n%s\n", t.Slug, indent(strings.TrimRight(mine, "\n")))
+			fmt.Fprintf(w, "todo.md of %s:\n%s\n", o.Task.Slug, indent(strings.TrimRight(todoHead(p, o.Task, 10), "\n")))
 			continue
 		}
 		return key[0], nil
@@ -186,13 +190,17 @@ func todoHead(p *project, t store.Task, n int) string {
 		if err != nil {
 			continue
 		}
-		lines := strings.SplitN(string(data), "\n", n+1)
-		if len(lines) > n {
-			lines = append(lines[:n], "...")
-		}
-		return strings.Join(lines, "\n")
+		return head(string(data), n)
 	}
 	return "(no todo.md)"
+}
+
+func head(s string, n int) string {
+	lines := strings.SplitN(s, "\n", n+1)
+	if len(lines) > n {
+		lines = append(lines[:n], "...")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (env Env) reportPlan(ctx context.Context, p *project, t store.Task, res store.PlanResult, globs []string, todo []byte) error {
