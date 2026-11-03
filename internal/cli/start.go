@@ -149,10 +149,17 @@ func (env Env) cmdStart(ctx context.Context, args []string) error {
 		return err
 	}
 	// Liveness checks (stale claims, doctor) ask this server, whatever
-	// default tmux server the caller has.
+	// default tmux server the caller has. The window is open from here on,
+	// so a failed lookup or check warns instead of leaving the task at
+	// starting with nobody linked to its window.
 	socket, err := env.tmux(ctx, "display-message", "-p", "-t", window, "#{socket_path}")
 	if err != nil {
-		return fmt.Errorf("read the tmux socket of window %s: %w", window, err)
+		socket = env.envSocket()
+		where := "recorded " + socket + " from $TMUX"
+		if socket == "" {
+			where = "none recorded, so stale-claim checks ask the default tmux server"
+		}
+		fmt.Fprintf(env.Stderr, "warning: could not read the tmux socket of window %s (%v); %s\n", window, err, where)
 	}
 	if _, err = p.db.Update(ctx, t, []string{store.StageStarting},
 		"stage = ?, tmux_session = ?, tmux_window = ?, tmux_socket = ?, model = ?, started_at = ?",
@@ -162,8 +169,11 @@ func (env Env) cmdStart(ctx context.Context, args []string) error {
 	if t, err = p.db.GetTask(ctx, t.Slug); err != nil {
 		return err
 	}
-	if t, err = env.rebaseIfTargetMoved(ctx, p, t); err != nil {
-		return err
+	if moved, err := env.rebaseIfTargetMoved(ctx, p, t); err != nil {
+		fmt.Fprintf(env.Stderr, "warning: could not check whether the merge target of %s moved while it started (%v); "+
+			"if a merge changed a file it claims, shoalctl merge rebases it when its turn comes\n", t.Slug, err)
+	} else {
+		t = moved
 	}
 	if err := env.startWatcher(p, t); err != nil {
 		fmt.Fprintf(env.Stderr, "warning: the attention watcher did not start (%v); status will not flag dialogs in window %s\n", err, window)
@@ -173,6 +183,16 @@ func (env Env) cmdStart(ctx context.Context, args []string) error {
 		fmt.Fprintf(env.Stdout, "attach with: tmux attach -t %s\n", session)
 	}
 	return nil
+}
+
+// envSocket is the socket of the tmux server the caller runs inside ($TMUX
+// is "<socket>,<pid>,<session>"), when no -S/-L override chose another.
+func (env Env) envSocket() string {
+	if len(env.TmuxArgs) > 0 {
+		return ""
+	}
+	socket, _, _ := strings.Cut(os.Getenv("TMUX"), ",")
+	return socket
 }
 
 // blockedError explains why a serialized task cannot start yet (§9.2 s).
