@@ -147,7 +147,7 @@ commands:
   release <task> --as <agent> [<glob>...]
   msg send <task> --from <agent> --to <agent|*> --kind <kind> [--subject "<s>"] [--reply-to <id>] "<body>"
   msg inbox <task> --as <agent> [--all]
-  doctor [--fix]      check (and repair) shoal's hook entries
+  doctor [--fix]      check shoal's state; --fix repairs what is safe (exit 11 while a problem remains)
   version
 `
 
