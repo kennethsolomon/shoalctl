@@ -326,3 +326,44 @@ func TestClaimsHitIncludesStartingTasks(t *testing.T) {
 		t.Fatalf("hits = %+v, %v", hits, err)
 	}
 }
+
+// TestPlanSeesBracketedRouteDirectories: a plan on a Next.js or SvelteKit
+// route directory ("app/[slug]") holds the files under it, so another plan on
+// one of them, or on a wildcard reaching them, is an overlap.
+func TestPlanSeesBracketedRouteDirectories(t *testing.T) {
+	for _, pair := range [][2]string{{"app/[slug]", "app/[slug]/page.tsx"}, {"app/[slug]", "**/page.tsx"},
+		{"src/routes/[id]", "src/routes/[id]/+page.svelte"}, {"app/[...slug]", "app/[...slug]/page.tsx"},
+		{"app/[[...slug]]", "app/[[...slug]]/page.tsx"}, {"app/(shop)/[slug]", "app/(shop)/[slug]/page.tsx"},
+		{"**/page.tsx", "app/[slug]"}} {
+		h := newHarness(t)
+		h.initWith(junitConfig)
+		a, b := newTask(t, h, "bugfix", "Bug A"), newTask(t, h, "bugfix", "Bug B")
+		h.mustRun("plan", a, pair[0])
+		mustContain(t, "overlap "+pair[0]+" vs "+pair[1], h.expectCode(ExitState, "plan", b, pair[1]), "nothing was planned", a+" (ready)")
+		if got := h.task(b); got.Stage != store.StageNew {
+			t.Fatalf("%v: b planned anyway: %+v", pair, got)
+		}
+	}
+}
+
+// TestClaimsHitMatchesFilesInBracketedDirectories: a merge changing
+// app/[slug]/page.tsx hits a task claiming the route directory app/[slug].
+func TestClaimsHitMatchesFilesInBracketedDirectories(t *testing.T) {
+	h := newHarness(t).withSession()
+	h.initWith(junitConfig)
+	a := startedTask(t, h, "feature", "Lands first")
+	base := testutil.Git(t, a.Worktree, "rev-parse", "HEAD")
+	commitIn(t, a.Worktree, "app/[slug]/page.tsx", "x")
+	b := newTask(t, h, "bugfix", "Route owner")
+	h.mustRun("plan", b, "app/[slug]")
+	h.mustRun("start", b)
+	p, err := h.env.openProject(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.close()
+	hits, err := h.env.claimsHit(context.Background(), p, h.task(a.Slug), "main", base)
+	if err != nil || len(hits) != 1 || hits[0].task.Slug != b || hits[0].paths[0] != "app/[slug]/page.tsx" {
+		t.Fatalf("hits = %+v, %v", hits, err)
+	}
+}

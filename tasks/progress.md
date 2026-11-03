@@ -57,8 +57,6 @@ Vex returned HOLD on `783d968`; each fix is test-first in its own commit (spec ย
 - A start killed between opening the tmux window and recording it leaves a window doctor cannot link to the task.
 - `needs-rebase` hits are computed from claims read before the fast-forward (merge.lock held); a claim added before
   the merge's transaction is missed, and that task is still rebased by `merge` itself when its turn comes.
-- Bracketed directories (`app/[slug]`, Next.js/SvelteKit routes) parse as globs with a class, so a claim on one does
-  not cover its files; no escape is supported. Claim the parent (`app/**`) instead (spec row 51).
 - `merge` stops at the first error across all targets, so a blocked `main` task holds back a hotfix queued after it
   (spec row 52, ยง9.4; README no longer says "per target"). `merge --task <task>` merges one task.
 - Watcher: not restarted when a task goes back from `done` to `qa`; one write transaction every 2 s; exits on the

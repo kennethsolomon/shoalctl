@@ -76,25 +76,77 @@ func match(gs, ps []string) bool {
 	return len(ps) == 0
 }
 
-func literal(g string) bool { return !strings.ContainsAny(g, "*?[") }
+// reading is one way to read a claim glob. A pattern reading takes "[...]"
+// as a character class; an exact reading takes brackets as literal
+// characters, as in the route directories "app/[slug]" of Next.js and
+// SvelteKit. "*" and "?" are wildcards in both.
+type reading struct {
+	text  string
+	exact bool
+}
+
+// readings of g: its pattern reading, and an exact one when g has brackets.
+func readings(g string) []reading {
+	if strings.Contains(g, "[") {
+		return []reading{{text: g}, {text: g, exact: true}}
+	}
+	return []reading{{text: g}}
+}
+
+// literal reports whether r names one path: no wildcard is left in it.
+func (r reading) literal() bool {
+	if r.exact {
+		return !strings.ContainsAny(r.text, "*?")
+	}
+	return !strings.ContainsAny(r.text, "*?[")
+}
+
+var escapeName = strings.NewReplacer(`\`, `\\`, `[`, `\[`, `]`, `\]`, `*`, `\*`, `?`, `\?`)
+var escapeBrackets = strings.NewReplacer(`\`, `\\`, `[`, `\[`, `]`, `\]`)
+
+// pattern is r in path.Match syntax: a literal is its name escaped, an exact
+// reading has its brackets escaped.
+func (r reading) pattern() string {
+	switch {
+	case r.literal():
+		return escapeName.Replace(r.text)
+	case r.exact:
+		return escapeBrackets.Replace(r.text)
+	}
+	return r.text
+}
 
 // Overlaps reports whether some path could match both globs. A literal glob
 // also claims every path below it (a claim on "api" covers "api/x.go"); a
 // wildcard glob claims exactly the paths it matches. Wildcard against
-// wildcard is decided exactly, by walking both patterns together.
+// wildcard is decided exactly, by walking both patterns together. A glob
+// with brackets is read both as a pattern and as an exact name (see
+// reading), and overlaps when either reading does, so brackets only ever add
+// overlaps.
 func Overlaps(a, b string) bool {
+	for _, ra := range readings(a) {
+		for _, rb := range readings(b) {
+			if overlaps(ra, rb) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func overlaps(a, b reading) bool {
 	switch {
 	case a == b:
 		return true
-	case literal(a) && literal(b):
-		return strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
-	case literal(a):
-		return Match(b, a) || under(b, a)
-	case literal(b):
-		return Match(a, b) || under(a, b)
+	case a.literal() && b.literal():
+		return a.text == b.text || strings.HasPrefix(a.text, b.text+"/") || strings.HasPrefix(b.text, a.text+"/")
+	case a.literal():
+		return Match(b.pattern(), a.text) || under(b, a)
+	case b.literal():
+		return Match(a.pattern(), b.text) || under(a, b)
 	}
-	sa, oka := parseGlob(a)
-	sb, okb := parseGlob(b)
+	sa, oka := parseGlob(a.pattern())
+	sb, okb := parseGlob(b.pattern())
 	if !oka || !okb {
 		return true // unparseable: fail closed
 	}
@@ -149,7 +201,11 @@ func parseSegment(seg string) ([]token, bool) {
 		case '?':
 			out = append(out, token{kind: tokAny})
 		case '\\':
-			return nil, false // Validate refuses backslashes
+			if i+1 >= len(rs) {
+				return nil, false
+			}
+			i++
+			out = append(out, token{kind: tokLit, r: rs[i]})
 		case '[':
 			t := token{kind: tokClass}
 			i++
@@ -158,6 +214,9 @@ func parseSegment(seg string) ([]token, bool) {
 				i++
 			}
 			for ; i < len(rs) && rs[i] != ']'; i++ {
+				if rs[i] == '\\' {
+					return nil, false // escapes inside a class: fail closed
+				}
 				lo, hi := rs[i], rs[i]
 				if i+2 < len(rs) && rs[i+1] == '-' && rs[i+2] != ']' {
 					hi = rs[i+2]
@@ -312,12 +371,13 @@ func pathsMeet(a, b []segment) bool {
 // under reports whether a claim on the literal directory dir would hold a
 // path g can match: dir covers dir/**, so any wildcard that can reach a
 // path below it ("**/x.go", "src/*/x.go" against "src/pkg") is under it.
-func under(g, dir string) bool {
-	if Match(g, dir) || strings.HasPrefix(g, dir+"/") {
+func under(g, dir reading) bool {
+	gp, dp := g.pattern(), dir.pattern()
+	if Match(gp, dir.text) || strings.HasPrefix(gp, dp+"/") {
 		return true
 	}
-	sg, okg := parseGlob(g)
-	sd, okd := parseGlob(dir + "/**")
+	sg, okg := parseGlob(gp)
+	sd, okd := parseGlob(dp + "/**")
 	if !okg || !okd {
 		return true // unparseable: fail closed
 	}

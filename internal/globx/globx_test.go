@@ -154,7 +154,7 @@ func TestLiteralDirectoryMeetsWildcardsReachingIntoIt(t *testing.T) {
 // covers is the claim semantics: a literal covers itself and its subtree,
 // a wildcard exactly the paths it matches.
 func covers(g, p string) bool {
-	if literal(g) {
+	if (reading{text: g}).literal() {
 		return p == g || strings.HasPrefix(p, g+"/")
 	}
 	return Match(g, p)
@@ -183,6 +183,106 @@ func TestOverlapsNeverMissesACoveredPath(t *testing.T) {
 			}
 			for _, p := range paths {
 				if covers(a, p) && covers(b, p) {
+					t.Errorf("Overlaps(%q, %q) = false, but both cover %q", a, b, p)
+					break
+				}
+			}
+		}
+	}
+}
+
+// TestBracketedRouteDirectories: Next.js and SvelteKit name directories with
+// brackets ("app/[slug]"). A glob with brackets is read both as a pattern
+// and as an exact name (brackets literal, a literal name covering its
+// subtree); it overlaps when either reading does, so no overlap is lost.
+func TestBracketedRouteDirectories(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"app/[slug]", "app/[slug]/page.tsx", true},
+		{"app/[slug]", "**/page.tsx", true},
+		{"src/routes/[id]", "src/routes/[id]/+page.svelte", true},
+		{"src/routes/[id]", "**/+page.svelte", true},
+		{"app/[...slug]", "app/[...slug]/page.tsx", true},
+		{"app/[...slug]", "**/page.tsx", true},
+		{"app/[[...slug]]", "app/[[...slug]]/page.tsx", true},
+		{"app/[[...slug]]", "**/page.tsx", true},
+		{"app/(shop)/[slug]", "app/(shop)/[slug]/page.tsx", true},
+		{"app/(shop)/[slug]", "**/page.tsx", true},
+		{"app/[slug]", "app/[slug]/**", true},
+		{"app/[slug]", "app/*/page.tsx", true},
+		{"app/[slug]/*.tsx", "app/[slug]/page.tsx", true},
+		{"app/[slug]", "app/s", true}, // the pattern reading still holds
+		{"app/[slug]", "app/[id]/page.tsx", false},
+		{"app/[slug]", "lib/**", false},
+		{"app/[slug]", "app/x", false},
+		{"app/[slug]", "app/[slug]x/page.tsx", false},
+	}
+	for _, c := range cases {
+		if got := Overlaps(c.a, c.b); got != c.want {
+			t.Errorf("Overlaps(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+		if got := Overlaps(c.b, c.a); got != c.want {
+			t.Errorf("Overlaps(%q, %q) = %v, want %v (swapped)", c.b, c.a, got, c.want)
+		}
+	}
+	for _, g := range []string{"app/[slug]", "app/[...slug]", "app/[[...slug]]", "app/(shop)/[slug]", "src/routes/[id]/+page.svelte",
+		"app/[slug]/**"} {
+		if err := Validate(g); err != nil {
+			t.Errorf("Validate(%q): %v", g, err)
+		}
+	}
+}
+
+// exactName reads g with brackets as literal characters, as a path.Match
+// pattern; isLit reports whether that reading has no wildcard left.
+func exactName(g string) (pattern string, isLit bool) {
+	return strings.NewReplacer(`[`, `\[`, `]`, `\]`).Replace(g), !strings.ContainsAny(g, "*?")
+}
+
+// coversEither is the claim semantics for globs with brackets: the pattern
+// reading, or the exact-name reading (a literal name covers its subtree).
+func coversEither(g, p string) bool {
+	if covers(g, p) {
+		return true
+	}
+	if !strings.Contains(g, "[") {
+		return false
+	}
+	pat, isLit := exactName(g)
+	if isLit {
+		return p == g || strings.HasPrefix(p, g+"/")
+	}
+	return Match(pat, p)
+}
+
+// TestOverlapsNeverMissesABracketedPath is the brute-force check over both
+// readings of bracketed globs, against paths whose names contain brackets.
+func TestOverlapsNeverMissesABracketedPath(t *testing.T) {
+	globs := []string{"**", "*", "a", "[a]", "[a]/**", "[a]/b", "**/b", "*/b", "[ab]", "[ab]/*", "a/[b]", "a/[b]/c", "a/[[b]]",
+		"[a]/*", "**/[b]", "[^a]", "*]", "[a]*", "a/*", "a/**", "a/[b]/**", "[a]/[b]"}
+	segs := []string{"a", "b", "c", "[a]", "[b]", "[[b]]", "[ab]", "ab"}
+	var paths []string
+	for _, s1 := range segs {
+		paths = append(paths, s1)
+		for _, s2 := range segs {
+			paths = append(paths, s1+"/"+s2)
+			for _, s3 := range segs {
+				paths = append(paths, s1+"/"+s2+"/"+s3)
+			}
+		}
+	}
+	for _, a := range globs {
+		for _, b := range globs {
+			if Overlaps(a, b) != Overlaps(b, a) {
+				t.Errorf("Overlaps(%q, %q) is not symmetric", a, b)
+			}
+			if Overlaps(a, b) {
+				continue
+			}
+			for _, p := range paths {
+				if coversEither(a, p) && coversEither(b, p) {
 					t.Errorf("Overlaps(%q, %q) = false, but both cover %q", a, b, p)
 					break
 				}
