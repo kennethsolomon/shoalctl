@@ -1,0 +1,5 @@
+$ npm install
+npm warn deprecated inflight@1.0.6
+Need to install the following packages:
+  create-thing@2.1.0
+Ok to proceed? (y/n)

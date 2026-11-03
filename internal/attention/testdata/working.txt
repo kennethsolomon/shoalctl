@@ -1,0 +1,12 @@
+⏺ Here is what changed and why:
+
+> 1. The accessor now falls back to the email
+  2. The list view reads the same accessor
+
+⏺ Should I also update the docs? I'll go ahead and do that.
+
+✻ Pondering… (12s · ↑ 1.2k tokens · esc to interrupt)
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ >                                                                            │
+╰──────────────────────────────────────────────────────────────────────────────╯

@@ -1,0 +1,19 @@
+╭───────────────────────────────────────────────────╮
+│ ✻ Welcome to Claude Code!                         │
+│                                                   │
+│   /help for help, /status for your current setup  │
+│                                                   │
+│   cwd: /Users/dev/.shoal/projects/0f3a9c/worktrees │
+╰───────────────────────────────────────────────────╯
+
+> Read .shoal/brief.md first. It is your task brief. Follow it.
+
+⏺ I've read the brief. Plan:
+  1. Reproduce the bug with a failing test
+  2. Fix User::displayName
+  3. Run the suite
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ >                                                                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+  ? for shortcuts

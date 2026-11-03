@@ -1,0 +1,16 @@
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│ Do you trust the files in this folder?                                       │
+│                                                                              │
+│ /Users/dev/.shoal/projects/0f3a9c/worktrees/2-users-page-sort                │
+│                                                                              │
+│ Claude Code may read, write, or execute files contained in this directory.  │
+│ This can pose security risks, so only use files from trusted sources.        │
+│                                                                              │
+│ Learn more                                                                   │
+│                                                                              │
+│ ❯ 1. Yes, proceed                                                            │
+│   2. No, exit                                                                │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+   Enter to confirm · Esc to exit

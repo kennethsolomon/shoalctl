@@ -1,0 +1,16 @@
+⏺ I'll run the failing test first to confirm the bug.
+
+⏺ Bash(php artisan test --filter UserDisplayName)
+  ⎿  Running…
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ Bash command                                                                 │
+│                                                                              │
+│   php artisan test --filter UserDisplayName                                  │
+│   Run the display name regression test                                       │
+│                                                                              │
+│ Do you want to proceed?                                                      │
+│ ❯ 1. Yes                                                                     │
+│   2. Yes, and don't ask again for php artisan test commands in this project  │
+│   3. No, and tell Claude what to do differently (esc)                        │
+╰──────────────────────────────────────────────────────────────────────────────╯
