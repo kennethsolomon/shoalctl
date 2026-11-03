@@ -130,3 +130,26 @@ func TestPlanSeesWildcardReachingIntoALiteralDirectory(t *testing.T) {
 		}
 	}
 }
+
+// TestPlanRefusesAFoldThatWouldDeadlock: x waits on me, y waits on x; folding
+// me into y would make x wait on y. Neither s nor m is offered, only p.
+func TestPlanRefusesAFoldThatWouldDeadlock(t *testing.T) {
+	h := newHarness(t)
+	h.initWith(junitConfig)
+	me, x, y := newTask(t, h, "bugfix", "Me"), newTask(t, h, "bugfix", "X"), newTask(t, h, "bugfix", "Y")
+	h.env.Terminal = func() bool { return true }
+	h.mustRun("plan", me, "m/**")
+	h.env.Stdin = strings.NewReader("s\n")
+	h.mustRun("plan", x, "m/**", "x/**")
+	h.env.Stdin = strings.NewReader("s\n")
+	h.mustRun("plan", y, "x/**", "y/**")
+	h.env.Stdin = strings.NewReader("m\np\n")
+	out := h.mustRun("plan", me, "y/**")
+	mustContain(t, "fold refused", out, "[m] not available: "+x+" waits on "+me+" and "+y+" already waits on it", "type one of", "ready")
+	if got := h.task(me); got.Stage != store.StageReady {
+		t.Fatalf("me: %+v", got)
+	}
+	if got := h.task(x); got.Stage != store.StageBlocked || got.BlockedBy != h.task(me).ID {
+		t.Fatalf("x: %+v", got)
+	}
+}

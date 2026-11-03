@@ -94,8 +94,13 @@ type Overlap struct {
 	// CanSerialize is false when the other task already waits on this one
 	// (directly or through others), so s would deadlock both.
 	CanSerialize bool
-	// CanFold is false when the other task is finished (done or later).
+	// CanFold is false when the other task is finished (done or later) or
+	// when folding would close a wait cycle (FoldCycle set).
 	CanFold bool
+	// FoldCycle is the slug of a task waiting on this one that the other
+	// task already waits on: moving its wait over (row 49) would deadlock
+	// both. Empty: none.
+	FoldCycle string
 }
 
 // PlanRequest is one attempt of plan's single transaction.
@@ -158,7 +163,10 @@ func (s *Store) PlanClaims(ctx context.Context, req PlanRequest) (PlanResult, er
 				return err
 			}
 			o.CanSerialize = !cycle
-			o.CanFold = !contains(unfoldable, o.Task.Stage)
+			if o.FoldCycle, err = foldCycle(ctx, tx, req.Task.ID, id); err != nil {
+				return err
+			}
+			o.CanFold = !contains(unfoldable, o.Task.Stage) && o.FoldCycle == ""
 			res.Overlaps = append(res.Overlaps, *o)
 			d := req.Decisions[id]
 			valid := (d == ChoiceSerialize && o.CanSerialize) || (d == ChoiceMerge && o.CanFold) || d == ChoiceParallel
@@ -333,21 +341,8 @@ func waitsOn(ctx context.Context, tx *sql.Tx, from, target int64) (bool, error) 
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
-		rows, err := tx.QueryContext(ctx, `SELECT blocker_id FROM task_blockers WHERE task_id = ?`, cur)
+		next, err := blockersOf(ctx, tx, cur)
 		if err != nil {
-			return false, fmt.Errorf("read blockers of task %d: %w", cur, err)
-		}
-		var next []int64
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return false, fmt.Errorf("scan blocker: %w", err)
-			}
-			next = append(next, id)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
 			return false, err
 		}
 		for _, id := range next {
@@ -361,6 +356,66 @@ func waitsOn(ctx context.Context, tx *sql.Tx, from, target int64) (bool, error) 
 		}
 	}
 	return false, nil
+}
+
+// foldCycle returns the slug of a task waiting on me that into already
+// waits on, other than through me (whose own waits the fold drops). Folding
+// me into into would make that task wait on into: a cycle. Empty: safe.
+func foldCycle(ctx context.Context, tx *sql.Tx, me, into int64) (string, error) {
+	waiting, err := blockedOn(ctx, tx, me)
+	if err != nil {
+		return "", err
+	}
+	targets := map[int64]bool{}
+	for _, w := range waiting {
+		if w != into {
+			targets[w] = true
+		}
+	}
+	if len(targets) == 0 {
+		return "", nil
+	}
+	seen := map[int64]bool{into: true, me: true}
+	queue := []int64{into}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		next, err := blockersOf(ctx, tx, cur)
+		if err != nil {
+			return "", err
+		}
+		for _, id := range next {
+			if targets[id] {
+				var slug string
+				if err := tx.QueryRowContext(ctx, `SELECT slug FROM tasks WHERE id = ?`, id).Scan(&slug); err != nil {
+					return "", fmt.Errorf("read slug of task %d: %w", id, err)
+				}
+				return slug, nil
+			}
+			if !seen[id] {
+				seen[id] = true
+				queue = append(queue, id)
+			}
+		}
+	}
+	return "", nil
+}
+
+func blockersOf(ctx context.Context, tx *sql.Tx, id int64) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT blocker_id FROM task_blockers WHERE task_id = ? ORDER BY blocker_id`, id)
+	if err != nil {
+		return nil, fmt.Errorf("read blockers of task %d: %w", id, err)
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var b int64
+		if err := rows.Scan(&b); err != nil {
+			return nil, fmt.Errorf("scan blocker: %w", err)
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
 }
 
 func blockedOn(ctx context.Context, tx *sql.Tx, blocker int64) ([]int64, error) {

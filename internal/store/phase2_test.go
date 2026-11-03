@@ -279,3 +279,53 @@ func TestQueueAttentionAndStaleRelease(t *testing.T) {
 		t.Fatal("released twice")
 	}
 }
+
+// TestFoldRefusedWhenMovingAWaitClosesACycle: x waits on me and y waits on
+// x. Folding me into y would make x wait on y, which already waits on x, so
+// m is not offered and a forced m is not applied.
+func TestFoldRefusedWhenMovingAWaitClosesACycle(t *testing.T) {
+	s, _ := openTest(t)
+	ctx := context.Background()
+	ts := newTasks(t, s, 3)
+	me, x, y := ts[0], ts[1], ts[2]
+	mustPlan(t, s, planReq(me, []string{"m/**"}, nil))
+	mustPlan(t, s, planReq(x, []string{"m/**", "x/**"}, map[int64]byte{me.ID: ChoiceSerialize}))
+	mustPlan(t, s, planReq(y, []string{"x/**", "y/**"}, map[int64]byte{x.ID: ChoiceSerialize}))
+	res := mustPlan(t, s, planReq(me, []string{"y/**"}, nil))
+	if len(res.Undecided) != 1 || res.Undecided[0].Task.ID != y.ID || res.Undecided[0].CanFold || res.Undecided[0].FoldCycle != x.Slug {
+		t.Fatalf("fold offered across a cycle: %+v", res.Undecided)
+	}
+	if res = mustPlan(t, s, planReq(me, []string{"y/**"}, map[int64]byte{y.ID: ChoiceMerge})); res.Applied {
+		t.Fatal("a cycle-forming fold was applied")
+	}
+	if got, _ := s.taskByID(ctx, me.ID); got.Stage == StageFolded {
+		t.Fatalf("me folded: %+v", got)
+	}
+	// Without the cycle the fold is still offered: a task waiting on me that
+	// y does not reach moves over.
+	if b, _ := s.Blockers(ctx, x.ID); len(b) != 1 || b[0] != me.ID {
+		t.Fatalf("x's blockers changed: %v", b)
+	}
+}
+
+// TestFoldMovesWaitersWhenNoCycle keeps row 49: tasks serialized behind the
+// folded task now wait on the task it was folded into.
+func TestFoldMovesWaitersWhenNoCycle(t *testing.T) {
+	s, _ := openTest(t)
+	ctx := context.Background()
+	ts := newTasks(t, s, 3)
+	me, x, y := ts[0], ts[1], ts[2]
+	mustPlan(t, s, planReq(y, []string{"y/**"}, nil))
+	mustPlan(t, s, planReq(me, []string{"m/**"}, nil))
+	mustPlan(t, s, planReq(x, []string{"m/**"}, map[int64]byte{me.ID: ChoiceSerialize}))
+	res := mustPlan(t, s, planReq(me, []string{"y/**"}, nil))
+	if len(res.Undecided) != 1 || !res.Undecided[0].CanFold {
+		t.Fatalf("fold not offered: %+v", res.Undecided)
+	}
+	if res = mustPlan(t, s, planReq(me, []string{"y/**"}, map[int64]byte{y.ID: ChoiceMerge})); !res.Applied || res.Folded == nil {
+		t.Fatalf("fold: %+v", res)
+	}
+	if b, _ := s.Blockers(ctx, x.ID); len(b) != 1 || b[0] != y.ID {
+		t.Fatalf("x waits on %v, want y", b)
+	}
+}

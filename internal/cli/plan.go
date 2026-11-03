@@ -141,6 +141,9 @@ func (env Env) askOverlap(in *bufio.Reader, p *project, t store.Task, o store.Ov
 	if o.CanFold {
 		fmt.Fprintf(w, "  [m] merge: fold %s into %s (same concern); %s closes\n", t.Slug, o.Task.Slug, t.Slug)
 		keys += "m"
+	} else if o.FoldCycle != "" {
+		fmt.Fprintf(w, "  [m] not available: %s waits on %s and %s already waits on it; folding would deadlock them\n",
+			o.FoldCycle, t.Slug, o.Task.Slug)
 	} else {
 		fmt.Fprintf(w, "  [m] not available: %s is %s\n", o.Task.Slug, o.Task.Stage)
 	}
