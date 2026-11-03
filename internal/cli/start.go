@@ -162,6 +162,9 @@ func (env Env) cmdStart(ctx context.Context, args []string) error {
 	if t, err = p.db.GetTask(ctx, t.Slug); err != nil {
 		return err
 	}
+	if t, err = env.rebaseIfTargetMoved(ctx, p, t); err != nil {
+		return err
+	}
 	if err := env.startWatcher(p, t); err != nil {
 		fmt.Fprintf(env.Stderr, "warning: the attention watcher did not start (%v); status will not flag dialogs in window %s\n", err, window)
 	}

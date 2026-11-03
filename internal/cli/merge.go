@@ -504,8 +504,11 @@ func contains64(ids []int64, id int64) bool {
 	return false
 }
 
-// claimsHit lists the other open tasks at in-progress or qa that merge into
-// target and hold a claim on a file the merging task changes since base.
+// claimsHit lists the other open tasks at starting, in-progress or qa that
+// merge into target and hold a claim on a file the merging task changes since
+// base. MarkNeedsRebase moves only those at in-progress or qa by the merge's
+// transaction; one still at starting then is caught by start itself
+// (rebaseIfTargetMoved), which reads the target after recording in-progress.
 func (env Env) claimsHit(ctx context.Context, p *project, t store.Task, target, base string) ([]claimHit, error) {
 	files, err := changedFiles(ctx, t.Worktree, base)
 	if err != nil {
@@ -526,7 +529,7 @@ func (env Env) claimsHit(ctx context.Context, p *project, t store.Task, target, 
 	idx := map[int64]int{}
 	for _, c := range open {
 		o := c.Owner
-		if o.ID == t.ID || (o.Stage != store.StageInProgress && o.Stage != store.StageQA) {
+		if o.ID == t.ID || !contains([]string{store.StageStarting, store.StageInProgress, store.StageQA}, o.Stage) {
 			continue
 		}
 		if tg, ok := mergeTarget(p, o); !ok || tg != target {
@@ -548,6 +551,61 @@ func (env Env) claimsHit(ctx context.Context, p *project, t store.Task, target, 
 		}
 	}
 	return out, nil
+}
+
+// rebaseIfTargetMoved marks a just-started task needs-rebase when its target
+// moved past the task's base while it was starting (a merge landed during
+// its baseline) and changed a file the task claims. It runs after start
+// recorded in-progress, so a merge whose transaction commits later marks the
+// task itself, and one that committed earlier had already moved the target.
+func (env Env) rebaseIfTargetMoved(ctx context.Context, p *project, t store.Task) (store.Task, error) {
+	target, ok := mergeTarget(p, t)
+	if !ok || t.BaseSHA == "" {
+		return t, nil
+	}
+	tip, err := gitx.Run(ctx, p.root, "rev-parse", "--verify", "--quiet", "refs/heads/"+target+"^{commit}")
+	if err != nil || tip == "" || tip == t.BaseSHA {
+		return t, nil // no target branch, or it has not moved
+	}
+	out, err := gitx.Run(ctx, p.root, "diff", "--name-status", "-z", t.BaseSHA, tip)
+	if err != nil {
+		return t, err
+	}
+	files, err := parseNameStatusZ(out)
+	if err != nil {
+		return t, err
+	}
+	claims, err := p.db.Claims(ctx, t.ID)
+	if err != nil {
+		return t, err
+	}
+	var hit []string
+	for _, f := range files {
+		for _, path := range []string{f.Path, f.From} {
+			if path == "" || contains(hit, path) {
+				continue
+			}
+			for _, c := range claims {
+				if globx.Overlaps(c.Glob, path) {
+					hit = append(hit, path)
+					break
+				}
+			}
+		}
+	}
+	if len(hit) == 0 {
+		return t, nil
+	}
+	moved, err := p.db.Update(ctx, t, []string{store.StageInProgress}, "stage = ?", []any{store.StageNeedsRebase}, nil)
+	if errors.Is(err, store.ErrStage) || errors.Is(err, store.ErrConflict) {
+		return p.db.GetTask(ctx, t.Slug) // a merge marked it, or its session already moved on
+	}
+	if err != nil {
+		return t, err
+	}
+	fmt.Fprintf(env.Stdout, "%s: needs-rebase: %s moved to %s while it started and changed %s, which it claims; its next shoalctl qa rebases it\n",
+		t.Slug, target, shortSHA(tip), strings.Join(hit, ", "))
+	return moved, nil
 }
 
 var errConflict = errors.New("rebase conflict")

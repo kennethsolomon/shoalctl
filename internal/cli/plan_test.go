@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -261,4 +262,67 @@ func shortTempRoot() string {
 		return ""
 	}
 	return "/tmp"
+}
+
+// TestMergeLandingDuringStartFlagsNeedsRebase: a merge that lands while a
+// task is still at starting (here: during its baseline) changes a file the
+// task claims. start must notice once it records in-progress, and the task
+// is needs-rebase, so its first qa rebases it.
+func TestMergeLandingDuringStartFlagsNeedsRebase(t *testing.T) {
+	h := newHarness(t).withSession()
+	testutil.Git(t, h.repo, "checkout", "-q", "-b", "landing")
+	commitIn(t, h.repo, "api.go", "changed by a merge")
+	landing := testutil.Git(t, h.repo, "rev-parse", "HEAD")
+	testutil.Git(t, h.repo, "checkout", "-q", "--detach", "main")
+	old := testutil.Git(t, h.repo, "rev-parse", "main")
+	land := filepath.Join(t.TempDir(), "land.sh")
+	testutil.WriteFile(t, land, fmt.Sprintf("#!/bin/sh\ngit -C %q update-ref refs/heads/main %s %s 2>/dev/null || true\nexec sh ./test.sh \"$1\"\n", h.repo, landing, old))
+	h.initWith(strings.Replace(junitConfig, `"sh ./test.sh {junit}"`, fmt.Sprintf("%q", "sh "+land+" {junit}"), 1))
+
+	b := newTask(t, h, "bugfix", "Starts while main moves")
+	h.mustRun("plan", b, "api.go")
+	out := h.mustRun("start", b)
+	if testutil.Git(t, h.repo, "rev-parse", "main") != landing {
+		t.Fatal("main did not move during start")
+	}
+	mustContain(t, "start", out, "needs-rebase", "api.go")
+	if got := h.task(b); got.Stage != store.StageNeedsRebase {
+		t.Fatalf("stage = %s, want needs-rebase", got.Stage)
+	}
+
+	// Unclaimed changes on main do not flag a task.
+	c := newTask(t, h, "bugfix", "Unrelated")
+	h.mustRun("plan", c, "web/**")
+	testutil.Git(t, h.repo, "checkout", "-q", "landing")
+	commitIn(t, h.repo, "docs.md", "x")
+	landing2 := testutil.Git(t, h.repo, "rev-parse", "HEAD")
+	testutil.Git(t, h.repo, "checkout", "-q", "--detach", "main")
+	testutil.WriteFile(t, land, fmt.Sprintf("#!/bin/sh\ngit -C %q update-ref refs/heads/main %s %s 2>/dev/null || true\nexec sh ./test.sh \"$1\"\n", h.repo, landing2, landing))
+	h.mustRun("start", c)
+	if got := h.task(c); got.Stage != store.StageInProgress {
+		t.Fatalf("unrelated task stage = %s", got.Stage)
+	}
+}
+
+// TestClaimsHitIncludesStartingTasks: a task still at starting when a merge
+// computes its needs-rebase hits is a candidate; MarkNeedsRebase moves it if
+// it reached in-progress by the merge's transaction.
+func TestClaimsHitIncludesStartingTasks(t *testing.T) {
+	h := newHarness(t).withSession()
+	h.initWith(junitConfig)
+	a := startedTask(t, h, "feature", "Lands first")
+	base := testutil.Git(t, a.Worktree, "rev-parse", "HEAD")
+	commitIn(t, a.Worktree, "api.go", "x")
+	b := newTask(t, h, "bugfix", "Starting")
+	h.mustRun("plan", b, "api.go")
+	p, err := h.env.openProject(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.close()
+	sqlExec(t, p, `UPDATE tasks SET stage = 'starting' WHERE slug = ?`, b)
+	hits, err := h.env.claimsHit(context.Background(), p, h.task(a.Slug), "main", base)
+	if err != nil || len(hits) != 1 || hits[0].task.Slug != b || hits[0].paths[0] != "api.go" {
+		t.Fatalf("hits = %+v, %v", hits, err)
+	}
 }
