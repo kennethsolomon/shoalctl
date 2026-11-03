@@ -51,6 +51,17 @@ Vex returned HOLD on `783d968`; each fix is test-first in its own commit (spec ย
 | A task at `starting` when an overlapping merge landed was never flagged | merge counts `starting` candidates; `start`, after recording `in-progress`, checks whether the target moved and changed a claimed file (`rebaseIfTargetMoved`) | `TestMergeLandingDuringStartFlagsNeedsRebase`, `TestClaimsHitIncludesStartingTasks` |
 | A SIGKILLed watcher left its attention flag forever | `doctor` reports a flag whose `watch-<id>.lock` is free; `--fix` clears it | `TestDoctorClearsAnAttentionFlagNobodyWatches` |
 
+## Vex HOLD round 2
+
+Vex returned HOLD on `ccfa093`; each fix is test-first in its own commit (spec ยง16 rows 50-51, ยง9.2 step 6).
+
+| Issue | Fix | Test |
+|-------|-----|------|
+| HIGH: bracketed route directories (`app/[slug]`, `app/[...slug]`, `app/[[...slug]]`, `app/(shop)/[slug]`, `src/routes/[id]`) read only as patterns, so `plan` and the needs-rebase hits missed `app/[slug]/page.tsx` and `**/page.tsx` | `globx.Overlaps` reads a glob with `[` both as a pattern and as an exact name (brackets literal, literal subtree) and overlaps when either does; parser takes `\` escapes internally | `TestBracketedRouteDirectories`, `TestOverlapsNeverMissesABracketedPath` (brute force, both orders), `TestPlanSeesBracketedRouteDirectories`, `TestClaimsHitMatchesFilesInBracketedDirectories` |
+| LOW: a task with no recorded socket never expired after a reboot (default socket file gone: "error connecting to ... (No such file or directory)"); doctor said only "tmux did not answer" | `noTmuxServer` accepts a missing `tmux-<uid>/default` only for the default server (no `-S`/`-L` override); `windowList.why` carries the reason and doctor prints it | `TestMissingDefaultSocketMeansNoServer`, `TestUnknownTmuxNeverExpiresClaims` |
+| LOW: the watcher opened a write transaction every tick | skip `SetAttention` when `t.Attention` already equals the reason | `TestWatchSteadyStateDoesNotWrite` (another connection holds the write lock; the watcher keeps capturing) |
+| LOW: a failed socket lookup or target check after the Claude window opened returned an error and left the task at `starting` | warn and go on: socket falls back to `$TMUX`'s (else none, the default server), a missed needs-rebase is left to `merge`, which rebases every task it lands; task is `in-progress`, watcher starts | `TestStartWarnsWhenTheSocketLookupFailsAfterLaunch`, `TestStartWarnsWhenTheTargetCheckFailsAfterLaunch`, `TestEnvSocketReadsTMUXOnlyWithoutAnOverride` |
+
 ## Open risks
 
 - The detector is a heuristic over the visible pane; a Claude Code redesign of its dialogs needs new fixtures.
@@ -63,6 +74,8 @@ Vex returned HOLD on `783d968`; each fix is test-first in its own commit (spec ย
   first DB error (its flag is then cleared, or left for `doctor --fix` if it was killed).
 - Tasks started before migration 0005 have no recorded socket: their liveness asks the caller's default tmux server,
   accepting "no server running on", or a missing default socket file (`tmux-<uid>/default`), as gone. A window on another server reads as gone once that server says so.
+- A failed socket lookup at `start` outside tmux records no socket; with a `-L` override that is the wrong server (tests only;
+  production never sets one).
 - `status` WINDOW still asks the caller's default tmux server (display only; never releases anything).
 
 ---
