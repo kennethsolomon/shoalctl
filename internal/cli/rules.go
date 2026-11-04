@@ -14,18 +14,20 @@ import (
 )
 
 // projectRule is one line of the project's own instructions to Claude:
-// CLAUDE.md, CLAUDE.local.md or a file under .claude/rules/ (§5.3).
+// CLAUDE.md, .claude/CLAUDE.md, CLAUDE.local.md or a file under
+// .claude/rules/ (§5.3).
 type projectRule struct {
 	where string // "CLAUDE.md:12"
 	text  string
 }
 
 // readProjectRules reads every rule line of the main checkout at root: the
-// non-blank lines of CLAUDE.md, CLAUDE.local.md and .claude/rules/**/*.md,
+// non-blank lines of CLAUDE.md, .claude/CLAUDE.md, CLAUDE.local.md and
+// .claude/rules/**/*.md,
 // outside code fences and outside shoal's managed block. Missing files are
 // no rules.
 func readProjectRules(root string) ([]projectRule, error) {
-	files := []string{"CLAUDE.md", "CLAUDE.local.md"}
+	files := []string{"CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md"}
 	rulesDir := filepath.Join(root, ".claude", "rules")
 	err := filepath.WalkDir(rulesDir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -114,14 +116,15 @@ func ruleLines(name string, data []byte) []projectRule {
 // deterministic (no LLM) and deliberately conservative: text and rule are
 // split into clauses, and two clauses contradict when exactly one of them
 // is negated (never, not, don't, avoid, ...) and they share at least two
-// content words (one when both name a single thing), at least half of the
-// shorter clause's. Paraphrases, synonyms and implied negation ("prefer A
-// over B") are not caught.
+// content words, at least half of the shorter clause's, or one when both
+// name a single thing or the negated clause names only one ("no tabs",
+// "spaces, not tabs"). Paraphrases, synonyms and implied negation ("prefer
+// A over B") are not caught.
 func conflictWith(text string, rules []projectRule) string {
 	for _, a := range clauses(text) {
 		for _, r := range rules {
 			for _, b := range clauses(r.text) {
-				if a.negated != b.negated && sameSubject(a.words, b.words) {
+				if a.negated != b.negated && (sameSubject(a.words, b.words) || negatesOneWord(a, b) || negatesOneWord(b, a)) {
 					return r.where + ": " + clip(r.text, 200)
 				}
 			}
@@ -179,6 +182,19 @@ func stem(w string) string {
 		return w[:len(w)-1]
 	}
 	return w
+}
+
+// negatesOneWord reports whether n is a negated clause of one content word
+// ("no tabs", the "not tabs" of "spaces, not tabs") that the other clause
+// names.
+func negatesOneWord(n, other clause) bool {
+	if !n.negated || len(n.words) != 1 {
+		return false
+	}
+	for w := range n.words {
+		return other.words[w]
+	}
+	return false
 }
 
 func sameSubject(a, b map[string]bool) bool {

@@ -57,3 +57,35 @@ func TestConflictWith(t *testing.T) {
 		}
 	}
 }
+
+// "No X" and "X, not Y" negate one word, which is enough against a rule
+// that names it (§5.3).
+func TestConflictWithOneWordNegation(t *testing.T) {
+	rules := []projectRule{{"CLAUDE.md:2", "Use tabs for indentation"}}
+	for _, tc := range []struct{ text, want string }{
+		{"Indent with spaces, not tabs", "CLAUDE.md:2"},
+		{"No tabs", "CLAUDE.md:2"},
+		{"Never tabs; spaces only", "CLAUDE.md:2"},
+		// A negated clause of several words still needs two in common.
+		{"Never use tabs in YAML files", ""},
+		{"Indent with spaces", ""},
+	} {
+		got := conflictWith(tc.text, rules)
+		if (tc.want == "") != (got == "") || !strings.HasPrefix(got, tc.want) {
+			t.Errorf("%q: got %q, want %q", tc.text, got, tc.want)
+		}
+	}
+	// A one-word negated project rule against a longer convention.
+	if got := conflictWith("Use tabs for indentation in Go files", []projectRule{{".claude/CLAUDE.md:1", "No tabs"}}); !strings.HasPrefix(got, ".claude/CLAUDE.md:1") {
+		t.Errorf("one-word negated rule: %q", got)
+	}
+}
+
+func TestReadProjectRulesDotClaude(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFile(t, filepath.Join(root, ".claude", "CLAUDE.md"), "Use tabs for indentation\n")
+	rules, err := readProjectRules(root)
+	if err != nil || len(rules) != 1 || rules[0].where != ".claude/CLAUDE.md:1" {
+		t.Fatalf("rules %+v %v", rules, err)
+	}
+}

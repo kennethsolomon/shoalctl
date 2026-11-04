@@ -120,7 +120,7 @@ func (env Env) cmdInit(ctx context.Context, args []string) error {
 		return err
 	}
 
-	fmt.Fprintf(env.Stdout, "project  %s (%s)\ndb       %s\nconfig   %s\nhooks    %s\ncontext  %s\nblock    %s\nrules    %d line(s) read from CLAUDE.md, CLAUDE.local.md and .claude/rules/\n",
+	fmt.Fprintf(env.Stdout, "project  %s (%s)\ndb       %s\nconfig   %s\nhooks    %s\ncontext  %s\nblock    %s\nrules    %d line(s) read from CLAUDE.md, .claude/CLAUDE.md, CLAUDE.local.md and .claude/rules/\n",
 		p.id, p.remote, p.dbPath(), p.cfgPath, hookFile, p.contextPath(), block, len(rules))
 	for _, n := range notes {
 		fmt.Fprintln(env.Stdout, "conflict "+n)
