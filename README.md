@@ -19,7 +19,7 @@
 
 ## Status
 
-> **Pre-alpha, not yet released.** Phases 0 to 3 are built: `init`, `new`, `plan` (cross-task claims and the overlap prompt), `start` (with an attention watcher), `status`, `done`, the full `doctor`, the `shoal-*` agent team (`agents`, `msg`, `contract`, `claim`/`release`), the QA loop (`qa`), the scope matrix (`scope`), red/green proofs (`repro`), the `test` command, the zero-regression `merge` gate with its merge queue, and the memory: `record`, `why`, `recall`, `brief`, `flag-stale` and the injecting `SessionStart`, `PreToolUse` and `PostToolUse` hooks. Everything else (conventions, `gc`, `export`, `uninstall`, releases) is **planned**; each feature and command below is marked, and the [Roadmap](#roadmap) gives the phase. [`docs/spec.md`](docs/spec.md) is the full design. Screenshots are mockups.
+> **Pre-alpha, not yet released.** Phases 0 to 4 are built: `init`, `new`, `plan` (cross-task claims and the overlap prompt), `start` (with an attention watcher), `status`, `done`, the full `doctor`, the `shoal-*` agent team (`agents`, `msg`, `contract`, `claim`/`release`), the QA loop (`qa`), the scope matrix (`scope`), red/green proofs (`repro`), the `test` command, the zero-regression `merge` gate with its merge queue, and the memory: `record`, `why`, `recall`, `brief`, `flag-stale` and the injecting `SessionStart`, `PreToolUse` and `PostToolUse` hooks, conventions (`convention`), lesson promotion (`promote`) and the opt-in managed CLAUDE.md block. Everything else (`gc`, `export`, `uninstall`, releases) is **planned**; each feature and command below is marked, and the [Roadmap](#roadmap) gives the phase. [`docs/spec.md`](docs/spec.md) is the full design. Screenshots are mockups.
 
 ## What is shoal
 
@@ -52,9 +52,11 @@ Each item says whether it is built or planned. See [Roadmap](#roadmap) for the p
 - **Crash recovery** (built). `shoalctl doctor --fix` rolls back a task killed mid-`start`, settles an interrupted merge, clears abandoned test runs, releases stale claims, clears attention flags left by a killed watcher, prunes gone worktrees and forgets closed windows. It asks before aborting a rebase and never deletes your files.
 - **Three lanes: feature, bugfix, hotfix** (built). Features list each new behaviour and need a new passing test for it; bugfixes and hotfixes need a recorded red-then-green regression test (`repro`; green must be on a later commit that changes something, but shoal cannot prove that commit is the real fix: a whitespace-only or unrelated change passes, so the reviewer judges the diff); hotfixes branch from production, keep to a line budget, merge back into the production branch, and leave a backport task. QA is capped at 3 rounds, then the task escalates to you.
 - **File-scoped memory** (built). Lessons (`shoalctl record lesson` after a failed QA round), decisions and answered questions (`record decision|qa`), and one bug record per finished bugfix or hotfix (from `done`, moved to the merged commit by `merge`) live in `memory.db` with the commit they were true at, in one FTS5 index. `PreToolUse` injects the lessons, decisions and bugs about the file being read or edited, each once per session (again after a compaction or `/clear`, without a second hit) and within ~300 tokens, every record tagged "verify against current code" and `[files changed since record]` when `git diff` says so. `flag-stale <record>` stops a record from being injected; lessons unused for 90 days stop too. Paths in `[privacy].deny_globs` get nothing.
-- **Session-start brief** (built). The `SessionStart` hook injects the task, stage, blockers, unread messages, the head of `todo.md` and the 5 newest lessons whose globs meet the task's claims, measured under 1k tokens. `start` writes the same lessons into `brief.md`.
+- **Session-start brief** (built). The `SessionStart` hook injects the task, stage, blockers, unread messages, the head of `todo.md` and the 5 newest lessons whose globs meet the task's claims, measured under 1k tokens. When proposed conventions or promotions wait for you it opens with them, and in stealth mode it carries the agreed rules of `context.md`; under the budget the brainstorm is the last thing cut, and anything cut is counted, never dropped silently. `start` writes the same lessons into `brief.md`.
 - **Write warnings and late overlaps** (built). `PostToolUse` records every written file as an `actual` claim and warns in one line (to you and to the agent) when an agent writes outside its claims, onto another agent's claim, or into `contract.md` without being the lead. A write onto another open task's claim warns both tasks and makes the writer merge after the other (`status`: `merges after`; `merge --task` overrides).
 - **`shoalctl why`** (built). Stored root cause plus live `git log`, so a regression points at the commit that undid the fix and says whether the regression test was deleted.
+- **Conventions** (built). Say "use the strategy pattern from now on": the agent records it with `shoalctl convention propose --rule ... --scope src/pay/**`, and the next session opens with a brainstorm with you about its scope and exceptions, before anything else. Once you agree (`convention agree`, at a terminal), it is injected when files in its scope are touched and written to `context.md`; `convention retire --why` ends it and keeps the reason.
+- **Lesson promotion** (built). A lesson shown in 3 different tasks is proposed as a project rule in the brief. You approve each one (`shoalctl promote lesson:<id>`); it then lives in `context.md` and stops being injected per file.
 - **Stealth by default** (built). Nothing committed to the repo. Good for client work.
 - **Any stack** (built). Your test, lint, and build commands live in config.
 
@@ -128,7 +130,7 @@ flowchart LR
     D -. decisions, bugs .-> H
 ```
 
-The diagram is the full design. Built today: `new` → `plan` → `start` → `qa` → `done` → `merge`, the memory and the injecting hooks; conventions arrive in Phase 4.
+The diagram is the full design. Built today: `new` → `plan` → `start` → `qa` → `done` → `merge`, the memory and the injecting hooks, conventions and lesson promotion.
 
 - Sessions never talk to each other. They coordinate through one SQLite file in WAL mode.
 - Claude Code hooks call the shoalctl binary (`SessionStart`, `Stop`, and `PreToolUse`/`PostToolUse` with a matcher for the file tools only, so other tools never start the process), which is why it's written in Go: hooks fire on every file touch, so startup time matters. Measured on the Phase 3 handlers as real processes: about 6-7 ms for a hook with nothing to inject, about 25 ms for `PreToolUse` with a record to inject (the `git diff` staleness check). A Phase 0 hook-shaped call measured about 8-12 ms, against about 40-65 ms for Python just to import `sqlite3` ([Phase 0 results](docs/phase-0-results.md)).
@@ -139,7 +141,8 @@ The diagram is the full design. Built today: `new` → `plan` → `start` → `q
 shoal never rewrites your `CLAUDE.md`.
 
 - **Stealth (default):** `CLAUDE.md` is untouched. Context comes in through hooks registered in `.claude/settings.local.json`, which shoal adds to `.git/info/exclude` (never your committed `.gitignore`).
-- **Managed block (opt-in, planned for Phase 4):** shoal adds one marked block containing a single import line pointing at `~/.shoal/projects/<id>/context.md`. Claude Code asks once to approve the external import.
+- **Stealth (default):** the rules shoal keeps (agreed conventions, promoted lessons) reach each session through the `SessionStart` brief, and active conventions also arrive per file. Nothing is committed: `git status` stays clean. shoal writes no `CLAUDE.local.md`, because an import outside the worktree asks for approval in every new task worktree and would block an unattended session.
+- **Managed block (opt-in, `[install].stealth = false`):** `init` adds one marked block containing a single import line pointing at `~/.shoal/projects/<id>/context.md`, creating `CLAUDE.md` if needed. Every byte outside the markers stays as it was (CRLF and a missing final newline included); rerunning `init` changes nothing; duplicate or unpaired markers are refused with exit 3. Claude Code asks once to approve the external import, and `init` says so. Commit `CLAUDE.md` so task worktrees load the block.
 
   ```
   <!-- shoal:begin -->
@@ -147,7 +150,7 @@ shoal never rewrites your `CLAUDE.md`.
   <!-- shoal:end -->
   ```
 
-- **Your rules win** (planned, with conventions in Phase 4). When a proposed convention contradicts an existing rule, shoal flags it for discussion instead of overriding it.
+- **Your rules win.** When a proposed convention or a lesson promotion contradicts a line of `CLAUDE.md`, `CLAUDE.local.md` or `.claude/rules/`, shoal records it as a proposal with the conflict for discussion instead of overriding the rule; `init` re-checks what is already agreed. The check is a cheap word-overlap and negation heuristic, not an LLM: it misses paraphrases, synonyms and "prefer A over B", and can flag unrelated lines that share words (`convention agree --force` then overrides the flag). Details in spec section 5.3.
 - **Hooks are merged.** shoal adds its four entries to `.claude/settings.local.json` and leaves every other byte of the file as it was; your own hooks stay. `shoalctl uninstall` (planned) removes only shoal's entries and block.
 - **init refuses before changing anything** when `.claude/settings.local.json` is tracked by git, when it or the `.claude` directory is a symlink (the target may be tracked), or when the committed `.claude/settings.json` already registers shoalctl hooks. The error says how to fix it.
 - **Hooks fail open.** A shoal hook never blocks or breaks a Claude session. The whole hook process, logging included, finishes within 2 seconds, prints nothing but its JSON answer (and nothing at all on a failure), and logs failures to `~/.shoal/logs/hooks.log`; `shoalctl status` warns when that log has new lines. The binary path is quoted for the shell that runs it (bash on macOS/Linux, PowerShell on Windows), and the command maps any exit status to 0 (`|| true`, `; exit 0`), so a crash or a moved binary cannot block a session. A hook registered twice (say, also in a worktree's own settings) still acts once: injections, claims, messages and the brief are recorded per session. Because failures are silent, run `shoalctl doctor` after moving the binary, and `shoalctl doctor --fix` to re-point stale hook paths.
@@ -238,9 +241,11 @@ deny_globs = [".env*"]
 | `shoalctl brief [<task>]` | Print the session-start brief (also injected by the `SessionStart` hook) | Built |
 | `shoalctl record lesson\|decision\|qa <task> ...` | Record a lesson (`--pattern --fix [--glob]`), a decision (`--topic --choice --why [--file]...`) or an answered question (`--question --answer [--file]...`) | Built |
 | `shoalctl flag-stale <kind>:<id> "<reason>"` | Mark a record that no longer matches the code: still searchable, never injected | Built |
-| `shoalctl recall <query>` / `recall --file <path>` | Full-text search over bugs, decisions, lessons, answered questions and task summaries; or every record about one file | Built |
+| `shoalctl recall <query>` / `recall --file <path>` | Full-text search over bugs, decisions, lessons, answered questions, task summaries and conventions; or every record about one file | Built |
 | `shoalctl why <file\|sha\|bug:<id>\|...>` | Stored WHY plus live `git log`; for a bug, the commits after the fix and the regression test's state | Built |
-| `shoalctl convention propose\|agree\|retire` | Manage conventions | Planned (Phase 4) |
+| `shoalctl convention propose [<task>] --rule "<r>" --scope <glob>` | Propose a rule from now on; the next session opens with a brainstorm about its scope and exceptions | Built |
+| `shoalctl convention agree\|retire <id> ...` / `convention list [--all]` | The human agrees (rule injected for files in scope, written to `context.md`) or retires it, keeping why | Built |
+| `shoalctl promote lesson:<id>` | The human approves a lesson that recurred in 3 tasks as a project rule; its per-file injection stops | Built |
 | `shoalctl gc` | Clean up merged worktrees and windows | Planned (Phase 5) |
 | `shoalctl export` / `shoalctl purge` | Offboard a project's data | Planned (Phase 5) |
 | `shoalctl uninstall` | Remove shoal's hooks and CLAUDE.md block only | Planned (Phase 5) |
@@ -281,7 +286,7 @@ deny_globs = [".env*"]
 | 1: Agent team + merge gate | `shoal-*` agents, messages, contracts, QA loop, scope matrix, hotfix backport, zero-regression merge gate, serialized `merge` | **Built** (not yet released) |
 | 2: Claims + queue | Cross-task file claims, overlap prompt, merge queue, full `doctor`, attention watcher | **Built** (not yet released) |
 | 3: Memory + hooks | Lessons, decisions, bugs, FTS5, injecting hooks, `why`, `recall` | **Built** (not yet released) |
-| 4: Conventions | Convention lifecycle, lesson promotion, managed CLAUDE.md block | Planned |
+| 4: Conventions | Convention lifecycle, lesson promotion, managed CLAUDE.md block, conflict check | **Built** (not yet released) |
 | 5: Publish | `export`/`purge`/`uninstall`, releases, Homebrew tap | Planned |
 
 ## Contributing

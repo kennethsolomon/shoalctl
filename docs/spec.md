@@ -86,7 +86,7 @@ Most of the machinery already exists. shoal is mostly glue plus a SQLite file.
       memory.db                             # SQLite + FTS5, WAL mode (memory.db-wal, memory.db-shm)
       locks/                                # merge.lock, git.lock (§10.3)
       runs/<run-id>/                        # raw test output and JUnit copies for each test run
-      context.md                            # promoted rules + active conventions, imported by CLAUDE.md
+      context.md                            # active conventions + promoted lessons: imported by CLAUDE.md (non-stealth), carried by the brief (stealth)
       config.toml                           # project config when the repo runs in stealth mode
       reports/                              # rendered markdown reports (default sink)
       worktrees/
@@ -134,7 +134,7 @@ setup = ""                       # optional: run in each clean baseline worktree
 model = "claude-opus-5-5"        # model for sessions shoalctl launches; agent definitions inherit it
 
 [install]
-stealth = true                   # true: no CLAUDE.md edits, agents in ~/.claude/agents/. false: managed block (Phase 4)
+stealth = true                   # true: no CLAUDE.md edits, agents in ~/.claude/agents/. false: init writes the managed block (§5.1)
 
 [lanes]
 qa_max_rounds = 3                # same cap in every lane
@@ -187,9 +187,12 @@ deny_globs = [".env*", "storage/**"]
 | `shoalctl claim <task> --as <agent> <glob>...` / `shoalctl release <task> --as <agent> [<glob>...]` | Per-agent file claims inside one task |
 | `shoalctl msg send <task> --from <agent> --to <agent\|*> --kind <kind> "<body>"` | Leaves a message in the store |
 | `shoalctl msg inbox <task> --as <agent> [--all]` | Prints unread messages for that agent and marks them read |
-| `shoalctl recall <query \| --file path>` | FTS5 search over bugs, decisions, lessons, answered questions and task summaries (conventions join in Phase 4); `--file` lists every record about one path |
-| `shoalctl why <file \| sha \| bug:<id> \| decision:<id> \| lesson:<id> \| qa:<id>>` | Shows the stored WHY together with live `git log` for that file, SHA or record (§11.3 for a bug) |
-| `shoalctl convention propose\|agree\|retire` | Manages the convention lifecycle |
+| `shoalctl recall <query \| --file path>` | FTS5 search over bugs, decisions, lessons, answered questions, task summaries and conventions (a retired one with its reason); `--file` lists every record about one path |
+| `shoalctl why <file \| sha \| bug:<id> \| decision:<id> \| lesson:<id> \| qa:<id> \| convention:<id>>` | Shows the stored WHY together with live `git log` for that file, SHA or record (§11.3 for a bug) |
+| `shoalctl convention propose [<task>] --rule "<text>" --scope <glob>` | Records a `proposed` convention (anyone, agents included); runs the §5.3 conflict check |
+| `shoalctl convention agree <id> [--rule ...] [--scope ...] [--force]` / `retire <id> --why "<reason>"` | Human only (a terminal, like waivers). `agree` makes it `active` with the rule and scope as the brainstorm left them and refuses (exit 5) while a project rule contradicts it, unless `--force`; `retire` keeps the reason. Both re-render `context.md` |
+| `shoalctl convention list [--all]` | Proposed conventions, lessons proposed for promotion, the rules in `context.md`; `--all` adds retired ones and why |
+| `shoalctl promote lesson:<id>` | Human only: approves one lesson promotion (§11.4) |
 | `shoalctl doctor [--fix]` | Checks DB integrity, migrations, stuck stages and runs, worktrees, tmux windows, hook registration, stale claims; repairs what is safe (§10.4). The hook-only version shipped with the MVP (§15.1); the full one is Phase 2 |
 | `shoalctl gc` | Removes merged worktrees, closes tmux windows, flags stale records |
 | `shoalctl export <id>` / `shoalctl purge <id>` | Offboarding. `purge` asks for confirmation |
@@ -207,9 +210,10 @@ Store the reasons. Point at git for everything else.
 | `bugs` | `id, task_id (unique), symptom, root_cause, fix_sha, files(json), regression_tests(json [{test, file}]), true_at_sha, stale, stale_reason` | Regression lookups. Written by `done` for a bugfix or hotfix (symptom: title and ask; root cause: the summary's optional `root_cause`, else `why`; files: changed non-test files); `merge` moves `fix_sha` and `true_at_sha` to the commit that landed |
 | `decisions` | `id, task_id, topic, choice, rationale, files(json), true_at_sha, stale, stale_reason, superseded_by` | ADR-lite, from `record decision`. The task's own decision stays in `summaries` |
 | `lessons` | `id, task_id, qa_round, pattern, fix, stack, path_glob, hits, last_hit_at, promoted, true_at_sha, stale, stale_reason` | From `record lesson`, tied to the task's newest failed QA round. `path_glob = ''` applies to the whole stack (brief only) |
-| `conventions` | `id, rule, scope_glob, status(proposed\|active\|retired), proposed_at, agreed_at, source_task_id` | e.g. "use the strategy pattern from now on" |
+| `conventions` | `id, rule, scope_glob, status(proposed\|active\|retired), conflict, source_task_id, lesson_id, proposed_at, agreed_by, agreed_at, retired_by, retired_at, retire_reason` | e.g. "use the strategy pattern from now on". No `true_at_sha`: a convention is a rule from now on, not a fact at a commit. `conflict` names the project rule it contradicts (§5.3); on an `active` row it means the human agreed with `--force`. `lesson_id` links a lesson whose promotion became this proposal (migration 0007) |
+| `lesson_hits` | `lesson_id, task_id, hits, last_hit_at` | Which tasks a lesson was shown in, for promotion after 3 different tasks (§11.4). Migration 0007 backfills it from `hook_marks` |
 | `qa` | `id, task_id, question, answer, files(json), true_at_sha, stale, stale_reason` | Questions you answered during work, from `record qa` |
-| `hook_marks` | `session_id, key, task_id, created_at` | What a hook already did in a session (`lesson:3` injected, `shown:lesson:3` injected before a compaction, `outside:<agent>:<path>` warned, `fire:session-start:<source>` fired). Makes injection once per session and a doubly registered hook act once (§4.6) |
+| `hook_marks` | `session_id, key, task_id, created_at` | What a hook already did in a session (`lesson:3` or `convention:2` injected, `shown:lesson:3` injected before a compaction, `outside:<agent>:<path>` warned, `fire:session-start:<source>` fired). Makes injection once per session and a doubly registered hook act once (§4.6) |
 | `schema_migrations` | `version, name, checksum, applied_at` | Applied migrations; `PRAGMA user_version` mirrors the max (§10.6) |
 | `merge_queue` | `task_id, position, state(waiting\|rebasing\|testing\|merged\|failed)` | Serial merge |
 | `messages` | `id, task_id, from_agent, to_agent, kind, subject, body, reply_to, created_at` | Agent-to-agent notes inside one task (§7.4). `to_agent = '*'` is a broadcast |
@@ -223,7 +227,7 @@ Store the reasons. Point at git for everything else.
 | `scope_items` | `id, task_id, source(user\|behaviour), text, created_at` | "also test X" and feature behaviours |
 | `scope_cases` | `id, scope_item_id, category, description, check(automated\|manual), test_id, manual_step, status(pending\|pass\|fail\|waived), waive_reason, decided_by, decided_at, version` | The case matrix (§8.6) |
 | `regression_overrides` | `task_id, gate_run_id, target, reason, accepted_by, accepted_at` | Every `--accept-regression`. `target` is a test id, `coverage:<path>`, or `(suite)` |
-| `memory_fts` | One FTS5 table (`kind, ref, body`, porter tokenizer) over bugs, decisions, lessons, qa and summaries, kept by triggers | Search. Query words are matched as quoted terms, never as FTS5 syntax |
+| `memory_fts` | One FTS5 table (`kind, ref, body`, porter tokenizer) over bugs, decisions, lessons, qa, summaries and conventions (rule, scope, conflict, retire reason), kept by triggers | Search. Query words are matched as quoted terms, never as FTS5 syntax |
 
 The DB does **not** store diffs, authors, commit messages, blame, or transcripts. shoal runs `git log`, `git show`, or `git blame` live when needed.
 
@@ -233,8 +237,8 @@ Inject only what matches the file being touched, and only once per session. Buil
 
 | Hook | Trigger | Injects (via `additionalContext`) | Budget |
 |------|---------|-----------------------------------|--------|
-| `SessionStart` | Session opens (any `source`) | `shoalctl brief`: task, stage, QA round, blockers (`starts after` / `merges after`), needs-rebase, attention, unread lead messages, the first 8 lines of `todo.md`, the 5 newest lessons (newest first, ties by id) whose glob meets one of the task's claims or whose stack is the project's. Proposed conventions join in Phase 4. Lessons shown count a hit | ≤ 1k tokens (rendered under 900 estimated, dropping lessons, then todo lines) |
-| `PreToolUse` (matcher `Read\|Edit\|Write\|MultiEdit\|NotebookEdit`) | A file is about to be touched | Lessons whose `path_glob`, and decisions and bugs whose `files`, meet that path; not stale, not superseded, lessons not promoted and hit or created within 90 days. Each record is tagged with its SHA and "verify against current code", plus the §11.2 pre-check tag. Nothing for `.git/`, `.shoal/` or `[privacy].deny_globs` paths (a glob without `/` matches any segment) | ≤ 300 tokens per file, each record once per session |
+| `SessionStart` | Session opens (any `source`) | `shoalctl brief`: task, stage, QA round, blockers (`starts after` / `merges after`), needs-rebase, attention, unread lead messages, the first 8 lines of `todo.md`, the 5 newest lessons (newest first, ties by id) whose glob meets one of the task's claims or whose stack is the project's. It **opens with the brainstorm** when anything waits for the human: proposed conventions (with any conflict) and lessons proposed for promotion, with the instruction to discuss scope and exceptions before anything else (§11.5). The rules of `context.md` follow the task lines unless the session's `CLAUDE.md` holds the managed block, which loads them already. Lessons shown count a hit | ≤ 1k tokens (rendered under 900 estimated, dropping, from the end: lessons, todo lines, rule lines, promotion proposals, proposed conventions; every dropped rule or proposal is counted in a `+N more ...: shoalctl convention list` line, so none disappears silently) |
+| `PreToolUse` (matcher `Read\|Edit\|Write\|MultiEdit\|NotebookEdit`) | A file is about to be touched | Active conventions whose `scope_glob` meets that path (first, untagged: they are rules, not facts at a commit), lessons whose `path_glob`, and decisions and bugs whose `files`, meet that path; not stale, not superseded, lessons not promoted and hit or created within 90 days. Each record is tagged with its SHA and "verify against current code", plus the §11.2 pre-check tag. Nothing for `.git/`, `.shoal/` or `[privacy].deny_globs` paths (a glob without `/` matches any segment) | ≤ 300 tokens per file, each record once per session |
 | `PostToolUse` (matcher `Edit\|Write\|MultiEdit\|NotebookEdit`) | A file was changed | Records an `actual` claim for the writing agent unless it (or the task's plan) already claims the path. Warns, one line each, shown to the agent (`additionalContext`) and the human (`systemMessage`), once per session: the agent wrote outside its own claims (only when it holds some), onto another agent's claim in the task, or (not being `shoal-lead`) into `.shoal/contract.md`; or another open task claims the path (late overlap, §9.2) | ~1 line each |
 | `Stop` | Session ends | Asks for a structured summary (not the transcript) when the task is at `done` | n/a |
 
@@ -301,18 +305,22 @@ shoal never rewrites your content.
   ```
 - The block is one import line. Claude Code supports `@path` imports in CLAUDE.md (relative or absolute, home paths allowed, up to four hops of nesting), so shoal's content lives in `~/.shoal/`, outside the repo.
 - Claude Code shows a one-time approval dialog the first time a project imports a file outside the working directory. shoal's `init` output tells you to expect it.
-- Install is idempotent: re-running `init` finds the markers and leaves the block alone. `shoalctl uninstall` removes the markers and the lines between them, nothing else.
+- `init` writes the block when `[install].stealth = false`: appended to `CLAUDE.md`, which is created if missing. Every byte outside the markers stays as it was; the block uses the file's own line ending (CRLF when the file has one), and the file keeps ending with a newline, or not, as it did.
+- Install is idempotent: re-running `init` finds the markers and leaves the block alone (only a hand-edited inside is set back to the import line). Duplicated, unpaired or out-of-order markers, a symlinked or non-regular `CLAUDE.md` are refused with exit 3 and nothing written. `shoalctl uninstall` removes the markers and the lines between them, nothing else.
+- Task worktrees are checked out from git, so they load the block once `CLAUDE.md` is committed; `init` says so. Until then the brief carries the rules.
 
 ### 5.2 Stealth mode (default)
 - The committed `CLAUDE.md` is not touched at all.
 - Context arrives through hooks registered once in the main checkout's `.claude/settings.local.json` (§4.6): `SessionStart` for the brief, file-scoped `PreToolUse`/`PostToolUse` for everything else.
 - Claude Code adds `settings.local.json` to your global git excludes only when Claude Code itself creates the file. shoal may create it first, so shoal adds it to `.git/info/exclude`. It never edits the committed `.gitignore`. `.git/info/exclude` lives in the shared git dir, so it covers every worktree (confirmed in Phase 0).
 - Hooks in worktrees outside the repo (confirmed in Phase 0, Claude Code 2.1.310, headless): a worktree under `~/.shoal/` loads its own `.claude/settings.local.json`, **and it also loads the main checkout's `.claude/settings.local.json`**. If both files contain the hook, it fires twice. So shoal registers each hook in exactly one place, the main checkout (§4.6). `CLAUDE_PROJECT_DIR` is the worktree path in both cases, which is what the hook guard uses.
-- Optional: a `CLAUDE.local.md` containing the import line, also added to `.git/info/exclude`. A gitignored `CLAUDE.local.md` only exists in the worktree where it was created, so `shoalctl start` writes one into each task worktree it creates.
+- `context.md` reaches the session through the `SessionStart` brief (§4.6), not through a `CLAUDE.local.md` import: an import outside the worktree triggers Claude Code's external-import approval dialog in every new task worktree, which would block an unattended session (§16 row 66). shoal writes no `CLAUDE.local.md`.
 
 ### 5.3 Existing rules win
 - At install, shoal reads the existing `CLAUDE.md` (and `CLAUDE.local.md`, `.claude/rules/`).
 - When a proposed convention or promoted lesson contradicts an existing rule, shoal does not override it. It records the conflict as a `proposed` convention, which forces a brainstorm at the next session start. Project rules win until you change them.
+- When: `convention propose`, `convention agree` (refused while the conflict stands, unless `--force`), `promote` (the lesson is not promoted; a proposed convention linked to it is recorded instead), and every `init`, which sends an `active` convention back to `proposed` and a promoted lesson back to unpromoted when a rule added since contradicts it. Agreements made with `--force` stay.
+- The check is cheap and deterministic, no LLM. Rule lines are the non-blank lines of the three sources, outside code fences and outside shoal's own block. Text and rule are split into clauses (`.`, `;`, `,`, `:`, `but`); two clauses contradict when exactly one is negated (`never`, `not`, `don't`, `no`, `avoid`, `without`, ...) and they share at least two content words, at least half of the shorter clause's (one word when both name a single thing). A lesson is checked by its fix. **Limits:** paraphrases and synonyms ("inheritance" vs "subclassing"), implied negation ("prefer A over B"), and rules that differ only in scope are missed; two unrelated clauses that happen to share words with opposite polarity are flagged (a false positive only costs a brainstorm and `--force`).
 
 ### 5.4 Existing hooks are merged, never replaced
 - shoal reads `.claude/settings.json` and `.claude/settings.local.json` before writing, and adds its entries alongside any existing ones.
@@ -710,15 +718,17 @@ A record holds what was true at a specific commit. The code is what's true now.
 ### 11.4 Lessons
 - **Recorded** on every QA failure: pattern, fix, stack, path_glob. The agent writes it (`shoalctl record lesson`), since only it knows the cause; a failed `qa` round's message and exit text say to, and the lesson is tied to the newest failed round
 - **Injected** only when a touched file matches `path_glob` or the stack matches
-- **Proposed for CLAUDE.md** once `hits >= 3` across different tasks. **You approve every promotion.** On approval the rule goes into `context.md` (imported by the managed block, or injected by hook in stealth mode), `promoted = 1`, and the per-file injection stops
+- **Proposed for CLAUDE.md** once it was shown in 3 different tasks (`lesson_hits`), not stale, not promoted, not already a convention: the brief opens with it and `convention list` shows it. **You approve every promotion** (`shoalctl promote lesson:<id>`, at a terminal). On approval the rule goes into `context.md` (imported by the managed block, or carried by the `SessionStart` brief in stealth mode), `promoted = 1`, and the per-file injection stops. Without approval nothing changes. A promotion a project rule contradicts becomes a proposed convention instead (§5.3)
 - **Hits**: a lesson shown by the brief or `PreToolUse` counts one hit per session (`hits`, `last_hit_at`)
 - **Decay**: not hit in 90 days (or, never hit, created more than 90 days ago), no longer injected. Still searchable
 
 ### 11.5 Conventions
 1. You say "use the strategy pattern from now on". The agent saves it as `proposed` with a scope glob
 2. The next session opens with a brainstorm: the brief lists proposed conventions, and the agent discusses scope and exceptions **before doing anything else**
-3. Once agreed it becomes `active` and is injected when files in scope are touched
-4. Retiring is a command, and the record keeps why
+3. Once agreed (`shoalctl convention agree`, by the human) it becomes `active`, is injected once per session when files in scope are touched, and is written to `context.md`
+4. Retiring is a command (`shoalctl convention retire <id> --why`, by the human), and the record keeps why; it stays searchable and is no longer injected or rendered
+
+`context.md` is rendered from `memory.db` after every agree, retire, promote and `init`: active conventions, then promoted lessons not carried by an active convention, oldest first, written to a temp file and renamed.
 
 ---
 
@@ -820,7 +830,7 @@ Every feature in this spec lands in exactly one phase. Commands not yet built ar
 | **1: Agent team, QA loop, zero-regression merge gate** | `agents install` (stealth and `--commit`), the eight `shoal-*` definitions (§7); `messages`, `message_reads`, `msg`; `contracts` and `contract freeze`; per-agent `claim`/`release` inside one task (the `file_claims` table); `qa` with the 3-round cap and escalation; feature behaviour rule (§8.4); user scope matrix, `scope add\|show\|review\|check`, `new --scope` (§8.6); hotfix minimal-diff check and automatic backport task (§6.3). The merge gate (§8.5) with `--accept-regression` and `regression_overrides`; `repro red\|green` and `regression_proofs` (§8.3); flaky re-runs and `test_quarantine` (§8.7); coverage comparison and `coverage_files`; "Untested areas" (§8.8); `test` command; hotfixes merging into the production branch; a simple serialized `merge` that takes `done` tasks oldest first, one at a time, under `merge.lock`. Warnings that need `PreToolUse`/`PostToolUse` (writes outside claims, contract edits by non-leads) arrive with those hooks in Phase 3 | One feature runs through the feature lane with backend and frontend agents and a frozen contract; an "also test X" item blocks `done` until every row is green or waived; a bugfix without a red/green proof is refused by `done`; breaking a baseline-passing test blocks `merge` with exit 9, and `--accept-regression` lets it through with the override in the report; a test made flaky on purpose is quarantined and listed; a finished hotfix merges into the production branch and creates its backport task | 7-9 days |
 | **2: Claims + queue** | `plan` with expected `file_claims` across tasks and the one-keypress overlap prompt (§9.2); `merge_queue` per target branch and `needs-rebase` for tasks whose claims overlap a merge (§9.4); optimistic locking on claims; stale-claim expiry; the full `doctor [--fix]` (§10.4), extending the minimal one from Phase 0. Added 2026-11-03: `start` launches an attention watcher that polls the task's tmux pane (`capture-pane` every 2 s) and flags the task needs-attention in `status` while a dialog or prompt (Claude Code's trust or permission prompt) waits (§16 row 56) | The Bug A / Bug B scenario works end to end; two concurrent `plan` runs can't both win one path; `doctor --fix` recovers a task killed mid-`start` and releases a stale claim | 3-4 days |
 | **3: Memory + hooks (built)** | `bugs`, `decisions`, `lessons`, `qa`, FTS5; `SessionStart` brief, `PreToolUse` and `PostToolUse` handlers (including the claim and contract warnings from Phase 1); staleness pre-check; `why`, `recall`; lesson hit counting | Brief < 1k tokens measured; a lesson is injected on a matching file touch; a write outside an agent's claims prints a one-line warning | 3-4 days |
-| **4: Conventions + promotion** | Convention lifecycle, brainstorm-first brief, lesson promotion proposed after 3 repeats, non-stealth mode (`[install].stealth = false`, managed CLAUDE.md block), conflict detection | "Strategy pattern" example works end to end | 1-2 days |
+| **4: Conventions + promotion (built)** | Convention lifecycle, brainstorm-first brief, lesson promotion proposed after 3 repeats, non-stealth mode (`[install].stealth = false`, managed CLAUDE.md block), conflict detection | "Strategy pattern" example works end to end | 1-2 days |
 | **5: Publish** | `export`/`purge`/`uninstall`, `gc`, release CI guard, FTS5 test run on every target, Homebrew tap, cross-compiled releases | Installed on a project with zero repo footprint | 2 days |
 
 If Phase 0 doesn't save time on a real week of work, stop and rethink before Phase 1.
@@ -859,7 +869,7 @@ Lookup: `<repo>/.shoal.toml` if it exists, otherwise `$SHOAL_HOME/projects/<id>/
 | Key | Type | Default | Notes |
 |-----|------|---------|-------|
 | `[session].model` | string | `"claude-opus-5-5"` | Overridden by `start --model` |
-| `[install].stealth` | bool | `true` | `false` is rejected with exit 3 until Phase 4 |
+| `[install].stealth` | bool | `true` | `false`: `init` writes the managed CLAUDE.md block (§5.1) |
 | `[tests].command` | string | none | Required unless `format = "none"`. Run with `sh -c` in the worktree |
 | `[tests].format` | enum | `"junit"` | `junit`, `go-json`, `exit-code`, `none` |
 | `[tests].junit_path` | string | `"{junit}"` | Used when `format = "junit"`. Must be `{junit}` or a glob relative to the worktree with no `..`, `~`, root, or drive; anything else is a config error (exit 3). `start` also exits 3 when its directory resolves outside the worktree through a symlink. The pattern must end in `.xml` and may not name `.git`, so `.e?v` or `*` is a config error. Before each run, stale matches are deleted only when they are regular `.xml` files (not directories or symlinks), not dotfiles or under a dot directory, resolve inside the worktree (or shoal's run dir), and git does not track them; every match is checked before any is deleted, so a refusal deletes nothing |
@@ -1167,3 +1177,9 @@ WAL, `busy_timeout`, `BEGIN IMMEDIATE` per state change, and the `tasks.version`
 | 60 | Hook dedupe | `hook_marks(session_id, key)` gives once-per-session injection and warnings and makes a doubly registered hook act once; `SessionStart` uses a 5-second window per source so a later compaction or `/clear` gets the brief again, and resets the session's record marks to `shown:<key>` so records are injected again without a second hit. Fire marks older than a day are pruned |
 | 61 | Late overlap order | Reuses `task_blockers` (row 48): the writer waits on the claim holder for its merge, never for its start; cycles are refused with a warning; `merge --task` overrides. A blocked task's stage is untouched (only `blocked_by` is set and cleared) |
 | 62 | Agent identity in hooks | `agent_type` from the hook input; none means the session, which is `shoal-lead`. The outside-claims warning fires only for an agent that holds expected claims, so lanes without per-agent claims stay quiet |
+| 63 | Convention lifecycle (Phase 4) | Anyone proposes (`convention propose`, scope glob required; the same open rule and scope is not added twice). Only a human at a terminal agrees or retires, the `requireHuman` check of waivers. `agree` may reword the rule and scope after the brainstorm. Retire keeps `retired_by`, `retired_at` and `retire_reason`; the FTS row is updated, so `recall` finds the reason. No delete triggers: nothing deletes records before Phase 5 `purge` |
+| 64 | Brainstorm-first brief | The brief opens with every proposed convention and lesson proposed for promotion, ahead of the task line, with the instruction to settle scope and exceptions with the human first. Drop order under the 900-token budget: lessons, todo lines, `context.md` rule lines, promotion proposals, proposed conventions, each dropped line counted in a `+N more` line that points at `convention list` |
+| 65 | Promotion | "3 repeats across tasks" counts different tasks, kept in `lesson_hits` (one hit per session, as before). Candidates: shown in 3 tasks, not stale, not promoted, no convention linked to the lesson (a retired one means the human declined). `promote` is human only. A convention agreed from a lesson promotes it; retiring that convention flags the lesson stale with the reason |
+| 66 | context.md delivery | Non-stealth: the managed block imports it. Stealth (default): the `SessionStart` brief carries the rules, and does so in any session whose `CLAUDE.md` lacks the block. No `CLAUDE.local.md` is written (§5.2 option not taken): an import outside the worktree asks for approval in every new task worktree, which would block unattended sessions. Active conventions also arrive per file through `PreToolUse` in both modes |
+| 67 | Existing rules win (§5.3) | Deterministic clause-and-polarity check over `CLAUDE.md`, `CLAUDE.local.md` and `.claude/rules/**/*.md`, at propose, agree, promote and every `init`. A contradiction records a proposed convention with `conflict`; the project rule is never edited. `agree` refuses while a conflict stands unless `--force` (kept on the row and shown in `context.md`). Limits in §5.3 |
+| 68 | Managed block | Appended once, file created if missing, bytes outside the markers untouched, CRLF and final-newline state kept, malformed or duplicate markers and symlinks refused with exit 3 before writing. The import uses `~/` when `context.md` is under the home directory. `init` prints the one-time approval warning and that `CLAUDE.md` must be committed for worktrees to load it |
