@@ -164,7 +164,9 @@ deny_globs = [".env*", "storage/**"]
 | Command | What it does |
 |---------|--------------|
 | `shoalctl init [--commit-config] [--rebind]` | Registers the project, creates `~/.shoal/projects/<id>/`, applies migrations, wires hooks once in the main checkout (§4.6). Stealth by default |
-| `shoalctl brief` | Prints the session-start brief (<1k tokens). Also run by the `SessionStart` hook |
+| `shoalctl brief [<task>]` | Prints the session-start brief (<1k tokens) of the named task, or of the worktree it runs in. The `SessionStart` hook injects the same text |
+| `shoalctl record lesson\|decision\|qa <task> ...` | Records the WHY of a task (§11): a lesson (`--pattern --fix [--glob]`), a decision (`--topic --choice --why [--file]...`), an answered question (`--question --answer [--file]...`). Each is stamped with the task's `HEAD` |
+| `shoalctl flag-stale <bug\|decision\|lesson\|qa>:<id> "<reason>"` | Marks a record that disagrees with the code (§11.1) |
 | `shoalctl new <lane> "<title>" [--ask "<text>"] [--scope "<text>"]...` | Creates the task record in lane `feature`, `bugfix`, or `hotfix` |
 | `shoalctl plan <task> [--todo <file>] <glob>...` | Records the task's expected file claims (and its `todo.md`) before `start`, and runs the overlap check against every other open task (§9.2) |
 | `shoalctl start <task> [--model <model>]` | Creates the branch and worktree, records the baseline test run (§8.2), opens a tmux window, launches `claude` with the task brief (§15.1) |
@@ -185,8 +187,8 @@ deny_globs = [".env*", "storage/**"]
 | `shoalctl claim <task> --as <agent> <glob>...` / `shoalctl release <task> --as <agent> [<glob>...]` | Per-agent file claims inside one task |
 | `shoalctl msg send <task> --from <agent> --to <agent\|*> --kind <kind> "<body>"` | Leaves a message in the store |
 | `shoalctl msg inbox <task> --as <agent> [--all]` | Prints unread messages for that agent and marks them read |
-| `shoalctl recall <query \| --file path>` | FTS5 search over decisions, lessons, conventions, and bugs |
-| `shoalctl why <file \| sha \| bug-id>` | Shows the stored WHY together with live `git log` for that file or SHA |
+| `shoalctl recall <query \| --file path>` | FTS5 search over bugs, decisions, lessons, answered questions and task summaries (conventions join in Phase 4); `--file` lists every record about one path |
+| `shoalctl why <file \| sha \| bug:<id> \| decision:<id> \| lesson:<id> \| qa:<id>>` | Shows the stored WHY together with live `git log` for that file, SHA or record (§11.3 for a bug) |
 | `shoalctl convention propose\|agree\|retire` | Manages the convention lifecycle |
 | `shoalctl doctor [--fix]` | Checks DB integrity, migrations, stuck stages and runs, worktrees, tmux windows, hook registration, stale claims; repairs what is safe (§10.4). The hook-only version shipped with the MVP (§15.1); the full one is Phase 2 |
 | `shoalctl gc` | Removes merged worktrees, closes tmux windows, flags stale records |
@@ -202,11 +204,12 @@ Store the reasons. Point at git for everything else.
 | `tasks` | `id, slug, lane(feature\|bugfix\|hotfix), title, ask, stage, qa_round, branch, worktree, tmux_window, base_ref, base_sha, baseline_run_id, merged_sha, blocked_by, parent_task_id, session_id, last_seen_at, version, created_at, updated_at, closed_at` | One row per task. `parent_task_id` links a backport to its hotfix |
 | `file_claims` | `id, task_id, agent, path_glob, kind(expected\|actual), expires_at, released_at, version` | Planning claims. `agent` lets subagents in one worktree own separate files |
 | `summaries` | `task_id, decision, alternatives_rejected, why, verification, risks, followups, commits(json), files(json), true_at_sha` | **The report.** Single source of truth |
-| `bugs` | `id, task_id, symptom, root_cause, fix_sha, files(json), regression_test, true_at_sha, stale` | Regression lookups |
-| `decisions` | `id, task_id, topic, choice, rationale, files(json), true_at_sha, stale, superseded_by` | ADR-lite |
-| `lessons` | `id, pattern, fix, stack, path_glob, hits, last_hit_at, promoted, true_at_sha, stale` | One row per QA failure |
+| `bugs` | `id, task_id (unique), symptom, root_cause, fix_sha, files(json), regression_tests(json [{test, file}]), true_at_sha, stale, stale_reason` | Regression lookups. Written by `done` for a bugfix or hotfix (symptom: title and ask; root cause: the summary's optional `root_cause`, else `why`; files: changed non-test files); `merge` moves `fix_sha` and `true_at_sha` to the commit that landed |
+| `decisions` | `id, task_id, topic, choice, rationale, files(json), true_at_sha, stale, stale_reason, superseded_by` | ADR-lite, from `record decision`. The task's own decision stays in `summaries` |
+| `lessons` | `id, task_id, qa_round, pattern, fix, stack, path_glob, hits, last_hit_at, promoted, true_at_sha, stale, stale_reason` | From `record lesson`, tied to the task's newest failed QA round. `path_glob = ''` applies to the whole stack (brief only) |
 | `conventions` | `id, rule, scope_glob, status(proposed\|active\|retired), proposed_at, agreed_at, source_task_id` | e.g. "use the strategy pattern from now on" |
-| `qa` | `id, question, answer, files(json), task_id, true_at_sha` | Questions you answered during work |
+| `qa` | `id, task_id, question, answer, files(json), true_at_sha, stale, stale_reason` | Questions you answered during work, from `record qa` |
+| `hook_marks` | `session_id, key, task_id, created_at` | What a hook already did in a session (`lesson:3` injected, `outside:<agent>:<path>` warned, `fire:session-start:<source>` fired). Makes injection once per session and a doubly registered hook act once (§4.6) |
 | `schema_migrations` | `version, name, checksum, applied_at` | Applied migrations; `PRAGMA user_version` mirrors the max (§10.6) |
 | `merge_queue` | `task_id, position, state(waiting\|rebasing\|testing\|merged\|failed)` | Serial merge |
 | `messages` | `id, task_id, from_agent, to_agent, kind, subject, body, reply_to, created_at` | Agent-to-agent notes inside one task (§7.4). `to_agent = '*'` is a broadcast |
@@ -220,22 +223,30 @@ Store the reasons. Point at git for everything else.
 | `scope_items` | `id, task_id, source(user\|behaviour), text, created_at` | "also test X" and feature behaviours |
 | `scope_cases` | `id, scope_item_id, category, description, check(automated\|manual), test_id, manual_step, status(pending\|pass\|fail\|waived), waive_reason, decided_by, decided_at, version` | The case matrix (§8.6) |
 | `regression_overrides` | `task_id, gate_run_id, target, reason, accepted_by, accepted_at` | Every `--accept-regression`. `target` is a test id, `coverage:<path>`, or `(suite)` |
-| `fts_*` | FTS5 virtual tables over summaries, bugs, decisions, lessons, conventions, qa | Search |
+| `memory_fts` | One FTS5 table (`kind, ref, body`, porter tokenizer) over bugs, decisions, lessons, qa and summaries, kept by triggers | Search. Query words are matched as quoted terms, never as FTS5 syntax |
 
 The DB does **not** store diffs, authors, commit messages, blame, or transcripts. shoal runs `git log`, `git show`, or `git blame` live when needed.
 
 ### 4.6 Hooks
 
-Inject only what matches the file being touched, and only once per session. The MVP registers only `SessionStart` and `Stop`, as heartbeats with no output (§15.1); the injecting handlers below arrive in Phase 3.
+Inject only what matches the file being touched, and only once per session. Built in Phase 3 (the MVP registered only `SessionStart` and `Stop` as silent heartbeats, §15.1).
 
 | Hook | Trigger | Injects (via `additionalContext`) | Budget |
 |------|---------|-----------------------------------|--------|
-| `SessionStart` | Session opens | `shoalctl brief`: active task, its `todo.md` head, pending proposed conventions, open blockers | ≤ 1k tokens |
-| `PreToolUse` (Read/Edit/Write) | A file is about to be touched | Conventions, lessons, decisions whose globs match that path. Each record is tagged "verify against current code" | ≤ 300 tokens per file, deduped per session |
-| `PostToolUse` (Edit/Write) | A file was changed | Records an actual claim. Warns if another open task claims the path | ~1 line |
+| `SessionStart` | Session opens (any `source`) | `shoalctl brief`: task, stage, QA round, blockers (`starts after` / `merges after`), needs-rebase, attention, unread lead messages, the first 8 lines of `todo.md`, up to 5 lessons whose glob meets one of the task's claims or whose stack is the project's. Proposed conventions join in Phase 4. Lessons shown count a hit | ≤ 1k tokens (rendered under 900 estimated, dropping lessons, then todo lines) |
+| `PreToolUse` (matcher `Read\|Edit\|Write\|MultiEdit\|NotebookEdit`) | A file is about to be touched | Lessons whose `path_glob`, and decisions and bugs whose `files`, meet that path; not stale, not superseded, lessons not promoted and hit or created within 90 days. Each record is tagged with its SHA and "verify against current code", plus the §11.2 pre-check tag. Nothing for `.git/`, `.shoal/` or `[privacy].deny_globs` paths (a glob without `/` matches any segment) | ≤ 300 tokens per file, each record once per session |
+| `PostToolUse` (matcher `Edit\|Write\|MultiEdit\|NotebookEdit`) | A file was changed | Records an `actual` claim for the writing agent unless it (or the task's plan) already claims the path. Warns, one line each, shown to the agent (`additionalContext`) and the human (`systemMessage`), once per session: the agent wrote outside its own claims (only when it holds some), onto another agent's claim in the task, or (not being `shoal-lead`) into `.shoal/contract.md`; or another open task claims the path (late overlap, §9.2) | ~1 line each |
 | `Stop` | Session ends | Asks for a structured summary (not the transcript) when the task is at `done` | n/a |
 
 Claude Code caps a hook's `additionalContext` at 10,000 characters; shoal's own budgets sit well below that.
+
+**Who wrote it.** The agent is the hook input's `agent_type` (set when a subagent runs the tool); without it, the session itself, which the brief makes `shoal-lead`.
+
+**Output.** A handler that has something to say prints one JSON object, `{"hookSpecificOutput": {"hookEventName", "additionalContext"}}` plus `"systemMessage"` for warnings, and only after it succeeded; otherwise stdout stays empty.
+
+**Token measurement.** Budgets use an offline estimate: the larger of characters / 3 and the count of words plus punctuation marks. Claude's tokenizer averages 3.5 to 4 characters per token on English and code, so the estimate sits above the real count.
+
+**Registered twice, acts once.** If the hooks also end up in a worktree's own settings, Claude Code runs each twice. Every side effect is keyed in `hook_marks` or by a primary key: a record is injected once per session, a warning shown once, an actual claim, merge order or message written once, and a `SessionStart` of the same session and source within 5 s answers once.
 
 **Where hooks are registered (decided).** Every hook is registered exactly once, in the **main checkout's** `.claude/settings.local.json`. shoal never writes hook entries into a task worktree's settings. Phase 0 showed that a worktree under `~/.shoal/` loads the main checkout's local settings as well as its own, so a second registration would fire every hook twice. With one registration, every task worktree gets the hooks for free.
 
@@ -568,7 +579,7 @@ Sessions don't talk to each other. They read and write one SQLite file. Overlap 
 ### 9.1 File claims
 - During `plan`, every task declares `expected` path globs
 - `plan` checks them against open claims of other tasks
-- While a task runs, `PostToolUse` records `actual` paths and warns on paths held by another task
+- While a task runs, `PostToolUse` records `actual` paths and warns on paths held by another task. Inside one task, `actual` claims never refuse another agent's `claim`: only `expected` claims conflict
 
 ### 9.2 Overlap resolution: always ask, one keypress
 
@@ -579,7 +590,7 @@ Sessions don't talk to each other. They read and write one SQLite file. Overlap 
 | `p` | **Parallel anyway**: accept the risk, conflict is resolved at merge time |
 | `?` | Show the overlapping paths and both `todo.md` heads |
 
-shoal never resolves an overlap silently. Overlap found late (from actual claims) warns both tasks, and the later one is queued behind the earlier one at merge time.
+shoal never resolves an overlap silently. Overlap found late (from actual claims) warns both tasks, and the later one is queued behind the earlier one at merge time: the writing task gets a `task_blockers` row on the task holding the claim (unless that one already waits on the writer, which would deadlock; then only the warning), the holder's lead gets an `info` message, and `status` shows `merges after <task>`. `merge` skips a task with open blockers ("waits for X to merge first") and, in the same run, merges it once they have; `merge --task <task>` merges it anyway, saying so. The blocker's merge clears the row.
 
 ### 9.3 Concurrency safety
 - Claims are taken inside `BEGIN IMMEDIATE`, so two `plan` runs can't both win the same path. The full rules are in §10
@@ -685,20 +696,21 @@ A record holds what was true at a specific commit. The code is what's true now.
 - When code disagrees with a record, **the code wins**. The agent runs `shoalctl flag-stale <id> "<reason>"`. The record stays for history but is no longer injected
 
 ### 11.2 Cheap staleness pre-check (no LLM)
-- Before injecting, run `git diff --quiet <true_at_sha> HEAD -- <files>`
-- Unchanged: inject as-is. Changed: inject with a `[files changed since record]` tag
+- Before injecting, run `git diff --quiet <true_at_sha> HEAD -- <files>` in the task worktree (`:(literal)` pathspecs for files, `:(glob)` for a lesson's glob)
+- Unchanged: inject as-is. Changed: inject with a `[files changed since record]` tag. A SHA this checkout does not have: `[cannot check: <sha> is not in this checkout]`. `why` and `recall` show the same tags
 
 ### 11.3 Regression lookup ("the bug came back")
 1. `shoalctl why bug:<id>` returns root cause, `fix_sha`, files, regression test
 2. shoal runs `git log <fix_sha>..HEAD -- <files>` live
 3. Output shows the commits that touched those files after the fix, author and SHA straight from git
-4. Then checks whether the regression test still exists and still passes
+4. Then checks whether the regression test still exists at `HEAD` (if not, names the commit that deleted it) and shows its newest recorded result; it does not run the suite
 
 ### 11.4 Lessons
-- **Recorded** on every QA failure: pattern, fix, stack, path_glob
+- **Recorded** on every QA failure: pattern, fix, stack, path_glob. The agent writes it (`shoalctl record lesson`), since only it knows the cause; a failed `qa` round's message and exit text say to, and the lesson is tied to the newest failed round
 - **Injected** only when a touched file matches `path_glob` or the stack matches
 - **Proposed for CLAUDE.md** once `hits >= 3` across different tasks. **You approve every promotion.** On approval the rule goes into `context.md` (imported by the managed block, or injected by hook in stealth mode), `promoted = 1`, and the per-file injection stops
-- **Decay**: not hit in 90 days, no longer injected. Still searchable
+- **Hits**: a lesson shown by the brief or `PreToolUse` counts one hit per session (`hits`, `last_hit_at`)
+- **Decay**: not hit in 90 days (or, never hit, created more than 90 days ago), no longer injected. Still searchable
 
 ### 11.5 Conventions
 1. You say "use the strategy pattern from now on". The agent saves it as `proposed` with a scope glob
@@ -805,7 +817,7 @@ Every feature in this spec lands in exactly one phase. Commands not yet built ar
 | **0: MVP** | Exactly: `init` (stealth; installs hooks by option 1), `new` (lane `feature\|bugfix\|hotfix`), `start` (worktree + tmux window + `claude` launched with the task brief, default model `claude-opus-5-5`, configurable), `status`, `done` (rendered report), and a minimal `doctor [--fix]` that checks and repairs only the hook entries (shipped early from Phase 2, because a moved binary otherwise silently disables every hook). Tables `schema_migrations`, `tasks`, `summaries`, `test_runs`, `test_results`. The baseline test run (§8.2) wired into `start`. Full build spec in §15.1 | The acceptance checks in §15.1 pass on a real project | 3-4 days |
 | **1: Agent team, QA loop, zero-regression merge gate** | `agents install` (stealth and `--commit`), the eight `shoal-*` definitions (§7); `messages`, `message_reads`, `msg`; `contracts` and `contract freeze`; per-agent `claim`/`release` inside one task (the `file_claims` table); `qa` with the 3-round cap and escalation; feature behaviour rule (§8.4); user scope matrix, `scope add\|show\|review\|check`, `new --scope` (§8.6); hotfix minimal-diff check and automatic backport task (§6.3). The merge gate (§8.5) with `--accept-regression` and `regression_overrides`; `repro red\|green` and `regression_proofs` (§8.3); flaky re-runs and `test_quarantine` (§8.7); coverage comparison and `coverage_files`; "Untested areas" (§8.8); `test` command; hotfixes merging into the production branch; a simple serialized `merge` that takes `done` tasks oldest first, one at a time, under `merge.lock`. Warnings that need `PreToolUse`/`PostToolUse` (writes outside claims, contract edits by non-leads) arrive with those hooks in Phase 3 | One feature runs through the feature lane with backend and frontend agents and a frozen contract; an "also test X" item blocks `done` until every row is green or waived; a bugfix without a red/green proof is refused by `done`; breaking a baseline-passing test blocks `merge` with exit 9, and `--accept-regression` lets it through with the override in the report; a test made flaky on purpose is quarantined and listed; a finished hotfix merges into the production branch and creates its backport task | 7-9 days |
 | **2: Claims + queue** | `plan` with expected `file_claims` across tasks and the one-keypress overlap prompt (§9.2); `merge_queue` per target branch and `needs-rebase` for tasks whose claims overlap a merge (§9.4); optimistic locking on claims; stale-claim expiry; the full `doctor [--fix]` (§10.4), extending the minimal one from Phase 0. Added 2026-11-03: `start` launches an attention watcher that polls the task's tmux pane (`capture-pane` every 2 s) and flags the task needs-attention in `status` while a dialog or prompt (Claude Code's trust or permission prompt) waits (§16 row 56) | The Bug A / Bug B scenario works end to end; two concurrent `plan` runs can't both win one path; `doctor --fix` recovers a task killed mid-`start` and releases a stale claim | 3-4 days |
-| **3: Memory + hooks** | `bugs`, `decisions`, `lessons`, `qa`, FTS5; `SessionStart` brief, `PreToolUse` and `PostToolUse` handlers (including the claim and contract warnings from Phase 1); staleness pre-check; `why`, `recall`; lesson hit counting | Brief < 1k tokens measured; a lesson is injected on a matching file touch; a write outside an agent's claims prints a one-line warning | 3-4 days |
+| **3: Memory + hooks (built)** | `bugs`, `decisions`, `lessons`, `qa`, FTS5; `SessionStart` brief, `PreToolUse` and `PostToolUse` handlers (including the claim and contract warnings from Phase 1); staleness pre-check; `why`, `recall`; lesson hit counting | Brief < 1k tokens measured; a lesson is injected on a matching file touch; a write outside an agent's claims prints a one-line warning | 3-4 days |
 | **4: Conventions + promotion** | Convention lifecycle, brainstorm-first brief, lesson promotion proposed after 3 repeats, non-stealth mode (`[install].stealth = false`, managed CLAUDE.md block), conflict detection | "Strategy pattern" example works end to end | 1-2 days |
 | **5: Publish** | `export`/`purge`/`uninstall`, `gc`, release CI guard, FTS5 test run on every target, Homebrew tap, cross-compiled releases | Installed on a project with zero repo footprint | 2 days |
 
@@ -935,7 +947,7 @@ summary.json:
 #### Hooks in the MVP
 - `hook session-start`: guard (§4.6); then set `tasks.session_id` from the hook input and `last_seen_at`. No output; the brief already arrives as the first prompt.
 - `hook stop`: guard; then set `last_seen_at`. No output.
-- Both fail open. `PreToolUse` and `PostToolUse` entries are added by `init` in Phase 3.
+- Both fail open. Since Phase 3, `init` also adds the `PreToolUse` and `PostToolUse` entries (§4.6), each in its own group with a matcher, and `session-start` injects the brief.
 
 #### `shoalctl status [--json]`
 One row per task not older than 14 days after `done`, newest first:
@@ -1148,3 +1160,8 @@ WAL, `busy_timeout`, `BEGIN IMMEDIATE` per state change, and the `tasks.version`
 | 55 | Doctor output | `ok`, `fixed` (stdout) and `FAIL` (stderr) lines, one per finding; exit 11 while any `FAIL` remains. Without an initialized project only the hook check runs |
 | 56 | Attention watcher (approved 2026-11-03) | `start` spawns `shoalctl watch <task>` detached (its own session on unix; log `logs/watch-<id>.log`); a spawn failure is a warning, not a failed start. One watcher per task (`watch-<id>.lock`, never held with another lock). Every 2 s on a ticker it reads `#{pane_dead}` and `capture-pane -p` of the task window and runs `attention.Detect`: a numbered menu with the `❯` cursor and a second option in the bottom 12 lines (its question becomes the reason), or a y/n prompt on the last line. It sets or clears `tasks.attention`/`attention_at` without bumping `version`. It exits, clearing the flag, when the window or pane is gone, the task leaves `starting`/`in-progress`/`qa`/`needs-rebase`/`escalated`, or on SIGINT/SIGTERM/SIGHUP; a SIGKILLed watcher leaves its flag for `doctor --fix` (row 54). Open risks: the watcher is not restarted when a task returns from `done` to `qa`; it opens a write transaction every 2 s; it exits on the first DB error. `status` shows `NEEDS ATTENTION: <reason>` in NOTE and `attention` in JSON. shoal never answers a dialog |
 | 57 | Merge output with acceptances | `merge` prints the gate rows, then one `accepted by <who> for <task>: <class> <target>: "<reason>"` line per accepted row, and `BLOCKED by:` only for rows nothing accepted. All accepted: "every blocking row was accepted", then `merged`. Partial: the task goes back to `qa` as before, nothing (acceptances included) is recorded, and the error lists what was accepted, what still blocks, and the full command with every target |
+| 58 | Who records memory (Phase 3) | Lessons, decisions and answered questions are written by the agents with `shoalctl record lesson\|decision\|qa`; nothing is guessed from failure text. `qa` asks for the lesson after a failed round. `done` writes one bug record per bugfix or hotfix task (optional `root_cause` in `summary.json`); the task's own decision stays in `summaries`, which `why` and `recall` read too |
+| 59 | One full-text table | `memory_fts(kind, ref, body)` over every record kind instead of one `fts_*` table per kind: one query, one ranking. Triggers keep it; `summaries`' `INSERT OR REPLACE` is handled in its insert trigger |
+| 60 | Hook dedupe | `hook_marks(session_id, key)` gives once-per-session injection and warnings and makes a doubly registered hook act once; `SessionStart` uses a 5-second window per source so a later compaction or `/clear` gets the brief again. Fire marks older than a day are pruned |
+| 61 | Late overlap order | Reuses `task_blockers` (row 48): the writer waits on the claim holder for its merge, never for its start; cycles are refused with a warning; `merge --task` overrides. A blocked task's stage is untouched (only `blocked_by` is set and cleared) |
+| 62 | Agent identity in hooks | `agent_type` from the hook input; none means the session, which is `shoal-lead`. The outside-claims warning fires only for an agent that holds expected claims, so lanes without per-agent claims stay quiet |

@@ -1,3 +1,18 @@
+# Phase 3 progress
+
+Base: `9b3e7ad`. Acceptance bar: spec §15 Phase 3 row plus the two Phase 2 deferrals.
+
+## Where I am
+
+- Done: migration 0006 (bugs, decisions, lessons, qa, hook_marks, memory_fts); `record`, `flag-stale`,
+  `why`, `recall`, `brief`; the SessionStart, PreToolUse and PostToolUse handlers; init registers the
+  tool hooks with matchers; late overlap orders the merge.
+- E2E (`internal/cli/phase3_e2e_test.go`): TestPhase3BriefUnderBudget, TestPhase3LessonInjectedOncePerSession,
+  TestPhase3WriteOutsideClaimsWarns, TestPhase3LateOverlapFromEdits, TestPhase3HooksNeverDoubleFire,
+  TestPhase3HookLatency, TestPhase3WhyBugCameBack; TestPhase2BugABugB covers spec §14 step 5.
+- Decisions: spec §16 rows 58-62.
+- Next: Vex review. Phase 4 not started.
+
 # Phase 2 progress
 
 Plan: [todo.md](todo.md). Base: `6d33f87`.
