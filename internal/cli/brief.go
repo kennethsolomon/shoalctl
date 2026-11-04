@@ -9,9 +9,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
-	"unicode/utf8"
+	"unicode"
 
 	"github.com/kennethsolomon/shoalctl/internal/globx"
 	"github.com/kennethsolomon/shoalctl/internal/store"
@@ -26,17 +25,49 @@ const (
 	briefLessons  = 5
 )
 
-var tokenPiece = regexp.MustCompile(`[\p{L}\p{N}_]+|[^\s\p{L}\p{N}_]`)
+// longRun is the length past which a run of letters and digits (a hash,
+// base64, a minified identifier) stops being one BPE word.
+const longRun = 16
 
-// approxTokens is a conservative, offline token estimate: the larger of one
-// token per 3 characters and one per word or punctuation mark. Claude's
-// tokenizer averages about 3.5-4 characters per token on English and code,
-// and BPE merges words and frequent punctuation, so both counts sit above
-// the real one for this kind of text.
+// approxTokens is a conservative, offline token estimate: the larger of
+// two counts. By characters: one token per 3, but one per Han, Hiragana,
+// Katakana or Hangul character. By pieces: one per word, punctuation mark
+// or CJK character, and one per 2 characters of a run longer than longRun.
+// Claude's tokenizer averages about 3.5-4 characters per token on English
+// and code, merges words and frequent punctuation, and spends about one
+// token per CJK character and two to three characters per token of hex or
+// base64, so both counts sit at or above the real one.
 func approxTokens(s string) int {
-	byChars := (utf8.RuneCountInString(s) + 2) / 3
-	pieces := len(tokenPiece.FindAllStringIndex(s, -1))
-	return max(byChars, pieces)
+	chars, cjk, pieces, run := 0, 0, 0, 0
+	flush := func() {
+		switch {
+		case run > longRun:
+			pieces += (run + 1) / 2
+		case run > 0:
+			pieces++
+		}
+		run = 0
+	}
+	for _, r := range s {
+		switch {
+		case unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul):
+			flush()
+			cjk++
+			pieces++
+		case unicode.IsLetter(r) || unicode.IsNumber(r) || r == '_':
+			chars++
+			run++
+		case unicode.IsSpace(r):
+			flush()
+			chars++
+		default:
+			flush()
+			chars++
+			pieces++
+		}
+	}
+	flush()
+	return max((chars+2)/3+cjk, pieces)
 }
 
 // briefData is what the session-start brief shows (§4.6).

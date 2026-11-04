@@ -68,11 +68,13 @@ func inHook(t *testing.T, h *harness, wt, event, stdin string) hookOutput {
 // matching lessons at the 500-character limit, two blockers and unread
 // messages.
 //
-// Measurement: approxTokens, the larger of characters/3 and the number of
-// words plus punctuation marks. Claude's tokenizer averages 3.5-4 characters
-// per token on English and code, and BPE merges words and common
+// Measurement: approxTokens, the larger of characters/3 (one per CJK
+// character) and the number of words plus punctuation marks (a run over 16
+// letters or digits counts one per 2). Claude's tokenizer averages 3.5-4
+// characters per token on English and code, and BPE merges words and common
 // punctuation, so both counts over-estimate this kind of text; the brief is
 // also checked against bytes/3, a third bound that ignores word structure.
+// TestPhase3BriefUnderBudgetCJKAndBlobs covers CJK lessons and hex blobs.
 func TestPhase3BriefUnderBudget(t *testing.T) {
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig + "[stack]\nname = \"laravel\"\n")

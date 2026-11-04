@@ -244,7 +244,7 @@ Claude Code caps a hook's `additionalContext` at 10,000 characters; shoal's own 
 
 **Output.** A handler that has something to say prints one JSON object, `{"hookSpecificOutput": {"hookEventName", "additionalContext"}}` plus `"systemMessage"` for warnings, and only after it succeeded; otherwise stdout stays empty.
 
-**Token measurement.** Budgets use an offline estimate: the larger of characters / 3 and the count of words plus punctuation marks. Claude's tokenizer averages 3.5 to 4 characters per token on English and code, so the estimate sits above the real count.
+**Token measurement.** Budgets use an offline estimate, the larger of two counts: characters / 3, with each Han, Hiragana, Katakana or Hangul character counted as one token; and words plus punctuation marks plus CJK characters, with an unbroken run of more than 16 letters or digits (a hash, base64) counted as one token per 2 characters. Claude's tokenizer averages 3.5 to 4 characters per token on English and code, about one per CJK character, and two to three characters per token of hex or base64, so the estimate sits at or above the real count.
 
 **Registered twice, acts once.** If the hooks also end up in a worktree's own settings, Claude Code runs each twice. Every side effect is keyed in `hook_marks` or by a primary key: a record is injected once per session, a warning shown once, an actual claim, merge order or message written once, and a `SessionStart` of the same session and source within 5 s answers once.
 
