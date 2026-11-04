@@ -120,6 +120,7 @@ func TestBriefBudgetKeepsTheBrainstorm(t *testing.T) {
 		d.todo = append(d.todo, long)
 	}
 	d.promotions = []string{"- promote lesson:7 (files src/**, shown in 3 tasks): " + clip(long, 200)}
+	d.promotedRules = []string{"- lesson:3 (files src/**): " + clip(long, 300)}
 	out, kept := renderSessionBrief(d)
 	if approxTokens(out) > briefBudget || kept != 0 {
 		t.Fatalf("%d tokens, %d lessons kept:\n%s", approxTokens(out), kept, out)
@@ -127,12 +128,20 @@ func TestBriefBudgetKeepsTheBrainstorm(t *testing.T) {
 	if !strings.HasPrefix(out, "BEFORE ANYTHING ELSE, brainstorm with the human: 31 proposed project rule(s)") {
 		t.Fatalf("the brief does not open with the brainstorm:\n%s", out)
 	}
-	shown := strings.Count(out, "\n- convention:")
-	var more int
-	if _, err := fmt.Sscanf(out[strings.Index(out, "- +"):], "- +%d more proposed", &more); err != nil || shown == 0 || shown+more != 30 {
-		t.Fatalf("%d proposals shown, %d counted as more (%v):\n%s", shown, more, err, out)
+	// One proposal and the promotion keep the brainstorm open; the agreed
+	// rules get the rest of the budget before more proposals do.
+	mustContain(t, "brief", out, "- convention:1 (files src/pay/**)", "- +29 more proposed: shoalctl convention list", "- promote lesson:7 ")
+	if strings.Contains(out, "- convention:2 (files src/pay/**)") || strings.Contains(out, "more proposed for promotion") {
+		t.Fatalf("a second proposal kept over the agreed rules:\n%s", out)
 	}
-	mustContain(t, "brief", out, "shoalctl convention list", "- +1 more proposed for promotion", "- +30 more rules")
+	shown := strings.Count(out, "\n- convention:1") - 1 // convention:100..
+	var more int
+	rules := out[strings.Index(out, "Project rules"):]
+	if _, err := fmt.Sscanf(rules[strings.Index(rules, "- +"):], "- +%d more rules", &more); err != nil || shown < 3 || shown+more != 30 {
+		t.Fatalf("%d rules shown, %d counted as more (%v):\n%s", shown, more, err, out)
+	}
+	// A promoted lesson has no per-file injection, so it outlasts conventions.
+	mustContain(t, "promoted rule", out, "- lesson:3 (files src/**)")
 	if strings.Contains(out, "todo.md") || strings.Contains(out, "lesson:1 ") {
 		t.Errorf("todo lines or lessons kept over proposals:\n%s", out)
 	}

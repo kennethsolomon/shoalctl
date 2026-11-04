@@ -21,6 +21,10 @@ import (
 // shoal proposes it as a project rule (§11.4).
 const promoteTasks = 3
 
+// maxOpenProposals caps the proposed conventions of a project: past it,
+// propose is refused until the human settles some (§16 row 64).
+const maxOpenProposals = 10
+
 func (p *project) contextPath() string { return filepath.Join(p.dir, "context.md") }
 
 func scopeText(glob string) string {
@@ -173,10 +177,19 @@ func (s ruleState) candidates() []store.Lesson {
 // contextRuleLines are the agreed rules every session follows: active
 // conventions, then promoted lessons, oldest first.
 func (s ruleState) contextRuleLines() []string {
+	return append(s.conventionRuleLines(), s.promotedRuleLines()...)
+}
+
+func (s ruleState) conventionRuleLines() []string {
 	var out []string
 	for _, c := range s.withStatus(store.ConventionActive) {
 		out = append(out, conventionLine(c))
 	}
+	return out
+}
+
+func (s ruleState) promotedRuleLines() []string {
+	var out []string
 	for _, l := range s.promoted() {
 		out = append(out, promotedLine(l))
 	}
@@ -324,7 +337,7 @@ func (env Env) conventionPropose(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	id, existing, err := p.db.ProposeConvention(ctx, store.Convention{Rule: text, ScopeGlob: glob, Conflict: conflict, SourceTaskID: source})
+	id, existing, err := p.db.ProposeConvention(ctx, store.Convention{Rule: text, ScopeGlob: glob, Conflict: conflict, SourceTaskID: source}, maxOpenProposals)
 	if err != nil {
 		return err
 	}
@@ -556,7 +569,7 @@ func (env Env) cmdPromote(ctx context.Context, args []string) error {
 			return fail(ExitState, "lesson:%d is not up for promotion: it must be shown in %d different tasks (now %d), not stale, not promoted, "+
 				"and not already a convention", id, promoteTasks, s.taskHits[id])
 		}
-		cid, _, err := p.db.ProposeConvention(ctx, store.Convention{Rule: lessonRule(l), ScopeGlob: lessonScope(l), Conflict: conflict, LessonID: l.ID})
+		cid, _, err := p.db.ProposeConvention(ctx, store.Convention{Rule: lessonRule(l), ScopeGlob: lessonScope(l), Conflict: conflict, LessonID: l.ID}, 0)
 		if err != nil {
 			return err
 		}

@@ -32,6 +32,9 @@ var (
 	ErrConflict      = errors.New("concurrent update conflict")
 	ErrNotFound      = errors.New("not found")
 	ErrStage         = errors.New("task is in a stage that does not allow this")
+	// ErrProposalRefused is a convention proposal shoal does not record:
+	// too many are open, or the human retired the same rule before.
+	ErrProposalRefused = errors.New("proposal refused")
 )
 
 type Options struct {

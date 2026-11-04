@@ -47,8 +47,10 @@ func nullID(id int64) any {
 // ProposeConvention records a proposed convention and returns its id. A
 // rule already open (proposed or active) with the same text and scope, or
 // an open proposal from the same lesson, is not added twice: its id comes
-// back with existing = true.
-func (s *Store) ProposeConvention(ctx context.Context, c Convention) (id int64, existing bool, err error) {
+// back with existing = true. A new proposal is refused (ErrProposalRefused) when
+// maxOpen > 0 proposals are already open, or when the human retired the
+// same rule and scope before: the refusal names it and why.
+func (s *Store) ProposeConvention(ctx context.Context, c Convention, maxOpen int) (id int64, existing bool, err error) {
 	err = s.write(ctx, func(tx *sql.Tx) error {
 		existing = false
 		q := `SELECT id FROM conventions WHERE (status != 'retired' AND lower(trim(rule)) = lower(trim(?)) AND scope_glob = ?)`
@@ -64,6 +66,27 @@ func (s *Store) ProposeConvention(ctx context.Context, c Convention) (id int64, 
 			return nil
 		case !errors.Is(err, sql.ErrNoRows):
 			return fmt.Errorf("look for an open convention like %q: %w", c.Rule, err)
+		}
+		var retired int64
+		var by, reason string
+		err = tx.QueryRowContext(ctx, `SELECT id, COALESCE(retired_by, ''), COALESCE(retire_reason, '') FROM conventions
+			WHERE status = 'retired' AND lower(trim(rule)) = lower(trim(?)) AND scope_glob = ? ORDER BY id DESC LIMIT 1`, c.Rule, c.ScopeGlob).Scan(&retired, &by, &reason)
+		switch {
+		case err == nil:
+			return fmt.Errorf("%w: %s with this rule and scope was retired by %s: %s. Propose it again only with a different rule or scope, "+
+				"after the human changed their mind", ErrProposalRefused, ConventionKey(retired), by, reason)
+		case !errors.Is(err, sql.ErrNoRows):
+			return fmt.Errorf("look for a retired convention like %q: %w", c.Rule, err)
+		}
+		if maxOpen > 0 {
+			var open int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM conventions WHERE status = 'proposed'`).Scan(&open); err != nil {
+				return fmt.Errorf("count proposed conventions: %w", err)
+			}
+			if open >= maxOpen {
+				return fmt.Errorf("%w: %d conventions are already proposed, the most open at once; the human settles them first "+
+					"(shoalctl convention list, then agree or retire)", ErrProposalRefused, open)
+			}
 		}
 		res, err := tx.ExecContext(ctx, `INSERT INTO conventions (rule, scope_glob, status, conflict, source_task_id, lesson_id, proposed_at)
 			VALUES (?, ?, 'proposed', ?, ?, ?, ?)`, c.Rule, c.ScopeGlob, c.Conflict, nullID(c.SourceTaskID), nullID(c.LessonID), now())

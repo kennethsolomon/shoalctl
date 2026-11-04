@@ -142,7 +142,7 @@ func codeOf(err error) int {
 		return ExitConfig
 	case errors.Is(err, store.ErrNotFound):
 		return ExitNotFound
-	case errors.Is(err, store.ErrStage):
+	case errors.Is(err, store.ErrStage), errors.Is(err, store.ErrProposalRefused):
 		return ExitState
 	case errors.Is(err, store.ErrBusy), errors.Is(err, store.ErrConflict), errors.Is(err, lockfile.ErrHeld):
 		return ExitBusy

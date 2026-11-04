@@ -497,14 +497,17 @@ func TestPhase3HookLatency(t *testing.T) {
 	}
 	// Phase 4: 20 active conventions and 5 proposed ones, so SessionStart
 	// renders the brainstorm and the rules and PreToolUse matches conventions.
+	// Proposed in rounds: at most maxOpenProposals are open at once.
 	for i := 0; i < 25; i++ {
 		h.mustRun("convention", "propose", "--rule", fmt.Sprintf("module %d keeps one public entry point", i), "--scope", fmt.Sprintf("src/m%d/**", i))
+		if i < 20 && i%maxOpenProposals == maxOpenProposals-1 {
+			h.asHuman()
+			for id := i + 2 - maxOpenProposals; id <= i+1; id++ {
+				h.mustRun("convention", "agree", fmt.Sprint(id))
+			}
+			h.asAgent()
+		}
 	}
-	h.asHuman()
-	for i := 1; i <= 20; i++ {
-		h.mustRun("convention", "agree", fmt.Sprint(i))
-	}
-	h.asAgent()
 	task := startedTask(t, h, "feature", "Timed")
 	t.Setenv("CLAUDE_PROJECT_DIR", task.Worktree)
 	const runs = 15

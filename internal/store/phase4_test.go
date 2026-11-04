@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -106,15 +107,15 @@ func TestConventionLifecycle(t *testing.T) {
 	s, _ := openTest(t)
 	ctx := context.Background()
 	task := memoryTask(t, s, "Payments")
-	id, existing, err := s.ProposeConvention(ctx, Convention{Rule: "Use the strategy pattern", ScopeGlob: "src/pay/**", SourceTaskID: task.ID})
+	id, existing, err := s.ProposeConvention(ctx, Convention{Rule: "Use the strategy pattern", ScopeGlob: "src/pay/**", SourceTaskID: task.ID}, 0)
 	if err != nil || existing {
 		t.Fatal(err, existing)
 	}
-	again, existing, err := s.ProposeConvention(ctx, Convention{Rule: " use the STRATEGY pattern ", ScopeGlob: "src/pay/**"})
+	again, existing, err := s.ProposeConvention(ctx, Convention{Rule: " use the STRATEGY pattern ", ScopeGlob: "src/pay/**"}, 0)
 	if err != nil || !existing || again != id {
 		t.Fatalf("duplicate proposal: %d %v %v", again, existing, err)
 	}
-	other, existing, err := s.ProposeConvention(ctx, Convention{Rule: "Use the strategy pattern", ScopeGlob: "**"})
+	other, existing, err := s.ProposeConvention(ctx, Convention{Rule: "Use the strategy pattern", ScopeGlob: "**"}, 0)
 	if err != nil || existing || other == id {
 		t.Fatalf("other scope: %d %v %v", other, existing, err)
 	}
@@ -160,11 +161,11 @@ func TestConventionFromLesson(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, _, err := s.ProposeConvention(ctx, Convention{Rule: "p Fix: f", ScopeGlob: "src/**", LessonID: lid, Conflict: "CLAUDE.md:3: never f"})
+	id, _, err := s.ProposeConvention(ctx, Convention{Rule: "p Fix: f", ScopeGlob: "src/**", LessonID: lid, Conflict: "CLAUDE.md:3: never f"}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again, existing, _ := s.ProposeConvention(ctx, Convention{Rule: "other words", ScopeGlob: "src/**", LessonID: lid}); !existing || again != id {
+	if again, existing, _ := s.ProposeConvention(ctx, Convention{Rule: "other words", ScopeGlob: "src/**", LessonID: lid}, 0); !existing || again != id {
 		t.Fatalf("second proposal from the same lesson: %d %v", again, existing)
 	}
 	if err := s.AgreeConvention(ctx, id, Agreement{Rule: "p Fix: f", ScopeGlob: "src/**", By: "K"}); err != nil {
@@ -227,5 +228,42 @@ func TestParseConventionRef(t *testing.T) {
 		if _, err := ParseConventionRef(bad); err == nil {
 			t.Errorf("%q parsed", bad)
 		}
+	}
+}
+
+// Open proposals are capped, and a rule the human retired is not silently
+// proposed again with the same scope.
+func TestProposeConventionLimits(t *testing.T) {
+	s, _ := openTest(t)
+	ctx := context.Background()
+	var ids []int64
+	for i := 0; i < 3; i++ {
+		id, _, err := s.ProposeConvention(ctx, Convention{Rule: fmt.Sprintf("rule %d", i), ScopeGlob: "**"}, 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	if _, _, err := s.ProposeConvention(ctx, Convention{Rule: "rule 3", ScopeGlob: "**"}, 3); !errors.Is(err, ErrProposalRefused) || !strings.Contains(err.Error(), "3 conventions are already proposed") {
+		t.Fatalf("past the limit: %v", err)
+	}
+	if id, existing, err := s.ProposeConvention(ctx, Convention{Rule: "RULE 1", ScopeGlob: "**"}, 3); err != nil || !existing || id != ids[1] {
+		t.Fatalf("a duplicate at the limit: %d %v %v", id, existing, err)
+	}
+	if err := s.AgreeConvention(ctx, ids[0], Agreement{Rule: "rule 0", ScopeGlob: "**", By: "Kenneth"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ProposeConvention(ctx, Convention{Rule: "rule 3", ScopeGlob: "**"}, 3); err != nil {
+		t.Fatalf("an agreed proposal still counts against the limit: %v", err)
+	}
+	if err := s.RetireConvention(ctx, ids[1], "Kenneth", "too vague"); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := s.ProposeConvention(ctx, Convention{Rule: " Rule 1 ", ScopeGlob: "**"}, 0)
+	if !errors.Is(err, ErrProposalRefused) || !strings.Contains(err.Error(), fmt.Sprintf("convention:%d", ids[1])) || !strings.Contains(err.Error(), "too vague") {
+		t.Fatalf("re-proposing a retired rule: %v", err)
+	}
+	if _, existing, err := s.ProposeConvention(ctx, Convention{Rule: "rule 1", ScopeGlob: "src/**"}, 0); err != nil || existing {
+		t.Fatalf("the retired rule in another scope: %v %v", existing, err)
 	}
 }

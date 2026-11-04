@@ -415,3 +415,40 @@ func TestPhase4PromoteShowsRule(t *testing.T) {
 		t.Fatalf("context.md:\n%s", body)
 	}
 }
+
+// Proposals are capped and never crowd the agreed rules out of the brief;
+// a rule the human retired is not proposed again as is (§16 row 64).
+func TestPhase4ProposalsDoNotCrowdOutRules(t *testing.T) {
+	h := newHarness(t)
+	h.mustRun("init")
+	ts := fakeTasks(t, h, "Any")
+	for i := 0; i < 8; i++ {
+		h.mustRun("convention", "propose", "--rule", fmt.Sprintf("module %d keeps one public entry point", i), "--scope", fmt.Sprintf("src/m%d/**", i))
+	}
+	h.asHuman()
+	for i := 1; i <= 8; i++ {
+		h.mustRun("convention", "agree", fmt.Sprint(i))
+	}
+	h.asAgent()
+	long := strings.Repeat("split every handler into parse, validate and act steps with typed errors; ", 6)[:400]
+	for i := 0; i < maxOpenProposals; i++ {
+		h.mustRun("convention", "propose", "--rule", fmt.Sprintf("%d: %s", i, long), "--scope", "**")
+	}
+	mustContain(t, "past the cap", h.expectCode(ExitState, "convention", "propose", "--rule", "one more", "--scope", "**"),
+		fmt.Sprintf("%d conventions are already proposed", maxOpenProposals), "convention list")
+	brief := sessionStart(t, h, ts[0], "s1")
+	if !strings.HasPrefix(brief, "BEFORE ANYTHING ELSE") || approxTokens(brief) > briefBudget {
+		t.Fatalf("brief (%d tokens):\n%s", approxTokens(brief), brief)
+	}
+	for i := 1; i <= 8; i++ {
+		mustContain(t, "agreed rules", brief, fmt.Sprintf("- convention:%d (files `src/m%d/**`)", i, i-1))
+	}
+	mustContain(t, "proposals counted", brief, "more proposed: shoalctl convention list")
+
+	h.asHuman()
+	h.mustRun("convention", "retire", "9", "--why", "too broad for this codebase")
+	h.asAgent()
+	mustContain(t, "retired again", h.expectCode(ExitState, "convention", "propose", "--rule", "0: "+long, "--scope", "**"),
+		"convention:9 with this rule and scope was retired", "too broad for this codebase")
+	h.mustRun("convention", "propose", "--rule", "0: "+long, "--scope", "src/**")
+}

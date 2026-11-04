@@ -84,18 +84,23 @@ type briefData struct {
 	lessons   []string // rendered lesson lines
 
 	// The brainstorm (§11.5): proposed conventions and lessons proposed for
-	// promotion, and the rules of context.md when the session does not
-	// load it through CLAUDE.md. The hidden counts are what the budget cut;
-	// the brief says how many and where to see them, never drops them silently.
-	proposed, promotions, rules                   []string
+	// promotion. The agreed rules of context.md: active conventions (rules)
+	// and promoted lessons (promotedRules). The hidden counts are what the
+	// budget cut; the brief says how many and where to see them, never
+	// drops them silently.
+	proposed, promotions, rules, promotedRules    []string
 	hiddenProposed, hiddenPromotions, hiddenRules int
 }
 
 // renderSessionBrief renders the brief inside briefBudget and returns how
-// many lessons it kept. It drops, from the end: lessons, todo lines, project
-// rule lines, promotion proposals, then proposed conventions (each dropped
-// line is counted in a "+N more" line); the brainstorm goes last because it
-// must happen before anything else. Then the text is cut.
+// many lessons it kept. It drops, from the end: lessons, todo lines, the
+// promotion proposals and proposed conventions past the first of each,
+// active convention lines (they also arrive per file), promoted lesson
+// lines (in stealth this brief is their only way in), then the last
+// promotion proposal and proposed convention. Each dropped rule or
+// proposal is counted in a "+N more" line. Agreed rules thus keep their
+// space however many proposals wait, while the brainstorm still opens the
+// brief. Then the text is cut.
 func renderSessionBrief(d briefData) (string, int) {
 	for {
 		s := d.render()
@@ -107,8 +112,14 @@ func renderSessionBrief(d briefData) (string, int) {
 			d.lessons = d.lessons[:len(d.lessons)-1]
 		case len(d.todo) > 0:
 			d.todo = d.todo[:len(d.todo)-1]
+		case len(d.promotions) > 1:
+			d.promotions, d.hiddenPromotions = d.promotions[:len(d.promotions)-1], d.hiddenPromotions+1
+		case len(d.proposed) > 1:
+			d.proposed, d.hiddenProposed = d.proposed[:len(d.proposed)-1], d.hiddenProposed+1
 		case len(d.rules) > 0:
 			d.rules, d.hiddenRules = d.rules[:len(d.rules)-1], d.hiddenRules+1
+		case len(d.promotedRules) > 0:
+			d.promotedRules, d.hiddenRules = d.promotedRules[:len(d.promotedRules)-1], d.hiddenRules+1
 		case len(d.promotions) > 0:
 			d.promotions, d.hiddenPromotions = d.promotions[:len(d.promotions)-1], d.hiddenPromotions+1
 		case len(d.proposed) > 0:
@@ -164,9 +175,9 @@ func (d briefData) render() string {
 	if d.unread > 0 {
 		fmt.Fprintf(&b, "Unread messages for shoal-lead: %d (shoalctl msg inbox %s --as shoal-lead).\n", d.unread, t.Slug)
 	}
-	if len(d.rules)+d.hiddenRules > 0 {
+	if len(d.rules)+len(d.promotedRules)+d.hiddenRules > 0 {
 		b.WriteString("Project rules agreed with the human (follow them; the project's CLAUDE.md wins on a conflict):\n")
-		for _, l := range d.rules {
+		for _, l := range append(slices.Clip(d.rules), d.promotedRules...) {
 			b.WriteString(clip(l, 300) + "\n")
 		}
 		if d.hiddenRules > 0 {
@@ -289,7 +300,7 @@ func sessionBrief(ctx context.Context, p *project, t store.Task, gitDir string) 
 	// in each new worktree, and an unattended session cannot answer), so its
 	// brief always carries the rules; the main checkout relies on its block.
 	if gitDir != p.root || !importsContext(gitDir) {
-		d.rules = rs.contextRuleLines()
+		d.rules, d.promotedRules = rs.conventionRuleLines(), rs.promotedRuleLines()
 	}
 	out, kept := renderSessionBrief(d)
 	// Only lessons that survived the budget count as shown.
