@@ -48,13 +48,19 @@ func lineText(l []byte) string { return strings.TrimSpace(string(l)) }
 // importLine, and whether that changed anything. Bytes outside the markers
 // are kept as they are; a missing block is appended with the file's own line
 // ending (CRLF when the file uses it) and the file keeps ending with a
-// newline, or not, as it did. A block whose markers are duplicated, missing
+// newline, or not, as it did. Markers inside code fences are examples and
+// are ignored; a file ending inside an open fence is refused, since the
+// fence would swallow an appended block. A block whose markers are duplicated, missing
 // their partner or out of order is refused: shoal does not guess which
 // lines it owns.
 func withManagedBlock(name string, data []byte, importLine string) ([]byte, bool, error) {
 	lines := splitLines(data)
 	var begins, ends []int
+	var fence fences
 	for i, l := range lines {
+		if fence.skip(lineText(l), i+1) {
+			continue
+		}
 		switch lineText(l) {
 		case blockBegin:
 			begins = append(begins, i)
@@ -102,6 +108,10 @@ func withManagedBlock(name string, data []byte, importLine string) ([]byte, bool
 		}
 		return out, true, nil
 	}
+	if fence.open != 0 {
+		return nil, false, fail(ExitConfig, "%s ends inside the code fence opened on line %d, which would hide an appended shoal block; close the fence and rerun shoalctl init",
+			name, fence.open)
+	}
 	out := append([]byte(nil), data...)
 	trailing := len(data) == 0 || bytes.HasSuffix(data, []byte("\n"))
 	if !trailing {
@@ -143,14 +153,15 @@ func installManagedBlock(root, importLine string) (bool, error) {
 }
 
 // importsContext reports whether dir's CLAUDE.md holds shoal's managed
-// block, so Claude Code loads context.md itself.
+// block outside code fences, so Claude Code loads context.md itself.
 func importsContext(dir string) bool {
 	data, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
 	if err != nil {
 		return false
 	}
-	for _, l := range splitLines(data) {
-		if lineText(l) == blockBegin {
+	var fence fences
+	for i, l := range splitLines(data) {
+		if !fence.skip(lineText(l), i+1) && lineText(l) == blockBegin {
 			return true
 		}
 	}

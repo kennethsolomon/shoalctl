@@ -142,7 +142,7 @@ shoal never rewrites your `CLAUDE.md`.
 
 - **Stealth (default):** `CLAUDE.md` is untouched. Context comes in through hooks registered in `.claude/settings.local.json`, which shoal adds to `.git/info/exclude` (never your committed `.gitignore`).
 - **Stealth (default):** the rules shoal keeps (agreed conventions, promoted lessons) reach each session through the `SessionStart` brief, and active conventions also arrive per file. Nothing is committed: `git status` stays clean. shoal writes no `CLAUDE.local.md`, because an import outside the worktree asks for approval in every new task worktree and would block an unattended session.
-- **Managed block (opt-in, `[install].stealth = false`):** `init` adds one marked block containing a single import line pointing at `~/.shoal/projects/<id>/context.md`, creating `CLAUDE.md` if needed. Every byte outside the markers stays as it was (CRLF and a missing final newline included); rerunning `init` changes nothing; duplicate or unpaired markers are refused with exit 3. Claude Code asks once to approve the external import, and `init` says so. Commit `CLAUDE.md` so task worktrees load the block.
+- **Managed block (opt-in, `[install].stealth = false`):** `init` adds one marked block containing a single import line pointing at `~/.shoal/projects/<id>/context.md`, creating `CLAUDE.md` if needed. Every byte outside the markers stays as it was (CRLF and a missing final newline included); rerunning `init` changes nothing; markers inside a code fence are treated as an example and left alone; duplicate or unpaired markers are refused with exit 3. Claude Code asks once to approve the external import, and `init` says so. Commit `CLAUDE.md` so task worktrees load the block.
 
   ```
   <!-- shoal:begin -->

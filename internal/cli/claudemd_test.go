@@ -101,3 +101,50 @@ func TestContextImport(t *testing.T) {
 		t.Errorf("outside home: %q", got)
 	}
 }
+
+// Markers inside a code fence are an example, not the block: the fence
+// stays byte for byte and the real block goes outside it (§5.1).
+func TestWithManagedBlockIgnoresFences(t *testing.T) {
+	block := blockBegin + "\n" + testImport + "\n" + blockEnd
+	for name, in := range map[string]string{
+		"backticks":       "# Docs\n```\n" + blockBegin + "\n@example\n" + blockEnd + "\n```\n",
+		"tildes":          "# Docs\n~~~md\n" + blockBegin + "\n@example\n" + blockEnd + "\n~~~\n",
+		"begin only":      "```\n" + blockBegin + "\n```\n",
+		"indented fence":  "  ```text\n" + blockEnd + "\n  ```\n",
+		"two fenced ones": "```\n" + blockBegin + "\n" + blockEnd + "\n```\n```\n" + blockBegin + "\n" + blockEnd + "\n```\n",
+	} {
+		got, changed, err := withManagedBlock("CLAUDE.md", []byte(in), testImport)
+		if err != nil || !changed || string(got) != in+block+"\n" {
+			t.Errorf("%s: %q %v %v", name, got, changed, err)
+			continue
+		}
+		again, changed, err := withManagedBlock("CLAUDE.md", got, testImport)
+		if err != nil || changed || !bytes.Equal(again, got) {
+			t.Errorf("%s: second run changed the file: %q %v %v", name, again, changed, err)
+		}
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(in), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if importsContext(dir) {
+			t.Errorf("%s: a fenced example counts as the block", name)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), got, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if !importsContext(dir) {
+			t.Errorf("%s: the real block after a fence is not found", name)
+		}
+	}
+	// A real block is found and repaired next to a fenced example.
+	in := "```\n" + blockBegin + "\n@example\n" + blockEnd + "\n```\n" + blockBegin + "\n@old\n" + blockEnd + "\n"
+	got, changed, err := withManagedBlock("CLAUDE.md", []byte(in), testImport)
+	if want := "```\n" + blockBegin + "\n@example\n" + blockEnd + "\n```\n" + block + "\n"; err != nil || !changed || string(got) != want {
+		t.Errorf("repair next to a fence: %q %v %v", got, changed, err)
+	}
+	// A file that ends inside an open fence would swallow an appended block.
+	_, _, err = withManagedBlock("CLAUDE.md", []byte("a\n```go\ncode\n"), testImport)
+	if err == nil || codeOf(err) != ExitConfig || !strings.Contains(err.Error(), "line 2") {
+		t.Errorf("unclosed fence: %v", err)
+	}
+}

@@ -60,17 +60,39 @@ func readProjectRules(root string) ([]projectRule, error) {
 // listMarker is a line's markdown prefix: heading, quote, bullet or number.
 var listMarker = regexp.MustCompile(`^(?:[#>*+\-\s]+|\d+[.)]\s+)+`)
 
+// fences tracks markdown code fences line by line: a trimmed line starting
+// with ``` or ~~~ opens or closes one. Text inside is an example, never a
+// rule, a marker or an import.
+type fences struct {
+	open int // line number of the open fence; 0 when outside
+}
+
+// skip reports whether the trimmed line l (line number n) is a fence line
+// or inside a fence.
+func (f *fences) skip(l string, n int) bool {
+	if strings.HasPrefix(l, "```") || strings.HasPrefix(l, "~~~") {
+		if f.open == 0 {
+			f.open = n
+		} else {
+			f.open = 0
+		}
+		return true
+	}
+	return f.open != 0
+}
+
 func ruleLines(name string, data []byte) []projectRule {
 	var out []projectRule
 	sc := bufio.NewScanner(bytes.NewReader(data))
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	fence, managed := false, false
+	var fence fences
+	managed := false
 	for n := 1; sc.Scan(); n++ {
 		l := strings.TrimSpace(sc.Text())
-		switch {
-		case strings.HasPrefix(l, "```") || strings.HasPrefix(l, "~~~"):
-			fence = !fence
+		if fence.skip(l, n) {
 			continue
+		}
+		switch {
 		case l == blockBegin:
 			managed = true
 			continue
@@ -79,7 +101,7 @@ func ruleLines(name string, data []byte) []projectRule {
 			continue
 		}
 		l = listMarker.ReplaceAllString(l, "")
-		if fence || managed || l == "" {
+		if managed || l == "" {
 			continue
 		}
 		out = append(out, projectRule{where: fmt.Sprintf("%s:%d", name, n), text: l})
