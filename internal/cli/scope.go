@@ -338,6 +338,10 @@ func (env Env) scopeShow(ctx context.Context, args []string) error {
 // requireHuman refuses unless a person is at a terminal: agents can't waive
 // rows, record manual checks (§8.6) or accept regressions (§8.5).
 func (env Env) requireHuman(what string) error {
+	if k := claudeCodeSession(); k != "" {
+		return fail(ExitState, "%s refused: this process runs inside a Claude Code session (%s is set), and only the human decides. "+
+			"Run it yourself in your own terminal, outside Claude Code", what, k)
+	}
 	if !env.interactive() {
 		return fail(ExitState, "%s needs a human at a terminal; agents can't waive scope rows, record manual checks, accept regressions, agree or retire conventions or promote lessons", what)
 	}

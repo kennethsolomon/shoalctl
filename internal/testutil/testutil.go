@@ -34,7 +34,7 @@ func Isolate(t *testing.T) string {
 	t.Setenv("GIT_AUTHOR_EMAIL", isolatedEmail)
 	t.Setenv("GIT_COMMITTER_NAME", "shoal test")
 	t.Setenv("GIT_COMMITTER_EMAIL", isolatedEmail)
-	for _, k := range []string{"SHOAL_HOME", "TMUX", "TMUX_PANE", "CLAUDE_PROJECT_DIR", "CLAUDE_CONFIG_DIR"} {
+	for _, k := range []string{"SHOAL_HOME", "TMUX", "TMUX_PANE", "CLAUDE_PROJECT_DIR", "CLAUDE_CONFIG_DIR", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"} {
 		t.Setenv(k, "")
 	}
 	return home

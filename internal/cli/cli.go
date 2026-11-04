@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mattn/go-isatty"
+
 	"github.com/kennethsolomon/shoalctl/internal/gitx"
 	"github.com/kennethsolomon/shoalctl/internal/lockfile"
 	"github.com/kennethsolomon/shoalctl/internal/store"
@@ -48,25 +50,47 @@ type Env struct {
 	Claude   string   // claude binary name or path
 	Tmux     string   // tmux binary name or path
 	TmuxArgs []string // global tmux args, e.g. -L <socket>
-	// Terminal reports whether a human is at the keyboard; nil means stdin
-	// is a character device. Waivers and manual checks need one (§8.6).
+	// Terminal reports whether a human is at the keyboard; nil means the
+	// real check: stdin and stdout are both terminals. Waivers and manual
+	// checks need one (§8.6).
 	Terminal func() bool
 	// SpawnWatcher starts the attention watcher of a started task; nil runs
 	// `<Exe> watch <task>` detached.
 	SpawnWatcher func(p *project, t store.Task) error
 }
 
-// interactive reports whether stdin is a terminal a human types into.
+// claudeCodeEnv are the variables Claude Code sets in the shells it runs
+// for an agent (its Bash tool): a process that sees one is an agent's.
+var claudeCodeEnv = []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"}
+
+// claudeCodeSession returns the Claude Code variable set in this process's
+// environment, or "".
+func claudeCodeSession() string {
+	for _, k := range claudeCodeEnv {
+		if os.Getenv(k) != "" {
+			return k
+		}
+	}
+	return ""
+}
+
+// interactive reports whether a human is at a terminal: not inside a Claude
+// Code session, and stdin and stdout are terminals (a character device such
+// as /dev/null is not one). A pty wrapper such as script(1) still passes;
+// see §16 row 69.
 func (env Env) interactive() bool {
+	if claudeCodeSession() != "" {
+		return false
+	}
 	if env.Terminal != nil {
 		return env.Terminal()
 	}
-	f, ok := env.Stdin.(*os.File)
-	if !ok {
-		return false
-	}
-	fi, err := f.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+	return isTerminal(env.Stdin) && isTerminal(env.Stdout)
+}
+
+func isTerminal(v any) bool {
+	f, ok := v.(*os.File)
+	return ok && (isatty.IsTerminal(f.Fd()) || isatty.IsCygwinTerminal(f.Fd()))
 }
 
 // DefaultEnv is the environment of a real invocation.
