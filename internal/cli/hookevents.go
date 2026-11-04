@@ -96,6 +96,13 @@ func (env Env) hookSessionStart(ctx context.Context, hc hookCtx) (string, error)
 	if err != nil || !first {
 		return "", err
 	}
+	// A compaction or /clear dropped the injected records from the agent's
+	// context: let the hooks inject them again.
+	if source == "compact" || source == "clear" {
+		if err := p.db.ResetInjected(ctx, hc.in.SessionID); err != nil {
+			return "", err
+		}
+	}
 	t, err := hookTask(ctx, p, hc)
 	if err != nil {
 		return "", err

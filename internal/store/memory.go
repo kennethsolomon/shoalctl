@@ -432,9 +432,10 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]SearchHi
 func LessonKey(id int64) string { return KindLesson + ":" + strconv.FormatInt(id, 10) }
 
 // Mark records keys as done in a session and returns the ones that were
-// new. A new lesson key counts one hit for that lesson (§11.4). A key
-// already marked, by this process or by a second registration of the same
-// hook, is not returned, so whatever it stands for happens once.
+// new. A new lesson key counts one hit for that lesson (§11.4), unless the
+// session already counted it before a ResetInjected. A key already marked,
+// by this process or by a second registration of the same hook, is not
+// returned, so whatever it stands for happens once.
 func (s *Store) Mark(ctx context.Context, session string, taskID int64, keys []string) (map[string]bool, error) {
 	added := map[string]bool{}
 	err := s.write(ctx, func(tx *sql.Tx) error {
@@ -459,13 +460,40 @@ func markTx(ctx context.Context, tx *sql.Tx, session string, taskID int64, keys 
 			continue
 		}
 		added[k] = true
-		if num, ok := strings.CutPrefix(k, KindLesson+":"); ok {
+		var counted int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM hook_marks WHERE session_id = ? AND key = ?`, session, shownPrefix+k).Scan(&counted); err != nil {
+			return fmt.Errorf("read the earlier mark of %s in session %q: %w", k, session, err)
+		}
+		if num, ok := strings.CutPrefix(k, KindLesson+":"); ok && counted == 0 {
 			if _, err := tx.ExecContext(ctx, `UPDATE lessons SET hits = hits + 1, last_hit_at = ? WHERE id = ?`, ts, num); err != nil {
 				return fmt.Errorf("count a hit for lesson %s: %w", num, err)
 			}
 		}
 	}
 	return nil
+}
+
+// shownPrefix marks a record injected in a session before its context was
+// compacted or cleared: no longer in the agent's context, but its hit was
+// counted.
+const shownPrefix = "shown:"
+
+// injectedKeys matches the hook marks of injected records.
+const injectedKeys = `(key LIKE 'lesson:%' OR key LIKE 'decision:%' OR key LIKE 'bug:%')`
+
+// ResetInjected forgets which records the session was given, after a
+// compaction or /clear dropped them from its context, so the hooks inject
+// them again. Their hits stay counted: each mark becomes a shown: mark.
+func (s *Store) ResetInjected(ctx context.Context, session string) error {
+	return s.write(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE OR IGNORE hook_marks SET key = ? || key WHERE session_id = ? AND `+injectedKeys, shownPrefix, session); err != nil {
+			return fmt.Errorf("reset the injection marks of session %q: %w", session, err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM hook_marks WHERE session_id = ? AND `+injectedKeys, session); err != nil {
+			return fmt.Errorf("reset the injection marks of session %q: %w", session, err)
+		}
+		return nil
+	})
 }
 
 // FireOnce reports whether this is the first firing of key in the session

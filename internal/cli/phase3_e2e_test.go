@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -194,6 +195,76 @@ func TestPhase3LessonInjectedOncePerSession(t *testing.T) {
 	}
 	mustContain(t, "recall", h.mustRun("recall", "accessor"), "lesson:1", "[stale: the list now uses displayName]")
 	mustContain(t, "why", h.mustRun("why", "resources/js/users/list.js"), "lesson:1", "History (git log)")
+}
+
+// A compaction drops injected records from the agent's context, so
+// SessionStart with source compact (or clear) resets the session's
+// injection marks: the next touch injects the lesson again, without counting
+// a second hit. Two registrations of that SessionStart still reset once.
+func TestPhase3CompactionReinjectsLessons(t *testing.T) {
+	testutil.RequireSh(t)
+	h := newHarness(t).withSession()
+	h.initWith(junitConfig)
+	a := startedTask(t, h, "bugfix", "Users page wrong name")
+	h.mustRun("record", "lesson", a.Slug, "--pattern", "accessor drift", "--fix", "one accessor", "--glob", "src/**")
+	b := startedTask(t, h, "feature", "Users sort")
+	file := filepath.Join(b.Worktree, "src", "a.go")
+	touch := func() string {
+		t.Helper()
+		return inHook(t, h, b.Worktree, "pre-tool-use", toolCall("sc", "Read", file, "")).HookSpecificOutput.AdditionalContext
+	}
+	hits := func() int {
+		t.Helper()
+		return countRows(t, h.project(), `SELECT hits FROM lessons WHERE id = 1`)
+	}
+
+	inHook(t, h, b.Worktree, "session-start", `{"session_id": "sc", "source": "startup"}`)
+	mustContain(t, "first touch", touch(), "- lesson:1 ")
+	if again := touch(); again != "" || hits() != 1 {
+		t.Fatalf("before the compaction: injected again %q, %d hits", again, hits())
+	}
+
+	t.Setenv("CLAUDE_PROJECT_DIR", b.Worktree)
+	var outs []string
+	var cmds []*exec.Cmd
+	var bufs []*bytes.Buffer
+	for i := 0; i < 2; i++ {
+		cmd := h.command("hook", "session-start")
+		cmd.Stdin = strings.NewReader(`{"session_id": "sc", "source": "compact"}`)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		cmds, bufs = append(cmds, cmd), append(bufs, &out)
+	}
+	for i, cmd := range cmds {
+		if err := cmd.Wait(); err != nil {
+			t.Fatalf("session-start compact: %v", err)
+		}
+		outs = append(outs, bufs[i].String())
+	}
+	sort.Strings(outs)
+	if outs[0] != "" || outs[1] == "" {
+		t.Fatalf("compact SessionStart fired twice: %q", outs)
+	}
+	if log := hookLog(t, h.project()); log != "" {
+		t.Fatalf("hook failures:\n%s", log)
+	}
+
+	mustContain(t, "after the compaction", touch(), "- lesson:1 ")
+	if again := touch(); again != "" {
+		t.Fatalf("injected twice after one compaction: %q", again)
+	}
+	if n := hits(); n != 1 {
+		t.Fatalf("the re-injection after a compaction counted a hit: %d hits", n)
+	}
+
+	inHook(t, h, b.Worktree, "session-start", `{"session_id": "sc", "source": "clear"}`)
+	mustContain(t, "after a clear", touch(), "- lesson:1 ")
+	if n := hits(); n != 1 {
+		t.Fatalf("the re-injection after a clear counted a hit: %d hits", n)
+	}
 }
 
 // Done when 3: a write outside an agent's claims prints a one-line warning

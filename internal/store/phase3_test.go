@@ -182,6 +182,33 @@ func TestMarkCountsLessonHitsOncePerSession(t *testing.T) {
 	}
 }
 
+func TestResetInjectedReinjectsWithoutAnotherHit(t *testing.T) {
+	s, _ := openTest(t)
+	ctx := context.Background()
+	task := memoryTask(t, s, "T")
+	lid, err := s.AddLesson(ctx, Lesson{TaskID: task.ID, Pattern: "p", Fix: "f", PathGlob: "a/**", TrueAtSHA: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := []string{LessonKey(lid), "decision:1", "outside:shoal-backend:a/b.go"}
+	if _, err := s.Mark(ctx, "s1", task.ID, keys); err != nil {
+		t.Fatal(err)
+	}
+	for round := 0; round < 2; round++ { // a second compaction resets again
+		if err := s.ResetInjected(ctx, "s1"); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Mark(ctx, "s1", task.ID, keys)
+		if err != nil || len(got) != 2 || !got[LessonKey(lid)] || !got["decision:1"] {
+			t.Fatalf("round %d: after the reset only the records mark again (warnings stay once): %v %v", round, got, err)
+		}
+	}
+	ls, _ := s.Lessons(ctx)
+	if ls[0].Hits != 1 {
+		t.Fatalf("re-injection after a reset counted a hit: %d hits", ls[0].Hits)
+	}
+}
+
 func TestFireOnceWindow(t *testing.T) {
 	s, _ := openTest(t)
 	ctx := context.Background()
