@@ -47,6 +47,13 @@ func runHook(args []string, env Env) int {
 	case <-time.After(time.Until(deadline.Add(-logBudget))):
 		res = hookResult{err: fmt.Errorf("deadline of %s exceeded", hookDeadline-logBudget), unresolved: true}
 	}
+	if res.err == nil && res.out != "" && env.Stdout != nil {
+		// Nothing else is ever written to stdout: Claude Code reads it as the
+		// hook's JSON answer, and only a handler that succeeded answers.
+		if _, werr := io.WriteString(env.Stdout, res.out); werr != nil {
+			res.err = fmt.Errorf("write hook output: %w", werr)
+		}
+	}
 	if res.err == nil {
 		return ExitOK
 	}
@@ -83,13 +90,34 @@ func resolveFailure(err error) hookResult {
 type hookInput struct {
 	SessionID string `json:"session_id"`
 	Cwd       string `json:"cwd"`
+	Source    string `json:"source"`     // SessionStart: startup, resume, clear or compact
+	ToolName  string `json:"tool_name"`  // PreToolUse, PostToolUse
+	AgentType string `json:"agent_type"` // set when a subagent (or --agent) runs the tool
+	ToolInput struct {
+		FilePath     string `json:"file_path"`
+		NotebookPath string `json:"notebook_path"`
+	} `json:"tool_input"`
 }
 
 type hookResult struct {
 	err        error
+	out        string // JSON for Claude Code, written to stdout only on success
 	dir        string
 	shoal      bool // the session runs in a shoal worktree, so failures are worth logging
 	unresolved bool // dir and shoal are not known yet
+}
+
+// hookArgs are the events shoal registers, by their hook argument.
+var hookArgs = []string{"session-start", "stop", "pre-tool-use", "post-tool-use"}
+
+// hookCtx is what every handler gets once the guard passed.
+type hookCtx struct {
+	in      hookInput
+	event   string
+	wt      string // the task worktree, symlinks resolved
+	tf      taskFile
+	projDir string
+	home    string
 }
 
 func (env Env) hook(args []string, deadline time.Time) hookResult {
@@ -120,7 +148,7 @@ func (env Env) hook(args []string, deadline time.Time) hookResult {
 		res.err = fmt.Errorf("read hook input: %w", jsonErr)
 		return res
 	}
-	if len(args) != 1 || (args[0] != "session-start" && args[0] != "stop") {
+	if len(args) != 1 || !contains(hookArgs, args[0]) {
 		res.err = fmt.Errorf("unknown hook event %q", strings.Join(args, " "))
 		return res
 	}
@@ -135,18 +163,33 @@ func (env Env) hook(args []string, deadline time.Time) hookResult {
 		res.err = fmt.Errorf("task.json project_id %q does not match project dir %s", tf.ProjectID, projDir)
 		return res
 	}
-	db, err := store.Open(ctx, filepath.Join(projDir, "memory.db"), store.Options{BusyTimeout: time.Second})
+	hc := hookCtx{in: in, event: args[0], wt: wt, tf: tf, projDir: projDir, home: home}
+	switch hc.event {
+	case "session-start":
+		res.out, res.err = env.hookSessionStart(ctx, hc)
+	case "stop":
+		res.err = hc.heartbeat(ctx, "")
+	case "pre-tool-use":
+		res.out, res.err = env.hookPreToolUse(ctx, hc)
+	case "post-tool-use":
+		res.out, res.err = env.hookPostToolUse(ctx, hc)
+	}
+	return res
+}
+
+// openDB opens memory.db for a hook: a 1-second busy_timeout, no retries,
+// and never a migration (§10.1).
+func (hc hookCtx) openDB(ctx context.Context) (*store.Store, error) {
+	return store.Open(ctx, filepath.Join(hc.projDir, "memory.db"), store.Options{BusyTimeout: time.Second})
+}
+
+func (hc hookCtx) heartbeat(ctx context.Context, sessionID string) error {
+	db, err := hc.openDB(ctx)
 	if err != nil {
-		res.err = err
-		return res
+		return err
 	}
 	defer db.Close()
-	sessionID := ""
-	if args[0] == "session-start" {
-		sessionID = in.SessionID
-	}
-	res.err = db.Heartbeat(ctx, tf.TaskID, tf.Slug, sessionID)
-	return res
+	return db.Heartbeat(ctx, hc.tf.TaskID, hc.tf.Slug, sessionID)
 }
 
 // shoalWorktree reports whether dir is a task worktree: directly under

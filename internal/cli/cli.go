@@ -150,6 +150,7 @@ commands:
   release <task> --as <agent> [<glob>...]
   msg send <task> --from <agent> --to <agent|*> --kind <kind> [--subject "<s>"] [--reply-to <id>] "<body>"
   msg inbox <task> --as <agent> [--all]
+  brief [<task>]                           the session-start brief (default: this worktree's task)
   record lesson <task> --pattern "<what went wrong>" --fix "<what fixed it>" [--glob <glob>]
   record decision <task> --topic "<t>" --choice "<c>" --why "<rationale>" [--file <path>]...
   record qa <task> --question "<q>" --answer "<a>" [--file <path>]...
@@ -219,6 +220,8 @@ func Main(args []string, env Env, version string) int {
 		err = env.cmdClaim(ctx, args[1:])
 	case "release":
 		err = env.cmdRelease(ctx, args[1:])
+	case "brief":
+		err = env.cmdBrief(ctx, args[1:])
 	case "record":
 		err = env.cmdRecord(ctx, args[1:])
 	case "flag-stale":

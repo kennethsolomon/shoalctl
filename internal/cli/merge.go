@@ -92,7 +92,41 @@ func (env Env) cmdMerge(ctx context.Context, args []string) error {
 		tasks = []store.Task{t}
 	}
 	merged := 0
+	var behind []store.Task
 	for _, t := range tasks {
+		waits, err := env.mergesAfter(ctx, p, t)
+		if err != nil {
+			return err
+		}
+		if len(waits) > 0 {
+			if *only == "" {
+				fmt.Fprintf(env.Stdout, "%s: waits for %s to merge first (late overlap: it wrote files they claim)\n", t.Slug, strings.Join(waits, ", "))
+				behind = append(behind, t)
+				continue
+			}
+			fmt.Fprintf(env.Stdout, "%s: merging ahead of %s, as --task asked (late overlap)\n", t.Slug, strings.Join(waits, ", "))
+		}
+		ok, err := env.mergeOne(ctx, p, t, acc)
+		if err != nil {
+			return err
+		}
+		if ok {
+			merged++
+		}
+	}
+	// A task that waited for others merges now if they all merged above.
+	for _, t := range behind {
+		if waits, err := env.mergesAfter(ctx, p, t); err != nil {
+			return err
+		} else if len(waits) > 0 {
+			continue
+		}
+		if t, err = p.db.GetTask(ctx, t.Slug); err != nil {
+			return err
+		}
+		if t.Stage != store.StageDone {
+			continue
+		}
 		ok, err := env.mergeOne(ctx, p, t, acc)
 		if err != nil {
 			return err
@@ -115,6 +149,24 @@ func (env Env) cmdMerge(ctx context.Context, args []string) error {
 		return fail(ExitState, "task(s) left at merging by an earlier merge that could not be settled safely: %s", strings.Join(stuck, ", "))
 	}
 	return nil
+}
+
+// mergesAfter lists the tasks t must merge after: the open blockers left
+// by late overlaps (a started task wrote a path they claim, §9.2).
+func (env Env) mergesAfter(ctx context.Context, p *project, t store.Task) ([]string, error) {
+	ids, err := p.db.Blockers(ctx, t.ID)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, id := range ids {
+		b, err := p.db.GetTask(ctx, fmt.Sprint(id))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, b.Slug)
+	}
+	return out, nil
 }
 
 // settleMerging recovers tasks an interrupted merge left at merging (§10.4):

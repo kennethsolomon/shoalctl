@@ -217,8 +217,9 @@ func claims(ctx context.Context, q interface {
 }
 
 // AddClaims gives agent the expected claims globs inside one task. overlaps
-// decides whether two globs can cover the same path; a glob that overlaps a
-// claim of another agent refuses the whole call with ErrClaimConflict. A glob
+// decides whether two globs can cover the same path; a glob that overlaps an
+// expected claim of another agent refuses the whole call with
+// ErrClaimConflict (actual claims, recorded from writes, only inform). A glob
 // the agent already holds is kept as is.
 func (s *Store) AddClaims(ctx context.Context, taskID int64, agent string, globs []string, overlaps func(a, b string) bool) (int, error) {
 	added := 0
@@ -235,7 +236,7 @@ func (s *Store) AddClaims(ctx context.Context, taskID int64, agent string, globs
 				switch {
 				case c.Agent == agent && c.Glob == g:
 					held = true
-				case c.Agent != agent && c.Agent != PlanAgent && overlaps(c.Glob, g):
+				case c.Agent != agent && c.Agent != PlanAgent && c.Kind == "expected" && overlaps(c.Glob, g):
 					return fmt.Errorf("%w: %s overlaps %s, held by %s", ErrClaimConflict, g, c.Glob, c.Agent)
 				}
 			}

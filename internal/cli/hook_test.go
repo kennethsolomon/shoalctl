@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -51,7 +52,9 @@ func TestHookHeartbeat(t *testing.T) {
 	t.Setenv("CLAUDE_PROJECT_DIR", wt)
 
 	code, out, errOut := h.hook(strings.NewReader(`{"session_id": "sess-42", "cwd": "/elsewhere", "hook_event_name": "SessionStart"}`), "session-start")
-	if code != 0 || out != "" || errOut != "" {
+	var answer hookOutput
+	if code != 0 || errOut != "" || json.Unmarshal([]byte(out), &answer) != nil || answer.HookSpecificOutput.HookEventName != "SessionStart" ||
+		!strings.Contains(answer.HookSpecificOutput.AdditionalContext, "shoal task 1-hooked") {
 		t.Fatalf("session-start: code %d stdout %q stderr %q", code, out, errOut)
 	}
 	got := h.task("1")
@@ -126,7 +129,7 @@ func TestHookFailsOpen(t *testing.T) {
 			testutil.WriteFile(t, p.dbPath(), strings.Repeat("garbage!", 512))
 		}, `{}`, "stop", "stop"},
 		{"bad hook input", func(*testing.T, *project) {}, `{"session_id": `, "session-start", "read hook input"},
-		{"unknown event", func(*testing.T, *project) {}, `{}`, "pre-tool-use", "unknown hook event"},
+		{"unknown event", func(*testing.T, *project) {}, `{}`, "subagent-stop", "unknown hook event"},
 		{"task row missing", func(t *testing.T, p *project) {
 			if err := writeTaskFile(p.worktree("1-hooked"), taskFile{ProjectID: p.id, TaskID: 77, Slug: "1-hooked"}); err != nil {
 				t.Fatal(err)

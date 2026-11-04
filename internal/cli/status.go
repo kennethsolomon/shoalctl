@@ -34,6 +34,8 @@ type statusRow struct {
 	BlockedBy string `json:"blocked_by"`
 	Queue     string `json:"queue"` // "<target> #<n>" while waiting to merge
 	Claims    int    `json:"claims"`
+	// Phase 3: a started task that merges after another (late overlap, §9.2).
+	MergesAfter string `json:"merges_after"`
 }
 
 // note is the NOTE column: everything in a row a human may need to act on.
@@ -44,6 +46,9 @@ func (r statusRow) note() string {
 	}
 	if r.BlockedBy != "" {
 		parts = append(parts, "blocked by "+r.BlockedBy)
+	}
+	if r.MergesAfter != "" {
+		parts = append(parts, "merges after "+r.MergesAfter)
 	}
 	if r.Queue != "" {
 		parts = append(parts, "queued "+r.Queue)
@@ -105,10 +110,15 @@ func (env Env) cmdStatus(ctx context.Context, args []string) error {
 			row.Baseline = baselineLabel(run)
 		}
 		row.Attention, row.Queue = t.Attention, place[t.ID]
-		if t.BlockedBy != 0 && t.Stage == store.StageBlocked {
-			row.BlockedBy = slugs[t.BlockedBy]
-			if row.BlockedBy == "" {
-				row.BlockedBy = fmt.Sprint(t.BlockedBy)
+		if t.BlockedBy != 0 {
+			who := slugs[t.BlockedBy]
+			if who == "" {
+				who = fmt.Sprint(t.BlockedBy)
+			}
+			if t.Stage == store.StageBlocked {
+				row.BlockedBy = who
+			} else if t.Stage != store.StageMerged && t.Stage != store.StageFolded {
+				row.MergesAfter = who
 			}
 		}
 		if t.Stage != store.StageMerged && t.Stage != store.StageFolded {

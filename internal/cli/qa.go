@@ -134,7 +134,9 @@ func (env Env) cmdQA(ctx context.Context, args []string) error {
 			return nil
 		}
 		_, err := store.InsertMessage(ctx, tx, store.Message{TaskID: t.ID, From: "shoal-qa-regression", To: leadAgent, Kind: "qa-failure",
-			Subject: fmt.Sprintf("QA round %d of %d failed", round, maxRounds), Body: truncateRunes(strings.Join(failures, "\n"), 4000)})
+			Subject: fmt.Sprintf("QA round %d of %d failed", round, maxRounds),
+			Body: truncateRunes(strings.Join(failures, "\n")+"\n\nOnce the cause is known: shoalctl record lesson "+t.Slug+
+				" --pattern \"<what went wrong>\" --fix \"<what fixed it>\" --glob <files>", 4000)})
 		return err
 	})
 	if err != nil {
@@ -147,7 +149,9 @@ func (env Env) cmdQA(ctx context.Context, args []string) error {
 	if stage == store.StageEscalated {
 		return env.escalate(ctx, p, t, failures)
 	}
-	return fail(ExitGate, "qa round %d of %d failed (sent to shoal-lead as a qa-failure message):\n  %s", round, maxRounds, strings.Join(failures, "\n  "))
+	return fail(ExitGate, "qa round %d of %d failed (sent to shoal-lead as a qa-failure message):\n  %s\n"+
+		"Once the cause is known, record the lesson: shoalctl record lesson %s --pattern \"<what went wrong>\" --fix \"<what fixed it>\" --glob <files>",
+		round, maxRounds, strings.Join(failures, "\n  "), t.Slug)
 }
 
 // rebaseForQA rebases a needs-rebase task onto its target's tip and moves

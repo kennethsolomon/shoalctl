@@ -140,7 +140,11 @@ func (env Env) cmdStart(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := writePrivate(filepath.Join(wt, ".shoal", "brief.md"), []byte(renderBrief(t, p.cfg, base, results, items, fileExists(filepath.Join(wt, ".shoal", "todo.md"))))); err != nil {
+	lessons, err := startLessons(ctx, p, t, wt)
+	if err != nil {
+		return err
+	}
+	if err := writePrivate(filepath.Join(wt, ".shoal", "brief.md"), []byte(renderBrief(t, p.cfg, base, results, items, fileExists(filepath.Join(wt, ".shoal", "todo.md")), lessons))); err != nil {
 		return err
 	}
 
@@ -654,6 +658,9 @@ func renderTeam(b *strings.Builder, t store.Task, cfg config.Config, items []sto
 		fmt.Fprintf(b, "- proof: shoalctl repro red %[1]s --test <id> --file <path> before the fix, shoalctl repro green %[1]s --test <id> after\n", t.Slug)
 	}
 	fmt.Fprintf(b, "- QA: shoalctl test %[1]s --kind qa; a human runs shoalctl qa %[1]s (at most %[2]d rounds, then the task escalates)\n", t.Slug, cfg.Lanes.QAMaxRounds)
+	fmt.Fprintf(b, `- memory: after a failed QA round, shoalctl record lesson %[1]s --pattern "<what went wrong>" --fix "<what fixed it>" --glob <files>;
+  shoalctl record decision|qa %[1]s for choices and answers; shoalctl why <file> and shoalctl recall <words> read what earlier tasks recorded
+`, t.Slug)
 	if t.Lane == "hotfix" {
 		fmt.Fprintf(b, "- minimal diff: at most %d added + removed lines outside test files\n", cfg.Hotfix.MaxDiffLines)
 	}
@@ -670,7 +677,29 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-func renderBrief(t store.Task, cfg config.Config, base store.Run, results []store.Result, items []store.ScopeItem, hasTodo bool) string {
+// startLessons renders the lessons the task brief carries: those whose
+// glob meets one of the task's claims, or stack-wide ones (§14 step 5).
+func startLessons(ctx context.Context, p *project, t store.Task, wt string) ([]string, error) {
+	all, err := memos(ctx, p.db)
+	if err != nil {
+		return nil, err
+	}
+	claims, err := p.db.Claims(ctx, t.ID)
+	if err != nil {
+		return nil, err
+	}
+	slugs, err := taskSlugs(ctx, p.db)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, m := range taskLessons(all, claims, p.cfg.Stack.Name) {
+		out = append(out, m.line(ctx, wt, slugs))
+	}
+	return out, nil
+}
+
+func renderBrief(t store.Task, cfg config.Config, base store.Run, results []store.Result, items []store.ScopeItem, hasTodo bool, lessons []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Task %s: %s\nLane: %s · Branch: %s · Base: %s @ %s\n\n## Ask\n%s\n\n",
 		t.Slug, t.Title, t.Lane, t.Branch, t.BaseRef, shortSHA(t.BaseSHA), t.Ask)
@@ -700,6 +729,13 @@ func renderBrief(t store.Task, cfg config.Config, base store.Run, results []stor
 	if hasTodo {
 		b.WriteString("## Plan\nYour todo.md is .shoal/todo.md (from shoalctl plan). Keep it current.\n\n")
 	}
+	if len(lessons) > 0 {
+		b.WriteString("## Lessons from earlier tasks\nThey match the files this task claims. " + verifyNote + "\n")
+		for _, l := range lessons {
+			b.WriteString(l + "\n")
+		}
+		b.WriteString("\n")
+	}
 	fmt.Fprintf(&b, "## Rules for this lane\n- %s\n- Do not break any test listed as passing at baseline.\n", laneRules[t.Lane])
 	if cfg.Tests.Format != "none" {
 		fmt.Fprintf(&b, "- Test command: `%s`\n", cfg.Tests.Command)
@@ -716,5 +752,9 @@ summary.json:
  "why": "...", "risks": ["..."], "followups": ["..."],
  "changed": [{"path": "...", "note": "one line"}]}
 `)
+	if t.Lane != "feature" {
+		b.WriteString(`Add "root_cause": "..." (one or two lines): it becomes the bug record that shoalctl why bug:<id> shows if the bug comes back.
+`)
+	}
 	return b.String()
 }
