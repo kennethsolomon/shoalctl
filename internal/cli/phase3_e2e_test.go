@@ -495,6 +495,16 @@ func TestPhase3HookLatency(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		h.mustRun("record", "lesson", a.Slug, "--pattern", fmt.Sprintf("pattern %d", i), "--fix", "fix", "--glob", fmt.Sprintf("src/m%d/**", i))
 	}
+	// Phase 4: 20 active conventions and 5 proposed ones, so SessionStart
+	// renders the brainstorm and the rules and PreToolUse matches conventions.
+	for i := 0; i < 25; i++ {
+		h.mustRun("convention", "propose", "--rule", fmt.Sprintf("module %d keeps one public entry point", i), "--scope", fmt.Sprintf("src/m%d/**", i))
+	}
+	h.env.Terminal = func() bool { return true }
+	for i := 1; i <= 20; i++ {
+		h.mustRun("convention", "agree", fmt.Sprint(i))
+	}
+	h.env.Terminal = nil
 	task := startedTask(t, h, "feature", "Timed")
 	t.Setenv("CLAUDE_PROJECT_DIR", task.Worktree)
 	const runs = 15
