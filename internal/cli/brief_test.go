@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/kennethsolomon/shoalctl/internal/store"
 )
 
 func TestApproxTokensCountsCJKAndBlobs(t *testing.T) {
@@ -34,7 +36,7 @@ func TestApproxTokensCountsCJKAndBlobs(t *testing.T) {
 // Worst case for the estimator: 6 matching lessons of 600 CJK characters
 // each (the newest), 2 older ones of 960 hex characters, and hex blobs in the
 // title and the ask. The brief stays under 1k by the estimator and by
-// bytes/3.
+// bytes/3, and shows the newest lessons: CJK ones.
 func TestPhase3BriefUnderBudgetCJKAndBlobs(t *testing.T) {
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
@@ -59,5 +61,26 @@ func TestPhase3BriefUnderBudgetCJKAndBlobs(t *testing.T) {
 	if tokens >= 1000 || byBytes >= 1000 {
 		t.Fatalf("brief is %d estimated tokens, bytes/3 %d, want both < 1000:\n%s", tokens, byBytes, brief)
 	}
-	mustContain(t, "brief", brief, "shoal task "+slug, "Lessons from earlier tasks")
+	mustContain(t, "brief", brief, "shoal task "+slug, "Lessons from earlier tasks", "- lesson:8 ", "一覧画面")
+}
+
+// The brief shows the newest matching lessons, newest first, ties by id.
+func TestTaskLessonsNewestFirst(t *testing.T) {
+	var all []memo
+	for i := 1; i <= 7; i++ {
+		created := fmt.Sprintf("2026-11-0%dT00:00:00Z", i)
+		if i == 7 {
+			created = "2026-11-06T00:00:00Z" // same time as lesson 6: the higher id wins
+		}
+		all = append(all, memo{ref: store.LessonKey(int64(i)), kind: store.KindLesson, id: int64(i), glob: "src/**", inject: true, created: created})
+	}
+	all = append(all, memo{ref: "lesson:99", kind: store.KindLesson, id: 99, glob: "docs/**", inject: true, created: "2026-12-01T00:00:00Z"})
+	var got []string
+	for _, m := range taskLessons(all, []store.Claim{{Glob: "src/**"}}, "") {
+		got = append(got, m.ref)
+	}
+	want := []string{"lesson:7", "lesson:6", "lesson:5", "lesson:4", "lesson:3"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("taskLessons = %v, want %v", got, want)
+	}
 }

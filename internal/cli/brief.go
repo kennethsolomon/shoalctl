@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -9,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -158,8 +160,9 @@ func briefTodoLines(wt string, n int) ([]string, error) {
 	return out, nil
 }
 
-// taskLessons are the injectable lessons for a task: path_glob overlapping
-// one of the task's open claims, or a stack-wide lesson of its stack.
+// taskLessons are the newest briefLessons injectable lessons for a task
+// (newest first, ties by id): path_glob overlapping one of the task's open
+// claims, or a stack-wide lesson of its stack.
 func taskLessons(all []memo, claims []store.Claim, stack string) []memo {
 	var out []memo
 	for _, m := range all {
@@ -175,11 +178,11 @@ func taskLessons(all []memo, claims []store.Claim, stack string) []memo {
 		if hit {
 			out = append(out, m)
 		}
-		if len(out) == briefLessons {
-			break
-		}
 	}
-	return out
+	slices.SortFunc(out, func(a, b memo) int {
+		return cmp.Or(strings.Compare(b.created, a.created), cmp.Compare(b.id, a.id))
+	})
+	return out[:min(len(out), briefLessons)]
 }
 
 // sessionBrief gathers and renders the brief of t, and returns the keys of

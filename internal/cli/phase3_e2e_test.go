@@ -94,11 +94,11 @@ func TestPhase3BriefUnderBudget(t *testing.T) {
 	h.env.Terminal, h.env.Stdin = nil, nil
 	h.mustRun("start", slug)
 	task := h.task(slug)
+	h.mustRun("record", "lesson", other, "--pattern", "stack-wide lesson", "--fix", "x")
 	for i := 0; i < 12; i++ {
 		text := strings.Repeat(fmt.Sprintf("lesson %d: the list view reads another accessor; ", i), 20)[:500]
 		h.mustRun("record", "lesson", other, "--pattern", text, "--fix", text, "--glob", "resources/js/users/**")
 	}
-	h.mustRun("record", "lesson", other, "--pattern", "stack-wide lesson", "--fix", "x")
 	p := h.project()
 	sqlExec(t, p, `INSERT INTO task_blockers (task_id, blocker_id, created_at) VALUES (?, ?, 'x')`, task.ID, h.task(other).ID)
 	for i := 0; i < 3; i++ {
@@ -117,7 +117,7 @@ func TestPhase3BriefUnderBudget(t *testing.T) {
 	}
 	mustContain(t, "brief", brief, "shoal task "+slug, "Task brief: .shoal/brief.md", "merges after "+other,
 		"Unread messages for shoal-lead: 3", "todo.md (head):", "0. Users page", "Lessons from earlier tasks", "verify it against the current code",
-		"- lesson:1 (task "+other)
+		"- lesson:13 (task "+other)
 	if strings.Contains(brief, "59. Users page") {
 		t.Errorf("the brief shows the whole todo.md")
 	}
@@ -132,8 +132,8 @@ func TestPhase3BriefUnderBudget(t *testing.T) {
 		t.Fatal("no lesson hit counted for the brief")
 	}
 	pre := inHook(t, h, task.Worktree, "pre-tool-use", toolCall("s-brief", "Read", filepath.Join(task.Worktree, "resources/js/users/list.js"), ""))
-	if strings.Contains(pre.HookSpecificOutput.AdditionalContext, "- lesson:1 ") {
-		t.Errorf("lesson:1 injected twice in one session:\n%s", pre.HookSpecificOutput.AdditionalContext)
+	if strings.Contains(pre.HookSpecificOutput.AdditionalContext, "- lesson:13 ") {
+		t.Errorf("lesson:13 injected twice in one session:\n%s", pre.HookSpecificOutput.AdditionalContext)
 	}
 }
 
