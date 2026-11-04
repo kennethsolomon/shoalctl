@@ -14,6 +14,9 @@ import (
 	"testing"
 )
 
+// isolatedEmail is the git identity Isolate sets; Repo checks for it.
+const isolatedEmail = "test@example.invalid"
+
 // Isolate points HOME, USERPROFILE, the XDG dirs and git's global config at a
 // fresh temp dir, clears SHOAL_HOME, TMUX and CLAUDE_* variables, and returns
 // the fake home.
@@ -28,9 +31,9 @@ func Isolate(t *testing.T) string {
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, ".gitconfig"))
 	t.Setenv("GIT_AUTHOR_NAME", "shoal test")
-	t.Setenv("GIT_AUTHOR_EMAIL", "test@example.invalid")
+	t.Setenv("GIT_AUTHOR_EMAIL", isolatedEmail)
 	t.Setenv("GIT_COMMITTER_NAME", "shoal test")
-	t.Setenv("GIT_COMMITTER_EMAIL", "test@example.invalid")
+	t.Setenv("GIT_COMMITTER_EMAIL", isolatedEmail)
 	for _, k := range []string{"SHOAL_HOME", "TMUX", "TMUX_PANE", "CLAUDE_PROJECT_DIR", "CLAUDE_CONFIG_DIR"} {
 		t.Setenv(k, "")
 	}
@@ -60,9 +63,14 @@ func Git(t *testing.T, dir string, args ...string) string {
 }
 
 // Repo creates a git repo on branch main with one commit and a local bare repo
-// as origin, and returns the repo path. Call Isolate first.
+// as origin, and returns the repo path. It fails the test unless Isolate ran
+// first, so a test never commits with the host's git identity (CI runners have
+// none, which would otherwise fail only there).
 func Repo(t *testing.T) string {
 	t.Helper()
+	if got := os.Getenv("GIT_AUTHOR_EMAIL"); got != isolatedEmail {
+		t.Fatalf("testutil.Repo: call testutil.Isolate(t) first (GIT_AUTHOR_EMAIL = %q, want %q)", got, isolatedEmail)
+	}
 	base := Resolve(t, t.TempDir())
 	remote := filepath.Join(base, "remote.git")
 	repo := filepath.Join(base, "app")

@@ -107,6 +107,7 @@ func TestRemoteURL(t *testing.T) {
 }
 
 func TestChanged(t *testing.T) {
+	testutil.Isolate(t)
 	ctx := context.Background()
 	repo := testutil.Repo(t)
 	first, err := Run(ctx, repo, "rev-parse", "HEAD")
