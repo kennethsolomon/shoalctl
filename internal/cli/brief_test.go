@@ -107,3 +107,33 @@ func TestTaskLessonsNewestFirst(t *testing.T) {
 		t.Fatalf("taskLessons = %v, want %v", got, want)
 	}
 }
+
+// The brainstorm survives the budget: lessons, todo lines and project rules
+// go first, and every proposal cut is counted in a "+N more" line (§4.6).
+func TestBriefBudgetKeepsTheBrainstorm(t *testing.T) {
+	long := strings.Repeat("keep every payment provider behind one strategy interface; ", 6)
+	d := briefData{task: store.Task{Slug: "1-pay", Lane: "feature", Stage: "in-progress", Title: "Pay"}, maxRounds: 3}
+	for i := 0; i < 30; i++ {
+		d.proposed = append(d.proposed, fmt.Sprintf("- convention:%d (files src/pay/**): %s", i+1, clip(long, 300)))
+		d.lessons = append(d.lessons, fmt.Sprintf("- lesson:%d (task 1-pay, at abc1234): %s", i+1, clip(long, 300)))
+		d.rules = append(d.rules, fmt.Sprintf("- convention:%d (files **): %s", 100+i, clip(long, 300)))
+		d.todo = append(d.todo, long)
+	}
+	d.promotions = []string{"- promote lesson:7 (files src/**, shown in 3 tasks): " + clip(long, 200)}
+	out, kept := renderSessionBrief(d)
+	if approxTokens(out) > briefBudget || kept != 0 {
+		t.Fatalf("%d tokens, %d lessons kept:\n%s", approxTokens(out), kept, out)
+	}
+	if !strings.HasPrefix(out, "BEFORE ANYTHING ELSE, brainstorm with the human: 31 proposed project rule(s)") {
+		t.Fatalf("the brief does not open with the brainstorm:\n%s", out)
+	}
+	shown := strings.Count(out, "\n- convention:")
+	var more int
+	if _, err := fmt.Sscanf(out[strings.Index(out, "- +"):], "- +%d more proposed", &more); err != nil || shown == 0 || shown+more != 30 {
+		t.Fatalf("%d proposals shown, %d counted as more (%v):\n%s", shown, more, err, out)
+	}
+	mustContain(t, "brief", out, "shoalctl convention list", "- +1 more proposed for promotion", "- +30 more rules")
+	if strings.Contains(out, "todo.md") || strings.Contains(out, "lesson:1 ") {
+		t.Errorf("todo lines or lessons kept over proposals:\n%s", out)
+	}
+}

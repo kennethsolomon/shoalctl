@@ -43,6 +43,7 @@ type memo struct {
 	stack   string   // a lesson's stack
 	text    string
 	stale   string // why it was flagged stale; "" when it is not
+	status  string // a convention's status
 	inject  bool   // hooks may inject it
 	lastHit string
 	created string
@@ -56,6 +57,23 @@ func clip(s string, n int) string {
 // per task, QA failure or answered question), so filtering happens here.
 func memos(ctx context.Context, db *store.Store) ([]memo, error) {
 	var out []memo
+	// Conventions come first: the human agreed to them, so they win the
+	// per-file budget.
+	conventions, err := db.Conventions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range conventions {
+		m := memo{ref: store.ConventionKey(c.ID), kind: store.KindConvention, id: c.ID, taskID: c.SourceTaskID, glob: c.ScopeGlob,
+			text: clip(c.Rule, maxRecordText), inject: c.Status == store.ConventionActive, status: c.Status, created: c.ProposedAt}
+		switch {
+		case c.Status == store.ConventionRetired:
+			m.text += " [retired: " + clip(c.RetireReason, 200) + "]"
+		case c.Conflict != "" && c.Status == store.ConventionProposed:
+			m.text += " [conflicts with " + clip(c.Conflict, 160) + "]"
+		}
+		out = append(out, m)
+	}
 	bugs, err := db.Bugs(ctx)
 	if err != nil {
 		return nil, err
@@ -177,6 +195,10 @@ func stalenessTag(ctx context.Context, dir string, m memo) string {
 
 // line renders a record on one line for an agent or a human.
 func (m memo) line(ctx context.Context, dir string, slugs map[int64]string) string {
+	if m.kind == store.KindConvention {
+		// A convention is a rule from now on, not a fact at a commit.
+		return fmt.Sprintf("- %s (%s convention, files %s): %s", m.ref, m.status, m.glob, m.text)
+	}
 	where := slugs[m.taskID]
 	if where == "" {
 		where = strconv.FormatInt(m.taskID, 10)
@@ -356,6 +378,9 @@ func (env Env) cmdFlagStale(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if strings.HasPrefix(pos[0], store.KindConvention+":") {
+		return fail(ExitUsage, "a convention is not flagged stale but retired, with its reason: shoalctl convention retire %s --why \"<reason>\"", pos[0])
+	}
 	kind, id, err := store.ParseRecordRef(pos[0])
 	if err != nil {
 		return fail(ExitUsage, "%v", err)
@@ -469,6 +494,19 @@ func (env Env) cmdWhy(ctx context.Context, args []string) error {
 	slugs, err := taskSlugs(ctx, p.db)
 	if err != nil {
 		return err
+	}
+	if strings.HasPrefix(arg, store.KindConvention+":") {
+		id, err := store.ParseConventionRef(arg)
+		if err != nil {
+			return fail(ExitUsage, "%v", err)
+		}
+		for _, m := range all {
+			if m.kind == store.KindConvention && m.id == id {
+				fmt.Fprintln(env.Stdout, m.line(ctx, env.Dir, slugs))
+				return nil
+			}
+		}
+		return fail(ExitNotFound, "%s: no such convention", arg)
 	}
 	if kind, id, err := store.ParseRecordRef(arg); err == nil {
 		if kind == store.KindBug {

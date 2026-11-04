@@ -155,8 +155,13 @@ commands:
   record decision <task> --topic "<t>" --choice "<c>" --why "<rationale>" [--file <path>]...
   record qa <task> --question "<q>" --answer "<a>" [--file <path>]...
   flag-stale <bug|decision|lesson|qa>:<id> "<reason>"
-  why <file | sha | bug:<id> | decision:<id> | lesson:<id> | qa:<id>>
+  why <file | sha | bug:<id> | decision:<id> | lesson:<id> | qa:<id> | convention:<id>>
   recall <query> | recall --file <path>
+  convention propose [<task>] --rule "<text>" --scope <glob>
+  convention agree <id> [--rule "<text>"] [--scope <glob>] [--force]   human only
+  convention retire <id> --why "<reason>"                               human only
+  convention list [--all]
+  promote lesson:<id>      human only: a lesson shown in 3 tasks becomes a project rule (context.md)
   doctor [--fix]      check shoal's state; --fix repairs what is safe (exit 11 while a problem remains)
   watch <task>        internal: the attention watcher start launches
   version
@@ -230,6 +235,10 @@ func Main(args []string, env Env, version string) int {
 		err = env.cmdWhy(ctx, args[1:])
 	case "recall":
 		err = env.cmdRecall(ctx, args[1:])
+	case "convention":
+		err = env.cmdConvention(ctx, args[1:])
+	case "promote":
+		err = env.cmdPromote(ctx, args[1:])
 	case "help", "-h", "--help":
 		fmt.Fprint(env.Stdout, usage)
 	default:

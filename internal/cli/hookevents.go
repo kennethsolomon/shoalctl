@@ -164,7 +164,7 @@ func denied(globs []string, rel string) bool {
 	return false
 }
 
-// hookPreToolUse injects the lessons, decisions and bugs about the file a
+// hookPreToolUse injects the active conventions, lessons, decisions and bugs about the file a
 // tool is about to touch, each once per session, within perFileBudget.
 func (env Env) hookPreToolUse(ctx context.Context, hc hookCtx) (string, error) {
 	if !contains(fileTools, hc.in.ToolName) {
@@ -189,7 +189,7 @@ func (env Env) hookPreToolUse(ctx context.Context, hc hookCtx) (string, error) {
 	var cands []memo
 	var keys []string
 	for _, m := range all {
-		if m.inject && (m.kind == store.KindLesson || m.kind == store.KindDecision || m.kind == store.KindBug) && m.about(rel) {
+		if m.inject && (m.kind == store.KindConvention || m.kind == store.KindLesson || m.kind == store.KindDecision || m.kind == store.KindBug) && m.about(rel) {
 			cands = append(cands, m)
 			keys = append(keys, m.ref)
 		}

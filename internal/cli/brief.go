@@ -82,23 +82,39 @@ type briefData struct {
 	waitsOn   []string // tasks this one starts or merges after
 	unread    int      // unread messages for shoal-lead
 	lessons   []string // rendered lesson lines
+
+	// The brainstorm (§11.5): proposed conventions and lessons proposed for
+	// promotion, and the rules of context.md when the session does not
+	// load it through CLAUDE.md. The hidden counts are what the budget cut;
+	// the brief says how many and where to see them, never drops them silently.
+	proposed, promotions, rules                   []string
+	hiddenProposed, hiddenPromotions, hiddenRules int
 }
 
-// renderSessionBrief renders the brief inside briefBudget: lessons go
-// first, then todo lines, then the text is cut.
-func renderSessionBrief(d briefData) string {
+// renderSessionBrief renders the brief inside briefBudget and returns how
+// many lessons it kept. It drops, from the end: lessons, todo lines, project
+// rule lines, promotion proposals, then proposed conventions (each dropped
+// line is counted in a "+N more" line); the brainstorm goes last because it
+// must happen before anything else. Then the text is cut.
+func renderSessionBrief(d briefData) (string, int) {
 	for {
 		s := d.render()
 		if approxTokens(s) <= briefBudget {
-			return s
+			return s, len(d.lessons)
 		}
 		switch {
 		case len(d.lessons) > 0:
 			d.lessons = d.lessons[:len(d.lessons)-1]
 		case len(d.todo) > 0:
 			d.todo = d.todo[:len(d.todo)-1]
+		case len(d.rules) > 0:
+			d.rules, d.hiddenRules = d.rules[:len(d.rules)-1], d.hiddenRules+1
+		case len(d.promotions) > 0:
+			d.promotions, d.hiddenPromotions = d.promotions[:len(d.promotions)-1], d.hiddenPromotions+1
+		case len(d.proposed) > 0:
+			d.proposed, d.hiddenProposed = d.proposed[:len(d.proposed)-1], d.hiddenProposed+1
 		default:
-			return fitTokens(s, briefBudget-5) + "\n[cut to fit]"
+			return fitTokens(s, briefBudget-5) + "\n[cut to fit]", len(d.lessons)
 		}
 	}
 }
@@ -106,6 +122,30 @@ func renderSessionBrief(d briefData) string {
 func (d briefData) render() string {
 	t := d.task
 	var b strings.Builder
+	if n := len(d.proposed) + d.hiddenProposed + len(d.promotions) + d.hiddenPromotions; n > 0 {
+		fmt.Fprintf(&b, "BEFORE ANYTHING ELSE, brainstorm with the human: %d proposed project rule(s) wait for a decision. "+
+			"For each, discuss its scope (which files) and its exceptions with the human, and do not start the task until they are settled "+
+			"or the human says to go on. Only the human decides: shoalctl convention agree <id> [--rule \"...\"] [--scope <glob>], "+
+			"shoalctl convention retire <id> --why \"...\", or shoalctl promote lesson:<id>.\n", n)
+		if len(d.proposed)+d.hiddenProposed > 0 {
+			b.WriteString("Proposed conventions:\n")
+			for _, l := range d.proposed {
+				b.WriteString(l + "\n")
+			}
+			if d.hiddenProposed > 0 {
+				fmt.Fprintf(&b, "- +%d more proposed: shoalctl convention list\n", d.hiddenProposed)
+			}
+		}
+		if len(d.promotions)+d.hiddenPromotions > 0 {
+			fmt.Fprintf(&b, "Lessons proposed as project rules (shown in %d+ tasks):\n", promoteTasks)
+			for _, l := range d.promotions {
+				b.WriteString(l + "\n")
+			}
+			if d.hiddenPromotions > 0 {
+				fmt.Fprintf(&b, "- +%d more proposed for promotion: shoalctl convention list\n", d.hiddenPromotions)
+			}
+		}
+	}
 	fmt.Fprintf(&b, "shoal task %s (%s, stage %s, QA round %d of %d): %s\n", t.Slug, t.Lane, t.Stage, t.QARound, d.maxRounds, clip(t.Title, 120))
 	b.WriteString("Task brief: .shoal/brief.md. Coordinate only through shoalctl.\n")
 	if len(d.waitsOn) > 0 {
@@ -123,6 +163,15 @@ func (d briefData) render() string {
 	}
 	if d.unread > 0 {
 		fmt.Fprintf(&b, "Unread messages for shoal-lead: %d (shoalctl msg inbox %s --as shoal-lead).\n", d.unread, t.Slug)
+	}
+	if len(d.rules)+d.hiddenRules > 0 {
+		b.WriteString("Project rules agreed with the human (follow them; the project's CLAUDE.md wins on a conflict):\n")
+		for _, l := range d.rules {
+			b.WriteString(clip(l, 300) + "\n")
+		}
+		if d.hiddenRules > 0 {
+			fmt.Fprintf(&b, "- +%d more rules: shoalctl convention list\n", d.hiddenRules)
+		}
 	}
 	if len(d.todo) > 0 {
 		b.WriteString("todo.md (head):\n")
@@ -188,7 +237,8 @@ func taskLessons(all []memo, claims []store.Claim, stack string) []memo {
 }
 
 // sessionBrief gathers and renders the brief of t, and returns the keys of
-// the lessons it shows.
+// the lessons it shows. dir is the session's checkout: the rules of
+// context.md are in the brief unless dir's CLAUDE.md imports them.
 func sessionBrief(ctx context.Context, p *project, t store.Task, gitDir string) (string, []string, error) {
 	d := briefData{task: t, maxRounds: p.cfg.Lanes.QAMaxRounds}
 	var err error
@@ -224,15 +274,22 @@ func sessionBrief(ctx context.Context, p *project, t store.Task, gitDir string) 
 		d.lessons = append(d.lessons, m.line(ctx, gitDir, slugs))
 		keys = append(keys, m.ref)
 	}
-	out := renderSessionBrief(d)
-	// Only lessons that survived the budget count as shown.
-	var shown []string
-	for _, k := range keys {
-		if strings.Contains(out, "- "+k+" ") {
-			shown = append(shown, k)
-		}
+	rs, err := loadRuleState(ctx, p.db)
+	if err != nil {
+		return "", nil, err
 	}
-	return out, shown, nil
+	for _, c := range rs.withStatus(store.ConventionProposed) {
+		d.proposed = append(d.proposed, proposedLine(c, slugs))
+	}
+	for _, l := range rs.candidates() {
+		d.promotions = append(d.promotions, candidateLine(l, rs.taskHits[l.ID]))
+	}
+	if !importsContext(gitDir) {
+		d.rules = rs.contextRuleLines()
+	}
+	out, kept := renderSessionBrief(d)
+	// Only lessons that survived the budget count as shown.
+	return out, keys[:kept], nil
 }
 
 // cmdBrief prints the session-start brief of a task: the named one, or the
