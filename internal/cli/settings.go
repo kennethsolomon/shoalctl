@@ -18,9 +18,14 @@ import (
 
 const hookTimeoutSeconds = 10
 
-var hookEvents = []struct{ event, arg string }{
-	{"SessionStart", "session-start"},
-	{"Stop", "stop"},
+// hookEvents are the hooks shoal registers. matcher selects the tools a
+// tool hook fires for (Claude Code matches it as a regex on the tool name),
+// so other tools never start the process.
+var hookEvents = []struct{ event, arg, matcher string }{
+	{"SessionStart", "session-start", ""},
+	{"Stop", "stop", ""},
+	{"PreToolUse", "pre-tool-use", strings.Join(fileTools, "|")},
+	{"PostToolUse", "post-tool-use", strings.Join(writeTools, "|")},
 }
 
 // posixPlain is a path bash reads as one literal word without quotes.
@@ -204,7 +209,8 @@ type hookEntry struct {
 }
 
 type hookGroupOut struct {
-	Hooks []hookEntry `json:"hooks"`
+	Matcher string      `json:"matcher,omitempty"`
+	Hooks   []hookEntry `json:"hooks"`
 }
 
 func wantEntry(exe, arg string) hookEntry { return entryFor(runtime.GOOS, exe, arg) }
@@ -271,19 +277,28 @@ func decodeHooks(data []byte) (map[string][]hookGroup, error) {
 }
 
 // exactlyOne reports whether groups hold exactly one shoal entry, equal to
-// want and alone in its group.
-func exactlyOne(groups []hookGroup, want hookEntry) bool {
+// want and alone in a group whose matcher is matcher.
+func exactlyOne(groups []hookGroup, want hookEntry, matcher string) bool {
 	shoal, exact := 0, false
 	for _, g := range groups {
 		entries, _ := groupEntries(g)
 		for _, e := range entries {
 			if isShoalCommand(entryCommand(e)) {
 				shoal++
-				exact = len(entries) == 1 && entryIs(e, want)
+				exact = len(entries) == 1 && entryIs(e, want) && groupMatcher(g) == matcher
 			}
 		}
 	}
 	return shoal == 1 && exact
+}
+
+// groupMatcher is a group's matcher, "" when it has none (or a non-string).
+func groupMatcher(g hookGroup) string {
+	var m string
+	if raw, ok := g["matcher"]; ok && json.Unmarshal(raw, &m) == nil {
+		return m
+	}
+	return ""
 }
 
 // mergeHooks returns settings with exactly one shoal entry per event. It edits
@@ -304,12 +319,12 @@ func mergeHooks(data []byte, exe string) ([]byte, bool, error) {
 	changed := false
 	for _, h := range hookEvents {
 		want := wantEntry(exe, h.arg)
-		if exactlyOne(events[h.event], want) {
+		if exactlyOne(events[h.event], want, h.matcher) {
 			continue
 		}
 		changed = true
 		doc = removeShoalEntries(doc, h.event)
-		doc = appendGroup(doc, h.event, hookGroupOut{Hooks: []hookEntry{want}}, st)
+		doc = appendGroup(doc, h.event, hookGroupOut{Matcher: h.matcher, Hooks: []hookEntry{want}}, st)
 	}
 	if !changed {
 		return data, false, nil
@@ -381,7 +396,12 @@ func appendGroup(doc []byte, event string, group hookGroupOut, st jsonStyle) []b
 		doc = appendMember(doc, hooks.val, event, "[]", st)
 	}
 	arr, _ := eventArray(doc, event)
-	return appendItem(doc, arr, arrayElements(doc, arr), st, func(ind string) string { return render(group, ind, st) })
+	items := arrayElements(doc, arr)
+	gst := st
+	if len(items) > 0 && !bytes.Contains(doc[arr.start:items[len(items)-1].start], []byte("\n")) {
+		gst.multiline = false // the user keeps this array on one line: so does the new group
+	}
+	return appendItem(doc, arr, items, st, func(ind string) string { return render(group, ind, gst) })
 }
 
 // hasShoalHooks reports whether settings data registers any shoal hook.

@@ -674,7 +674,7 @@ func (d *doctor) staleClaims(ctx context.Context, p *project) error {
 func hookProblems(path string) (problems, binaries []string, err error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return []string{fmt.Sprintf("%s does not exist: SessionStart and Stop hooks are not registered", path)}, nil, nil
+		return []string{fmt.Sprintf("%s does not exist: shoal's hooks (SessionStart, Stop, PreToolUse, PostToolUse) are not registered", path)}, nil, nil
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("read %s: %w", path, err)
@@ -708,8 +708,12 @@ func hookProblems(path string) (problems, binaries []string, err error) {
 			problems = append(problems, fmt.Sprintf("%s: %s", h.event, msg))
 			continue
 		}
-		if !exactlyOne(events[h.event], entryFor(runtime.GOOS, prog, h.arg)) {
-			problems = append(problems, fmt.Sprintf("%s: entry is outdated; want %q", h.event, hookCommandFor(runtime.GOOS, prog, h.arg)))
+		if !exactlyOne(events[h.event], entryFor(runtime.GOOS, prog, h.arg), h.matcher) {
+			want := fmt.Sprintf("%q", hookCommandFor(runtime.GOOS, prog, h.arg))
+			if h.matcher != "" {
+				want += fmt.Sprintf(" alone in a group with matcher %q", h.matcher)
+			}
+			problems = append(problems, fmt.Sprintf("%s: entry is outdated; want %s", h.event, want))
 		}
 	}
 	return problems, binaries, nil

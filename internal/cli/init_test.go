@@ -137,15 +137,17 @@ func TestMergeHooks(t *testing.T) {
 	exe := "/bin/shoalctl"
 	start := hookCommand(exe, "session-start") + "|10|"
 	stop := hookCommand(exe, "stop") + "|10|"
+	pre := hookCommand(exe, "pre-tool-use") + "|10|Read|Edit|Write|MultiEdit|NotebookEdit"
+	post := hookCommand(exe, "post-tool-use") + "|10|Edit|Write|MultiEdit|NotebookEdit"
 	tests := []struct {
 		name  string
 		in    string
 		want  map[string][]string
 		other string // a top-level key that must survive
 	}{
-		{"empty file", "", map[string][]string{"SessionStart": {start}, "Stop": {stop}}, ""},
+		{"empty file", "", map[string][]string{"SessionStart": {start}, "Stop": {stop}, "PreToolUse": {pre}, "PostToolUse": {post}}, ""},
 		{"keeps other keys and hooks", `{"permissions": {"allow": ["Bash(ls)"]}, "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "notify-send done"}]}], "PreToolUse": [{"matcher": "Edit", "hooks": [{"type": "command", "command": "lint"}]}]}}`,
-			map[string][]string{"SessionStart": {start}, "Stop": {"notify-send done|0|", stop}, "PreToolUse": {"lint|0|Edit"}}, "permissions"},
+			map[string][]string{"SessionStart": {start}, "Stop": {"notify-send done|0|", stop}, "PreToolUse": {"lint|0|Edit", pre}, "PostToolUse": {post}}, "permissions"},
 		{"replaces an old binary path", `{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "/old/shoalctl hook session-start", "timeout": 10}]}]}}`,
 			map[string][]string{"SessionStart": {start}, "Stop": {stop}}, ""},
 		{"collapses duplicates and keeps neighbours", `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "/bin/shoalctl hook stop", "timeout": 10}, {"type": "command", "command": "keep-me"}]}, {"hooks": [{"type": "command", "command": "/bin/shoalctl hook stop", "timeout": 10}]}]}}`,
