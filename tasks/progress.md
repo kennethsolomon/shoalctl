@@ -9,9 +9,28 @@ Base: `9b3e7ad`. Acceptance bar: spec §15 Phase 3 row plus the two Phase 2 defe
   tool hooks with matchers; late overlap orders the merge.
 - E2E (`internal/cli/phase3_e2e_test.go`): TestPhase3BriefUnderBudget, TestPhase3LessonInjectedOncePerSession,
   TestPhase3WriteOutsideClaimsWarns, TestPhase3LateOverlapFromEdits, TestPhase3HooksNeverDoubleFire,
-  TestPhase3HookLatency, TestPhase3WhyBugCameBack; TestPhase2BugABugB covers spec §14 step 5.
+  TestPhase3HookLatency, TestPhase3WhyBugCameBack, TestPhase3MergeTaskAheadOfStuckHolder,
+  TestPhase3CompactionReinjectsLessons; `brief_test.go`: TestPhase3BriefUnderBudgetCJKAndBlobs;
+  TestPhase2BugABugB covers spec §14 step 5.
 - Decisions: spec §16 rows 58-62.
-- Next: Vex review. Phase 4 not started.
+- Vex HOLD round 1 on `aff9059`: five items fixed test-first, one commit each (table below).
+- Next: Vex re-review. Phase 4 not started.
+
+## Vex HOLD round 1
+
+Vex returned HOLD on `aff9059` with five items; four fixed test-first in their own commits, the fifth is a documented limit.
+
+| Item | Fix | Test |
+|------|-----|------|
+| REQUIRED: the stuck-holder escape (`merge --task X` past a holder E that never finishes) was untested | Plain `merge`'s skip line names `shoalctl merge --task <writer>`. `merge --task` already merged X and moved E to `needs-rebase`, but left X's own `task_blockers` row and `blocked_by`; `UnblockAfterMerge` now drops a merged task's own waits | `TestPhase3MergeTaskAheadOfStuckHolder` |
+| `approxTokens` counted a CJK character as 1/3 token and a hash as one word: CJK lessons passed at 819 estimated while bytes/3 said 1218 | Han, Hiragana, Katakana and Hangul runes count one token each; a run of more than 16 letters or digits counts one per 2 characters (spec §4.6 "Token measurement") | `TestApproxTokensCountsCJKAndBlobs`, `TestPhase3BriefUnderBudgetCJKAndBlobs` (6 lessons of 600 CJK characters plus hex lessons, title and ask: 797 estimated, bytes/3 598) |
+| The brief picked the 5 oldest matching lessons | Matches sorted newest first, ties by id descending, then capped at 5 (brief and `brief.md`) | `TestTaskLessonsNewestFirst` (7 lessons), `TestPhase3BriefUnderBudget`, `TestPhase3BriefUnderBudgetCJKAndBlobs` |
+| PreToolUse marks survived compaction, so dropped lessons were never re-injected | `SessionStart` with source `compact` or `clear` turns the session's `lesson:`/`decision:`/`bug:` marks into `shown:<key>`; records inject again and `Mark` skips the hit for a key already shown. Warnings stay once per session. Only the registration that wins `FireOnce` resets | `TestPhase3CompactionReinjectsLessons` (two concurrent compact registrations answer once), `TestResetInjectedReinjectsWithoutAnotherHit` |
+| Every Phase 3 e2e skips on Windows via `withSession()` | Not ported: the harness's fake `tmux` and `claude` are sh scripts. Only CI on a Windows runner can prove the hooks there; the store tests (`TestResetInjectedReinjectsWithoutAnotherHit`, `TestMarkCountsLessonHitsOncePerSession`) and `TestApproxTokensCountsCJKAndBlobs`, `TestTaskLessonsNewestFirst` do run on Windows | none on Windows |
+
+Hook latency after the fixes (15 runs, process start included, macOS): p95 stop 5.1 ms, session-start 5.7 ms, pre-tool-use 19.3 ms, no-match 5.2 ms, post-tool-use 5.3 ms; before: 5.4, 6.2, 18.5, 5.5, 5.7 ms.
+
+Judgment calls: `clear` resets marks too, since `/clear` drops context the same way. A session that was mid-flight across the upgrade has no `shown:` marks, so its first post-compaction re-injection counts one extra hit.
 
 # Phase 2 progress
 
