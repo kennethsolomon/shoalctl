@@ -186,7 +186,7 @@ func (env Env) settleOne(ctx context.Context, p *project, t store.Task) (string,
 	if _, err := p.db.Update(ctx, t, []string{store.StageMerging}, "stage = ?, merged_sha = ?", []any{store.StageMerged, head},
 		func(tx *sql.Tx) error {
 			var err error
-			unblocked, err = landed(ctx, tx, t.ID)
+			unblocked, err = landed(ctx, tx, t.ID, head)
 			return err
 		}); err != nil {
 		return "", err
@@ -418,7 +418,7 @@ func (env Env) mergeOne(ctx context.Context, p *project, t store.Task, acc []*ac
 					return err
 				}
 			}
-			if unblocked, err = landed(ctx, tx, t.ID); err != nil {
+			if unblocked, err = landed(ctx, tx, t.ID, head); err != nil {
 				return err
 			}
 			if rebase, err = store.MarkNeedsRebase(ctx, tx, overlapIDs(hits)); err != nil {
@@ -450,8 +450,13 @@ func queueState(ctx context.Context, id int64, state string) func(*sql.Tx) error
 // landed does the bookkeeping of a task now on its target, inside the
 // merge's transaction: queue row merged, claims released, tasks serialized
 // behind it unblocked (returned).
-func landed(ctx context.Context, tx *sql.Tx, id int64) ([]int64, error) {
+func landed(ctx context.Context, tx *sql.Tx, id int64, head string) ([]int64, error) {
 	if err := store.SetQueueState(ctx, tx, id, store.QueueMerged); err != nil {
+		return nil, err
+	}
+	// A rebase gave the fix a new SHA: the bug record points at the one on
+	// the target branch.
+	if err := store.MoveBugFixTx(ctx, tx, id, head); err != nil {
 		return nil, err
 	}
 	if err := store.ReleaseTaskClaims(ctx, tx, id); err != nil {

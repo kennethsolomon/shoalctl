@@ -150,6 +150,12 @@ commands:
   release <task> --as <agent> [<glob>...]
   msg send <task> --from <agent> --to <agent|*> --kind <kind> [--subject "<s>"] [--reply-to <id>] "<body>"
   msg inbox <task> --as <agent> [--all]
+  record lesson <task> --pattern "<what went wrong>" --fix "<what fixed it>" [--glob <glob>]
+  record decision <task> --topic "<t>" --choice "<c>" --why "<rationale>" [--file <path>]...
+  record qa <task> --question "<q>" --answer "<a>" [--file <path>]...
+  flag-stale <bug|decision|lesson|qa>:<id> "<reason>"
+  why <file | sha | bug:<id> | decision:<id> | lesson:<id> | qa:<id>>
+  recall <query> | recall --file <path>
   doctor [--fix]      check shoal's state; --fix repairs what is safe (exit 11 while a problem remains)
   watch <task>        internal: the attention watcher start launches
   version
@@ -213,6 +219,14 @@ func Main(args []string, env Env, version string) int {
 		err = env.cmdClaim(ctx, args[1:])
 	case "release":
 		err = env.cmdRelease(ctx, args[1:])
+	case "record":
+		err = env.cmdRecord(ctx, args[1:])
+	case "flag-stale":
+		err = env.cmdFlagStale(ctx, args[1:])
+	case "why":
+		err = env.cmdWhy(ctx, args[1:])
+	case "recall":
+		err = env.cmdRecall(ctx, args[1:])
 	case "help", "-h", "--help":
 		fmt.Fprint(env.Stdout, usage)
 	default:

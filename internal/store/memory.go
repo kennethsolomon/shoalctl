@@ -594,3 +594,48 @@ func (s *Store) RecordWrite(ctx context.Context, w WriteRequest, lead string) (W
 	})
 	return res, err
 }
+
+// LastResult is the newest recorded result of one test in a completed run.
+type LastResult struct {
+	RunID  int64
+	SHA    string
+	Kind   string
+	Status string
+}
+
+// LatestResult returns the newest completed run's result for testID, and
+// false when no completed run recorded it.
+func (s *Store) LatestResult(ctx context.Context, testID string) (LastResult, bool, error) {
+	var r LastResult
+	err := s.db.QueryRowContext(ctx, `SELECT r.id, r.sha, r.kind, x.status FROM test_results x JOIN test_runs r ON r.id = x.run_id
+		WHERE x.test_id = ? AND r.status = 'completed' ORDER BY r.id DESC, x.attempt DESC LIMIT 1`, testID).Scan(&r.RunID, &r.SHA, &r.Kind, &r.Status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return r, false, nil
+	}
+	if err != nil {
+		return r, false, fmt.Errorf("read the latest result of %s: %w", testID, err)
+	}
+	return r, true, nil
+}
+
+// Marked returns which of keys the session already marked.
+func (s *Store) Marked(ctx context.Context, session string, keys []string) (map[string]bool, error) {
+	out := map[string]bool{}
+	if len(keys) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT key FROM hook_marks WHERE session_id = ? AND key IN (`+placeholders(len(keys))+`)`,
+		append([]any{session}, anys(keys)...)...)
+	if err != nil {
+		return nil, fmt.Errorf("read hook marks of session %q: %w", session, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			return nil, fmt.Errorf("scan hook mark: %w", err)
+		}
+		out[k] = true
+	}
+	return out, rows.Err()
+}

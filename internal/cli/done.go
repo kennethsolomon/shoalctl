@@ -37,6 +37,9 @@ type summaryFile struct {
 	Risks                []string      `json:"risks"`
 	Followups            []string      `json:"followups"`
 	Changed              []changedNote `json:"changed"`
+	// RootCause is optional; for bugfix and hotfix tasks it becomes the bug
+	// record's root cause (why falls back in when it is empty).
+	RootCause string `json:"root_cause,omitempty"`
 }
 
 const summaryShape = `{"decision": "...", "alternatives_rejected": [{"option": "...", "why": "..."}], "why": "...", "risks": ["..."], "followups": ["..."], "changed": [{"path": "...", "note": "one line"}]}`
@@ -205,6 +208,7 @@ func (env Env) cmdDone(ctx context.Context, args []string) error {
 	report := renderReport(in)
 	reportPath := filepath.Join(p.dir, "reports", t.Slug+".md")
 	row := summaryRow(t.ID, sm, in.ver, in.commits, in.files, head, reportPath)
+	bug := bugRecord(t, sm, in.files, in.proofs, head)
 	var backportSlug string
 	words := ""
 	if backport != nil {
@@ -214,6 +218,11 @@ func (env Env) cmdDone(ctx context.Context, args []string) error {
 		[]any{store.StageDone, final.ID, nowUTC(), nullableString(strings.TrimSpace(*reason))}, func(tx *sql.Tx) error {
 			if err := store.InsertSummary(ctx, tx, row); err != nil {
 				return err
+			}
+			if bug != nil {
+				if err := store.UpsertBugTx(ctx, tx, *bug); err != nil {
+					return err
+				}
 			}
 			if err := store.Enqueue(ctx, tx, t.ID); err != nil {
 				return err
@@ -240,6 +249,33 @@ func (env Env) cmdDone(ctx context.Context, args []string) error {
 	}
 	fmt.Fprintln(env.Stdout, reportPath)
 	return nil
+}
+
+// bugRecord is the bug a finished bugfix or hotfix task fixed (§11.3): the
+// symptom it was asked to fix, the root cause from its summary, the
+// production files it changed and its regression tests. nil for a feature.
+func bugRecord(t store.Task, sm summaryFile, files []changedFile, proofs []store.Proof, head string) *store.Bug {
+	if t.Lane == "feature" {
+		return nil
+	}
+	cause := strings.TrimSpace(sm.RootCause)
+	if cause == "" {
+		cause = sm.Why
+	}
+	symptom := t.Title
+	if ask := strings.TrimSpace(t.Ask); ask != "" && ask != t.Title {
+		symptom += ": " + ask
+	}
+	b := &store.Bug{TaskID: t.ID, Symptom: truncateRunes(symptom, 2000), RootCause: cause, FixSHA: head, TrueAtSHA: head}
+	for _, f := range files {
+		if !diffx.IsTestFile(f.Path) && !strings.HasPrefix(f.Status, "D") {
+			b.Files = append(b.Files, f.Path)
+		}
+	}
+	for _, pr := range proofs {
+		b.Tests = append(b.Tests, store.RegressionTest{Test: pr.TestID, File: pr.TestFile})
+	}
+	return b
 }
 
 // writeReport writes the rendered report to the local sink and, when
