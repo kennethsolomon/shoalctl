@@ -1,3 +1,45 @@
+# Phase 4 progress
+
+Base: `eca06da` (Phase 3 shipped) plus the CI fix `c789a52`. Acceptance bar: spec §15 Phase 4 row ("Strategy pattern" end to end) and the five Done-when items of the build brief.
+
+## CI fix before Phase 4 (`c789a52`)
+
+CI (ubuntu, windows) failed `internal/gitx` with "Author identity unknown". Cause: `TestChanged` called `testutil.Repo` without `testutil.Isolate`, so its commits used the host's git identity; CI runners have none, and the macOS dev machine's global identity masked it. Fix: `TestChanged` calls `Isolate`, and `testutil.Repo` now fails the test unless `Isolate` set `GIT_AUTHOR_EMAIL`, so a missing `Isolate` fails on every OS, not only on CI. Every test that calls `Repo` must call `Isolate` first.
+
+## Where I am
+
+- Done: migration 0007 (`conventions`, `lesson_hits` with a backfill from `hook_marks`, FTS triggers into `memory_fts`); the store lifecycle (propose, agree, retire, reopen, promote); `convention propose|agree|retire|list`, `promote lesson:<id>`; active conventions in `PreToolUse`, `recall`, `why`; the brainstorm-first brief; `context.md` rendering; `[install].stealth = false` and the managed CLAUDE.md block in `init`; the §5.3 conflict check at propose, agree, promote and every `init`.
+- The previous builder's uncommitted store WIP was reviewed and committed as `35e65ee` (one fix: parenthesised the rule-and-scope match in `ProposeConvention`'s duplicate lookup; migration registration is by embedded file name like 0001-0006; no delete triggers, consistent with 0006, nothing deletes records before Phase 5).
+- E2E (`internal/cli/phase4_e2e_test.go`), one per Done-when item: TestPhase4StrategyPatternEndToEnd, TestPhase4LessonPromotion, TestPhase4ManagedBlock, TestPhase4StealthDefault, TestPhase4ConflictWithProjectRule; plus TestPhase4ConventionInjectionLimits (deny_globs, `.git/`, `.shoal/`, 300-token budget, once per session). Unit: TestBriefBudgetKeepsTheBrainstorm, TestWithManagedBlock*, TestInstallManagedBlockFile, TestContextImport, TestReadProjectRules, TestConflictWith, TestStealthOffAccepted; store: TestPhase4*, TestConvention*, TestMarkCountsLessonHitsPerTask, TestProposeFromPromotedLesson.
+- Windows: every Phase 4 test runs on Windows. The e2e tests drive the hooks in-process against task directories holding only `task.json` (all the hooks read), so they need neither tmux nor sh. Per-test skips: none. One sub-check skips on Windows: the symlinked-CLAUDE.md refusal in TestInstallManagedBlockFile (creating a symlink needs a privilege Windows runners do not grant by default). TestPhase3HookLatency, extended with conventions, still skips there (it starts real tasks with the sh fake claude and tmux).
+- Decisions: spec §16 rows 63-68.
+- Next: Vex review. Phase 5 not started.
+
+## Decisions (spec §16)
+
+| Row | Decision |
+|-----|----------|
+| 63 | Anyone proposes; agree, retire and promote need a human at a terminal (`requireHuman`). Retire keeps who, when and why, searchable |
+| 64 | Brief drop order: lessons, todo lines, context.md rule lines, promotion proposals, proposed conventions; every cut rule or proposal is counted in a `+N more` line |
+| 65 | Promotion counts different tasks (`lesson_hits`); a lesson with any linked convention is not a candidate (a retired one means declined) |
+| 66 | Stealth delivers context.md through the SessionStart brief, not a CLAUDE.local.md import: an outside import asks for approval in every new worktree and would block unattended sessions |
+| 67 | Conflict check: clause-and-polarity word overlap, deterministic; `agree` refuses while a conflict stands unless `--force` |
+| 68 | Managed block: appended once, bytes outside the markers kept, CRLF and final newline kept, malformed markers and symlinks refused with exit 3 |
+
+## Measurements
+
+Hook latency (TestPhase3HookLatency, now seeded with 20 lessons, 20 active and 5 proposed conventions; 15 runs, process start included, macOS): p50/p95 stop 5.2/5.6 ms, session-start 6.0/6.9 ms, pre-tool-use 17.8/20.4 ms, no-match 5.1/5.6 ms, post-tool-use 5.0/5.3 ms. Phase 3 p95: 5.1, 5.7, 19.3, 5.2, 5.3 ms.
+
+`go test -race -count=1 ./internal/cli`: 404.8 s at `c789a52` (run alone), 451.1 s at `6781ccc` (inside the full `./...` run of the fresh-clone gate, packages in parallel). The Phase 4 tests add about 13 s without `-race`. RISK: above 450 s, about 75% of Go's default 10-minute `go test` timeout; CI config was not touched.
+
+## Open risks
+
+- `internal/cli` under `-race` is about 451 s, near the 600 s default timeout (see Measurements).
+- The conflict heuristic misses paraphrases, synonyms and "prefer A over B", and can flag unrelated lines that share two words with opposite polarity (spec §5.3). A false positive costs a brainstorm and `agree --force`.
+- `context.md` is rendered by each command from the DB it read; two humans agreeing at the same instant could leave the older render last. The brief reads the DB directly, so only the non-stealth import can lag, until the next agree, retire, promote or `init`.
+- Non-stealth worktrees load the managed block only once `CLAUDE.md` is committed on the task's base; until then the brief carries the rules (it checks the worktree's own `CLAUDE.md`).
+- `context.md` has no size cap; a project with hundreds of agreed rules makes every non-stealth session pay for them (the stealth brief caps them under its budget).
+
 # Phase 3 progress
 
 Base: `9b3e7ad`. Acceptance bar: spec §15 Phase 3 row plus the two Phase 2 deferrals.
