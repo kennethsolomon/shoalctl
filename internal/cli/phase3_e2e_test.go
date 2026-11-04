@@ -510,7 +510,13 @@ func TestPhase3HookLatency(t *testing.T) {
 	}
 	task := startedTask(t, h, "feature", "Timed")
 	t.Setenv("CLAUDE_PROJECT_DIR", task.Worktree)
-	const runs = 15
+	// Under -race every hook process is a race-instrumented binary taking
+	// about a second, so fewer runs keep the bound asserted at a fraction of
+	// the cost; the measured numbers come from the plain run.
+	runs := 15
+	if raceDetector {
+		runs = 3
+	}
 	for _, ev := range []struct{ event, stdin string }{
 		{"stop", `{"session_id": "lat"}`},
 		{"session-start", `{"session_id": "lat", "source": "startup"}`},
