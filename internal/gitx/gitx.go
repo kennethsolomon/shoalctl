@@ -138,3 +138,24 @@ func ProjectID(canonical string) string {
 	sum := sha256.Sum256([]byte(canonical))
 	return hex.EncodeToString(sum[:])[:12]
 }
+
+// Changed reports whether any path matching pathspecs differs between the
+// commit from and HEAD in dir (git diff --quiet: exit 1 means changed). Any
+// other failure, such as from being unknown in this clone, is an error.
+func Changed(ctx context.Context, dir, from string, pathspecs []string) (bool, error) {
+	args := append([]string{"diff", "--quiet", "--no-ext-diff", from, "HEAD", "--"}, pathspecs...)
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+		return false, nil
+	case errors.As(err, &exit) && exit.ExitCode() == 1:
+		return true, nil
+	}
+	return false, fmt.Errorf("git %s (in %s): %w: %s", strings.Join(args, " "), dir, err, strings.TrimSpace(stderr.String()))
+}

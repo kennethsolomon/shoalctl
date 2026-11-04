@@ -105,3 +105,31 @@ func TestRemoteURL(t *testing.T) {
 		t.Fatalf("no remotes: got %q, %v", got, err)
 	}
 }
+
+func TestChanged(t *testing.T) {
+	ctx := context.Background()
+	repo := testutil.Repo(t)
+	first, err := Run(ctx, repo, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFile(t, filepath.Join(repo, "src", "a.go"), "package a\n")
+	testutil.Git(t, repo, "add", "src/a.go")
+	testutil.Git(t, repo, "commit", "-q", "-m", "a")
+	for _, tt := range []struct {
+		specs []string
+		want  bool
+	}{
+		{[]string{":(literal)src/a.go"}, true},
+		{[]string{":(glob)src/**"}, true},
+		{[]string{":(literal)other.txt"}, false},
+	} {
+		got, err := Changed(ctx, repo, first, tt.specs)
+		if err != nil || got != tt.want {
+			t.Errorf("Changed(%v) = %v, %v; want %v", tt.specs, got, err, tt.want)
+		}
+	}
+	if _, err := Changed(ctx, repo, "0123456789abcdef0123456789abcdef01234567", []string{"src"}); err == nil {
+		t.Fatal("an unknown commit must be an error, not unchanged")
+	}
+}
