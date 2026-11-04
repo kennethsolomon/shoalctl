@@ -188,3 +188,12 @@ Vex returned HOLD on `d14fc2d` with three items; each fixed test-first in its ow
 | `repro green` cannot prove a real fix | Documented risk in README and spec §8.3, §16 row 45 | docs only |
 
 Remaining: with no `setup`, any project with a known failing test needs a human acceptance (or `setup = "true"`) at every merge. `setup = "true"` reopens the ignored-file hole by the user's explicit choice; rule (a) still applies. Changing the hash input re-runs every cached baseline once.
+
+## Vex round 2 residuals
+
+Vex returned SHIP on `1548f0b` with two residual risks; each closed in its own commit.
+
+| Item | Fix | Test |
+|------|-----|------|
+| `approxTokens` undercounted Thai (and other no-space scripts outside the CJK ranges) and emoji runs | The estimate is the largest of ceil(UTF-8 bytes / 3), the character count and the piece count, inside `approxTokens`, so the brief budget and the per-file injection budget both use it. Spec §4.6 token measurement updated. No existing budget test changed its expected content | `TestApproxTokensAtLeastBytesOverThree` |
+| `340b6be` removed the only assertion that a stack-wide lesson reaches the brief | Unit coverage restored: a recent stack-wide lesson is shown in date order, an old one is cut by the 5-lesson limit, one of another stack is never shown | `TestTaskLessonsNewestFirst` |
