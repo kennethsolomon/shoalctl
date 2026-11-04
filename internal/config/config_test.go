@@ -57,6 +57,16 @@ func TestJunitPathInsideWorktreeAccepted(t *testing.T) {
 	}
 }
 
+// Non-stealth mode (the managed CLAUDE.md block, spec §5.1) is a valid choice.
+func TestStealthOffAccepted(t *testing.T) {
+	dir := t.TempDir()
+	path := write(t, dir, "p.toml", "[install]\nstealth = false\n")
+	c, err := Load(filepath.Join(dir, "g.toml"), path)
+	if err != nil || c.Install.Stealth {
+		t.Fatalf("stealth = false: %+v %v", c.Install, err)
+	}
+}
+
 func TestLoadErrors(t *testing.T) {
 	tests := []struct {
 		name, body, want string
@@ -66,7 +76,6 @@ func TestLoadErrors(t *testing.T) {
 		{"bad format", "[tests]\nformat = \"xml\"\n", "[tests].format"},
 		{"bad timeout", "[tests]\ntimeout = \"soon\"\n", "[tests].timeout"},
 		{"negative retries", "[tests]\nflaky_retries = -1\n", "flaky_retries"},
-		{"stealth off", "[install]\nstealth = false\n", "Phase 4"},
 		{"bad sink", "[reports]\nsink = \"cloud\"\n", "[reports].sink"},
 		{"notes without path", "[reports]\nsink = \"notes\"\n", "notes_path"},
 		{"bad base", "[merge]\nbase = \"-x\"\n", "[merge].base"},

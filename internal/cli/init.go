@@ -60,13 +60,10 @@ func (env Env) cmdInit(ctx context.Context, args []string) error {
 		}
 	}
 
-	db, err := store.Open(ctx, p.dbPath(), store.Options{Create: true, Migrate: true, BusyTimeout: 5 * time.Second, Retries: 2})
-	if err != nil {
+	if p.db, err = store.Open(ctx, p.dbPath(), store.Options{Create: true, Migrate: true, BusyTimeout: 5 * time.Second, Retries: 2}); err != nil {
 		return err
 	}
-	if err := db.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", p.dbPath(), err)
-	}
+	defer p.close()
 
 	cfgPath, err := config.ProjectPath(p.root, filepath.Join(p.dir, "config.toml"))
 	if err != nil {
@@ -86,6 +83,31 @@ func (env Env) cmdInit(ctx context.Context, args []string) error {
 		return err
 	}
 
+	// Existing rules win (§5.3): what is already agreed is checked against
+	// the project's own rules before context.md is written.
+	rules, err := readProjectRules(p.root)
+	if err != nil {
+		return err
+	}
+	notes, err := reconcileRules(ctx, p)
+	if err != nil {
+		return err
+	}
+	if err := renderContext(ctx, p); err != nil {
+		return err
+	}
+	block := "not used (stealth: CLAUDE.md untouched; the session-start brief carries the rules)"
+	if !p.cfg.Install.Stealth {
+		changed, err := installManagedBlock(p.root, contextImport(p.contextPath()))
+		if err != nil {
+			return err
+		}
+		block = "already present in CLAUDE.md"
+		if changed {
+			block = "written to CLAUDE.md"
+		}
+	}
+
 	hookFile, _, err := installHooks(p.root, env.Exe, filepath.Join(p.dir, "backups", "settings.local.json.bak"))
 	if err != nil {
 		return err
@@ -98,7 +120,15 @@ func (env Env) cmdInit(ctx context.Context, args []string) error {
 		return err
 	}
 
-	fmt.Fprintf(env.Stdout, "project  %s (%s)\ndb       %s\nconfig   %s\nhooks    %s\n", p.id, p.remote, p.dbPath(), p.cfgPath, hookFile)
+	fmt.Fprintf(env.Stdout, "project  %s (%s)\ndb       %s\nconfig   %s\nhooks    %s\ncontext  %s\nblock    %s\nrules    %d line(s) read from CLAUDE.md, CLAUDE.local.md and .claude/rules/\n",
+		p.id, p.remote, p.dbPath(), p.cfgPath, hookFile, p.contextPath(), block, len(rules))
+	for _, n := range notes {
+		fmt.Fprintln(env.Stdout, "conflict "+n)
+	}
+	if !p.cfg.Install.Stealth {
+		fmt.Fprintf(env.Stdout, "\nClaude Code asks once to approve the import of %s, which is outside the repo: approve it, or the rules are not loaded. "+
+			"Commit CLAUDE.md so task worktrees, which are checked out from git, load the block too.\n", p.contextPath())
+	}
 	if p.cfg.Tests.Command == "" && p.cfg.Tests.Format != "none" {
 		fmt.Fprintf(env.Stdout, "\nSet [tests].command in %s before starting a task, or set format = \"none\" if the project has no tests.\n", p.cfgPath)
 	}

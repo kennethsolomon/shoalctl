@@ -182,7 +182,6 @@ func (c Config) Validate() error {
 	check(!strings.Contains(c.Tests.Setup, "{junit}") && !strings.Contains(c.Tests.Setup, "{tests}"),
 		"[tests].setup %q may use {root} (the main checkout) only; {junit} and {tests} belong to the suite commands", c.Tests.Setup)
 	check(strings.TrimSpace(c.Session.Model) != "" && !strings.HasPrefix(c.Session.Model, "-"), "[session].model %q must be a model name", c.Session.Model)
-	check(c.Install.Stealth, "[install].stealth = false is not supported until Phase 4")
 	check(c.Lanes.QAMaxRounds >= 1, "[lanes].qa_max_rounds %d must be >= 1", c.Lanes.QAMaxRounds)
 	check(validRefName(c.Merge.Base), "[merge].base %q must be a branch name", c.Merge.Base)
 	check(oneOf(c.Merge.Strategy, "rebase", "squash"), "[merge].strategy %q must be rebase or squash", c.Merge.Strategy)
