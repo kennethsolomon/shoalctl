@@ -81,7 +81,9 @@ func TestPhase3BriefUnderBudgetCJKAndBlobs(t *testing.T) {
 	mustContain(t, "brief", brief, "shoal task "+slug, "Lessons from earlier tasks", "- lesson:8 ", "一覧画面")
 }
 
-// The brief shows the newest matching lessons, newest first, ties by id.
+// The brief shows the newest matching lessons, newest first, ties by id. A
+// stack-wide lesson (no glob, the project's stack) is among them when it is
+// one of the newest 5; one of another stack never is.
 func TestTaskLessonsNewestFirst(t *testing.T) {
 	var all []memo
 	for i := 1; i <= 7; i++ {
@@ -91,12 +93,16 @@ func TestTaskLessonsNewestFirst(t *testing.T) {
 		}
 		all = append(all, memo{ref: store.LessonKey(int64(i)), kind: store.KindLesson, id: int64(i), glob: "src/**", inject: true, created: created})
 	}
-	all = append(all, memo{ref: "lesson:99", kind: store.KindLesson, id: 99, glob: "docs/**", inject: true, created: "2026-12-01T00:00:00Z"})
+	all = append(all,
+		memo{ref: "lesson:8", kind: store.KindLesson, id: 8, stack: "laravel", inject: true, created: "2026-11-05T12:00:00Z"},
+		memo{ref: "lesson:9", kind: store.KindLesson, id: 9, stack: "laravel", inject: true, created: "2026-10-01T00:00:00Z"},
+		memo{ref: "lesson:10", kind: store.KindLesson, id: 10, stack: "rails", inject: true, created: "2026-12-01T00:00:00Z"},
+		memo{ref: "lesson:99", kind: store.KindLesson, id: 99, glob: "docs/**", inject: true, created: "2026-12-01T00:00:00Z"})
 	var got []string
-	for _, m := range taskLessons(all, []store.Claim{{Glob: "src/**"}}, "") {
+	for _, m := range taskLessons(all, []store.Claim{{Glob: "src/**"}}, "laravel") {
 		got = append(got, m.ref)
 	}
-	want := []string{"lesson:7", "lesson:6", "lesson:5", "lesson:4", "lesson:3"}
+	want := []string{"lesson:7", "lesson:6", "lesson:8", "lesson:5", "lesson:4"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("taskLessons = %v, want %v", got, want)
 	}
