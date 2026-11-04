@@ -31,8 +31,10 @@ const (
 // base64, a minified identifier) stops being one BPE word.
 const longRun = 16
 
-// approxTokens is a conservative, offline token estimate: the larger of
-// two counts. By characters: one token per 3, but one per Han, Hiragana,
+// approxTokens is a conservative, offline token estimate: the largest of
+// three counts. By bytes: one token per 3 bytes of UTF-8, rounded up, so
+// scripts without spaces outside the CJK ranges (Thai, Lao, Khmer) and emoji
+// runs are not undercounted. By characters: one token per 3, but one per Han, Hiragana,
 // Katakana or Hangul character. By pieces: one per word, punctuation mark
 // or CJK character, and one per 2 characters of a run longer than longRun.
 // Claude's tokenizer averages about 3.5-4 characters per token on English
@@ -69,7 +71,7 @@ func approxTokens(s string) int {
 		}
 	}
 	flush()
-	return max((chars+2)/3+cjk, pieces)
+	return max((chars+2)/3+cjk, pieces, (len(s)+2)/3)
 }
 
 // briefData is what the session-start brief shows (§4.6).

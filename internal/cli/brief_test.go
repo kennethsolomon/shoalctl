@@ -33,6 +33,23 @@ func TestApproxTokensCountsCJKAndBlobs(t *testing.T) {
 	}
 }
 
+// Scripts without spaces or CJK ranges (Thai) and emoji runs cost about a
+// token per UTF-8 byte triple or more, so the estimate never drops below
+// ceil(bytes/3).
+func TestApproxTokensAtLeastBytesOverThree(t *testing.T) {
+	thai := string([]rune(strings.Repeat("ภาษาไทยไม่มีช่องว่างระหว่างคำ", 20))[:300])
+	for _, c := range []struct{ name, in string }{
+		{"thai", thai},
+		{"emoji", strings.Repeat("😀🚀🎉", 100)},
+		{"emoji zwj", strings.Repeat("👩‍💻👨‍👩‍👧", 40)},
+	} {
+		want := (len(c.in) + 2) / 3
+		if got := approxTokens(c.in); got < want {
+			t.Errorf("%s: approxTokens = %d, want at least ceil(%d bytes/3) = %d", c.name, got, len(c.in), want)
+		}
+	}
+}
+
 // Worst case for the estimator: 6 matching lessons of 600 CJK characters
 // each (the newest), 2 older ones of 960 hex characters, and hex blobs in the
 // title and the ask. The brief stays under 1k by the estimator and by
