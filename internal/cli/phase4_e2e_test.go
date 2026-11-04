@@ -225,7 +225,7 @@ func TestPhase4ManagedBlock(t *testing.T) {
 	p := h.project()
 	testutil.WriteFile(t, filepath.Join(p.dir, "config.toml"), "[install]\nstealth = false\n")
 	out := h.mustRun("init")
-	mustContain(t, "init", out, "block    written to CLAUDE.md", "Claude Code asks once to approve the import of "+p.contextPath(), "Commit CLAUDE.md")
+	mustContain(t, "init", out, "block    written to CLAUDE.md", "Claude Code asks you to approve the import of "+p.contextPath(), "Task worktrees may ask again", "the session-start brief carries the rules in every task worktree", "Commit CLAUDE.md")
 	want := user + "\r\n" + blockBegin + "\r\n@~/.shoal/projects/" + p.id + "/context.md\r\n" + blockEnd
 	if got := readFile(t, claudeMD); got != want {
 		t.Fatalf("CLAUDE.md:\n%q\nwant:\n%q", got, want)
@@ -238,18 +238,20 @@ func TestPhase4ManagedBlock(t *testing.T) {
 		t.Fatalf("rerun changed CLAUDE.md:\n%q", got)
 	}
 
-	// A session whose checkout has the block loads context.md itself, so the
-	// brief does not repeat the rules; one without it gets them in the brief.
+	// A task session gets the rules in its brief even when its worktree has
+	// the block: the import may be unapproved there (§5.1). Only the main
+	// checkout, where the human approved it, relies on the import.
 	h.mustRun("convention", "propose", "--rule", "Name handlers after the route", "--scope", "api/**")
 	h.asHuman()
 	h.mustRun("convention", "agree", "1")
 	h.asAgent()
 	ts := fakeTasks(t, h, "With block", "Without")
 	testutil.WriteFile(t, filepath.Join(ts[0].wt, "CLAUDE.md"), want)
-	if brief := sessionStart(t, h, ts[0], "s1"); strings.Contains(brief, "convention:1") {
-		t.Errorf("rules repeated next to the import:\n%s", brief)
-	}
+	mustContain(t, "brief in a worktree with the block", sessionStart(t, h, ts[0], "s1"), "- convention:1 (files `api/**`)")
 	mustContain(t, "brief without the block", sessionStart(t, h, ts[1], "s2"), "- convention:1 (files `api/**`)")
+	if brief := h.mustRun("brief", ts[0].slug); strings.Contains(brief, "convention:1") {
+		t.Errorf("the main checkout's brief repeats the rules its CLAUDE.md imports:\n%s", brief)
+	}
 
 	dup := want + "\r\n" + blockBegin + "\r\nx\r\n" + blockEnd + "\r\n"
 	testutil.WriteFile(t, claudeMD, dup)

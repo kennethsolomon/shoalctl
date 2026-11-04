@@ -237,8 +237,9 @@ func taskLessons(all []memo, claims []store.Claim, stack string) []memo {
 }
 
 // sessionBrief gathers and renders the brief of t, and returns the keys of
-// the lessons it shows. dir is the session's checkout: the rules of
-// context.md are in the brief unless dir's CLAUDE.md imports them.
+// the lessons it shows. gitDir is the session's checkout: the rules of
+// context.md are in the brief unless it is the main checkout and its
+// CLAUDE.md imports them.
 func sessionBrief(ctx context.Context, p *project, t store.Task, gitDir string) (string, []string, error) {
 	d := briefData{task: t, maxRounds: p.cfg.Lanes.QAMaxRounds}
 	var err error
@@ -284,7 +285,10 @@ func sessionBrief(ctx context.Context, p *project, t store.Task, gitDir string) 
 	for _, l := range rs.candidates() {
 		d.promotions = append(d.promotions, candidateLine(l, rs.taskHits[l.ID]))
 	}
-	if !importsContext(gitDir) {
+	// A task worktree's import may be unapproved (Claude Code can ask again
+	// in each new worktree, and an unattended session cannot answer), so its
+	// brief always carries the rules; the main checkout relies on its block.
+	if gitDir != p.root || !importsContext(gitDir) {
 		d.rules = rs.contextRuleLines()
 	}
 	out, kept := renderSessionBrief(d)

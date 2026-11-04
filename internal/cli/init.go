@@ -126,8 +126,9 @@ func (env Env) cmdInit(ctx context.Context, args []string) error {
 		fmt.Fprintln(env.Stdout, "conflict "+n)
 	}
 	if !p.cfg.Install.Stealth {
-		fmt.Fprintf(env.Stdout, "\nClaude Code asks once to approve the import of %s, which is outside the repo: approve it, or the rules are not loaded. "+
-			"Commit CLAUDE.md so task worktrees, which are checked out from git, load the block too.\n", p.contextPath())
+		fmt.Fprintf(env.Stdout, "\nClaude Code asks you to approve the import of %s, which is outside the repo: approve it, or sessions in this checkout "+
+			"do not load the rules. Task worktrees may ask again, and an unattended session cannot answer, so the session-start brief carries the rules "+
+			"in every task worktree whatever the block. Commit CLAUDE.md so task worktrees, which are checked out from git, have the block too.\n", p.contextPath())
 	}
 	if p.cfg.Tests.Command == "" && p.cfg.Tests.Format != "none" {
 		fmt.Fprintf(env.Stdout, "\nSet [tests].command in %s before starting a task, or set format = \"none\" if the project has no tests.\n", p.cfgPath)
