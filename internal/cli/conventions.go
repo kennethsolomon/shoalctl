@@ -10,7 +10,6 @@ import (
 	"io"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/kennethsolomon/shoalctl/internal/globx"
@@ -167,11 +166,30 @@ func (s ruleState) promoted() []store.Lesson {
 func (s ruleState) candidates() []store.Lesson {
 	var out []store.Lesson
 	for _, l := range s.lessons {
-		if _, ok := s.carried(l.ID); !l.Promoted && !l.Stale && !ok && s.taskHits[l.ID] >= promoteTasks {
+		if s.notCandidate(l) == "" {
 			out = append(out, l)
 		}
 	}
 	return out
+}
+
+// notCandidate says why l is not up for promotion, or "" when it is.
+func (s ruleState) notCandidate(l store.Lesson) string {
+	if c, ok := s.carried(l.ID); ok {
+		if c.Status == store.ConventionRetired {
+			return fmt.Sprintf("%s carries it, and the human retired it (%s): a declined lesson is never promoted", store.ConventionKey(c.ID), c.RetireReason)
+		}
+		return fmt.Sprintf("%s carries it (%s); agree or retire that convention instead", store.ConventionKey(c.ID), c.Status)
+	}
+	switch {
+	case l.Promoted:
+		return "it is already promoted"
+	case l.Stale:
+		return "it is flagged stale"
+	case s.taskHits[l.ID] < promoteTasks:
+		return fmt.Sprintf("it was shown in %d task(s); promotion needs %d different tasks", s.taskHits[l.ID], promoteTasks)
+	}
+	return ""
 }
 
 // contextRuleLines are the agreed rules every session follows: active
@@ -552,6 +570,13 @@ func (env Env) cmdPromote(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	s, err := loadRuleState(ctx, p.db)
+	if err != nil {
+		return err
+	}
+	if why := s.notCandidate(l); why != "" {
+		return fail(ExitState, "lesson:%d is not up for promotion: %s", id, why)
+	}
 	if ok, err := env.confirm(fmt.Sprintf("%s becomes a project rule, written to %s as:\n%s\nPromote it into context.md? [y/N]: ",
 		store.LessonKey(id), p.contextPath(), promotedLine(l))); err != nil || !ok {
 		return cmp.Or(err, fail(ExitState, "%s not promoted; nothing changed", store.LessonKey(id)))
@@ -561,14 +586,6 @@ func (env Env) cmdPromote(ctx context.Context, args []string) error {
 		return err
 	}
 	if conflict != "" {
-		s, err := loadRuleState(ctx, p.db)
-		if err != nil {
-			return err
-		}
-		if !slices.ContainsFunc(s.candidates(), func(c store.Lesson) bool { return c.ID == id }) {
-			return fail(ExitState, "lesson:%d is not up for promotion: it must be shown in %d different tasks (now %d), not stale, not promoted, "+
-				"and not already a convention", id, promoteTasks, s.taskHits[id])
-		}
 		cid, _, err := p.db.ProposeConvention(ctx, store.Convention{Rule: lessonRule(l), ScopeGlob: lessonScope(l), Conflict: conflict, LessonID: l.ID}, 0)
 		if err != nil {
 			return err

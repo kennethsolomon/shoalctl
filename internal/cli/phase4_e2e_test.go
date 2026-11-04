@@ -339,6 +339,20 @@ func TestPhase4ConflictWithProjectRule(t *testing.T) {
 	if ls, _ := h.db().Lessons(t.Context()); ls[0].Promoted {
 		t.Fatal("a contradicted lesson was promoted")
 	}
+	// The human declines that proposal; with the project rule gone later,
+	// the lesson is still not a candidate: the human said no (§16 row 65).
+	h.asHuman()
+	h.mustRun("convention", "retire", "2", "--why", "we keep real databases in integration tests")
+	h.asAgent()
+	if err := os.Remove(filepath.Join(h.repo, ".claude", "rules", "tests.md")); err != nil {
+		t.Fatal(err)
+	}
+	h.asHuman()
+	mustContain(t, "promote a declined lesson", h.expectCode(ExitState, "promote", "lesson:1"), "lesson:1 is not up for promotion", "convention:2", "retired")
+	h.asAgent()
+	if ls, _ := h.db().Lessons(t.Context()); ls[0].Promoted {
+		t.Fatal("a lesson the human declined was promoted")
+	}
 
 	// At install: an agreed convention that a later project rule
 	// contradicts goes back to proposed; one the human agreed with --force

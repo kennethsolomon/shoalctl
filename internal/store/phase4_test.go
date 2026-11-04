@@ -267,3 +267,38 @@ func TestProposeConventionLimits(t *testing.T) {
 		t.Fatalf("the retired rule in another scope: %v %v", existing, err)
 	}
 }
+
+// A lesson whose convention the human retired is never promoted.
+func TestPromoteLessonRefusesRetiredConvention(t *testing.T) {
+	s, _ := openTest(t)
+	ctx := context.Background()
+	var tasks []Task
+	for _, title := range []string{"A", "B", "C"} {
+		tasks = append(tasks, memoryTask(t, s, title))
+	}
+	lid, err := s.AddLesson(ctx, Lesson{TaskID: tasks[0].ID, Pattern: "p", Fix: "f", PathGlob: "src/**", TrueAtSHA: "abc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, task := range tasks {
+		if _, err := s.Mark(ctx, fmt.Sprintf("s%d", i), task.ID, []string{LessonKey(lid)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cid, _, err := s.ProposeConvention(ctx, Convention{Rule: "p Fix: f", ScopeGlob: "src/**", LessonID: lid, Conflict: "CLAUDE.md:3: never f"}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PromoteLesson(ctx, lid, 3); !errors.Is(err, ErrStage) || !strings.Contains(err.Error(), "proposed") {
+		t.Fatalf("promoting a lesson under discussion: %v", err)
+	}
+	if err := s.RetireConvention(ctx, cid, "K", "no"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PromoteLesson(ctx, lid, 3); !errors.Is(err, ErrStage) || !strings.Contains(err.Error(), ConventionKey(cid)) || !strings.Contains(err.Error(), "retired") {
+		t.Fatalf("promoting a declined lesson: %v", err)
+	}
+	if ls, _ := s.Lessons(ctx); ls[0].Promoted {
+		t.Fatal("promoted")
+	}
+}

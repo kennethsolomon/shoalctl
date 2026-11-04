@@ -250,7 +250,8 @@ func (s *Store) LessonTaskHits(ctx context.Context) (map[int64]int, error) {
 }
 
 // PromoteLesson sets promoted = 1 on a lesson shown in at least minTasks
-// different tasks, not stale and not promoted yet (§11.4). The check runs
+// different tasks, not stale, not promoted yet and carried by no
+// convention (a retired one means the human declined it) (§11.4). The check runs
 // in the write transaction, so it cannot race a flag-stale.
 func (s *Store) PromoteLesson(ctx context.Context, id int64, minTasks int) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
@@ -265,6 +266,18 @@ func (s *Store) PromoteLesson(ctx context.Context, id int64, minTasks int) error
 		var tasks int
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM lesson_hits WHERE lesson_id = ?`, id).Scan(&tasks); err != nil {
 			return fmt.Errorf("read hits of lesson:%d: %w", id, err)
+		}
+		var cid int64
+		var status, reason string
+		err = tx.QueryRowContext(ctx, `SELECT id, status, COALESCE(retire_reason, '') FROM conventions WHERE lesson_id = ? ORDER BY id DESC LIMIT 1`, id).
+			Scan(&cid, &status, &reason)
+		switch {
+		case err == nil && status == ConventionRetired:
+			return fmt.Errorf("%w: lesson:%d is carried by %s, which the human retired (%s); a declined lesson is never promoted", ErrStage, id, ConventionKey(cid), reason)
+		case err == nil:
+			return fmt.Errorf("%w: lesson:%d is carried by %s (%s); agree or retire that convention instead", ErrStage, id, ConventionKey(cid), status)
+		case !errors.Is(err, sql.ErrNoRows):
+			return fmt.Errorf("read the convention of lesson:%d: %w", id, err)
 		}
 		switch {
 		case promoted:
