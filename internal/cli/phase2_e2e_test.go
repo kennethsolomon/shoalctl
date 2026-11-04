@@ -75,8 +75,8 @@ func TestPhase2MergeOutputAcceptance(t *testing.T) {
 // Done when 1: the Bug A / Bug B scenario (spec §14 steps 1-5). Both bugs
 // claim resources/js/users/**; the human presses s, so Bug B waits for Bug
 // A. Bug A goes red, green, fails a QA round, passes the next, is queued and
-// merged; Bug B is unblocked and starts from the new base. (Bug A's lesson
-// reaching Bug B's brief needs the Phase 3 lessons table.)
+// merged; Bug B is unblocked and starts from the new base, and the lesson
+// Bug A recorded after its failed round reaches Bug B's brief (step 5).
 func TestPhase2BugABugB(t *testing.T) {
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
@@ -109,7 +109,9 @@ func TestPhase2BugABugB(t *testing.T) {
 	commitIn(t, a.Worktree, "resources/js/users/list.js", "export const name = u => u.first_name ?? u.email\n")
 	h.mustRun("repro", "green", bugA, "--test", "C::bug")
 	commitIn(t, a.Worktree, "broken.txt", "the list view reads another accessor")
-	h.expectCode(ExitGate, "qa", bugA) // QA round 1 fails
+	mustContain(t, "qa 1", h.expectCode(ExitGate, "qa", bugA), "record the lesson: shoalctl record lesson "+bugA) // QA round 1 fails
+	mustContain(t, "lesson", h.mustRun("record", "lesson", bugA, "--pattern", "the list view reads a different accessor than User::displayName",
+		"--fix", "make the list view use User::displayName", "--glob", "resources/js/users/**"), "recorded lesson:1 for "+bugA)
 	testutil.Git(t, a.Worktree, "rm", "-q", "broken.txt")
 	testutil.Git(t, a.Worktree, "commit", "-q", "-m", "list view uses the same accessor")
 	mustContain(t, "qa 2", h.mustRun("qa", bugA), "qa round 2 passed")
@@ -140,6 +142,19 @@ func TestPhase2BugABugB(t *testing.T) {
 	if cl, _ := h.db().Claims(context.Background(), b.ID); len(cl) != 2 {
 		t.Fatalf("B's claims: %+v", cl)
 	}
+	// Step 5: Bug B's brief carries Bug A's lesson, because the paths match:
+	// in brief.md at start, and in the brief SessionStart injects.
+	mustContain(t, "B brief.md", readFile(t, filepath.Join(b.Worktree, ".shoal", "brief.md")), "## Lessons from earlier tasks",
+		"- lesson:1 (task "+bugA, "on resources/js/users/**", "the list view reads a different accessor", "verify it against the current code")
+	start := inHook(t, h, b.Worktree, "session-start", `{"session_id": "bug-b", "source": "startup"}`)
+	mustContain(t, "B session brief", start.HookSpecificOutput.AdditionalContext, "shoal task "+bugB, "- lesson:1 (task "+bugA,
+		"make the list view use User::displayName")
+	if ls, err := h.db().Lessons(context.Background()); err != nil || len(ls) != 1 || ls[0].Hits != 1 || ls[0].QARound != 1 {
+		t.Fatalf("Bug A's lesson after Bug B's session started: %+v %v", ls, err)
+	}
+	// Bug A's fix is recorded as a bug, pointing at the commit on main.
+	mustContain(t, "why bug:1", h.mustRun("why", "bug:1"), "bug:1 (task "+bugA, "Root cause:", "Fix: "+shortSHA(h.task(bugA).MergedSHA),
+		"Regression test C::bug (tests/bug.t): still in HEAD")
 }
 
 // Done when 2: concurrent plans claiming one path; exactly one wins and
