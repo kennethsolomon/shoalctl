@@ -468,6 +468,10 @@ func markTx(ctx context.Context, tx *sql.Tx, session string, taskID int64, keys 
 			if _, err := tx.ExecContext(ctx, `UPDATE lessons SET hits = hits + 1, last_hit_at = ? WHERE id = ?`, ts, num); err != nil {
 				return fmt.Errorf("count a hit for lesson %s: %w", num, err)
 			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO lesson_hits (lesson_id, task_id, hits, last_hit_at) VALUES (?, ?, 1, ?)
+				ON CONFLICT (lesson_id, task_id) DO UPDATE SET hits = hits + 1, last_hit_at = excluded.last_hit_at`, num, taskID, ts); err != nil {
+				return fmt.Errorf("count a hit for lesson %s in task %d: %w", num, taskID, err)
+			}
 		}
 	}
 	return nil
@@ -479,7 +483,7 @@ func markTx(ctx context.Context, tx *sql.Tx, session string, taskID int64, keys 
 const shownPrefix = "shown:"
 
 // injectedKeys matches the hook marks of injected records.
-const injectedKeys = `(key LIKE 'lesson:%' OR key LIKE 'decision:%' OR key LIKE 'bug:%')`
+const injectedKeys = `(key LIKE 'lesson:%' OR key LIKE 'decision:%' OR key LIKE 'bug:%' OR key LIKE 'convention:%')`
 
 // ResetInjected forgets which records the session was given, after a
 // compaction or /clear dropped them from its context, so the hooks inject
