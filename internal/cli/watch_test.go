@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,9 @@ import (
 // does for a closed window.
 func fakeTmux(t *testing.T, dir string) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake tmux is a POSIX shell script")
+	}
 	testutil.RequireSh(t)
 	path := filepath.Join(t.TempDir(), "tmux")
 	script := fmt.Sprintf(`#!/bin/sh
