@@ -148,3 +148,30 @@ func TestWithManagedBlockIgnoresFences(t *testing.T) {
 		t.Errorf("unclosed fence: %v", err)
 	}
 }
+
+// A UTF-8 byte order mark before a marker on line 1 is not part of it: the
+// block is found, and the BOM stays.
+func TestWithManagedBlockBOM(t *testing.T) {
+	const bom = "\xef\xbb\xbf"
+	block := blockBegin + "\n" + testImport + "\n" + blockEnd + "\n"
+	for name, tc := range map[string]struct{ in, want string }{
+		"current block": {bom + block + "rest\n", bom + block + "rest\n"},
+		"stale block":   {bom + blockBegin + "\n@old\n" + blockEnd + "\nrest\n", bom + block + "rest\n"},
+		"no block":      {bom + "# Rules\n", bom + "# Rules\n" + block},
+	} {
+		got, _, err := withManagedBlock("CLAUDE.md", []byte(tc.in), testImport)
+		if err != nil || string(got) != tc.want {
+			t.Errorf("%s: %q %v, want %q", name, got, err, tc.want)
+		}
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), got, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if !importsContext(dir) {
+			t.Errorf("%s: block after a BOM not found", name)
+		}
+	}
+	if rules := ruleLines("CLAUDE.md", []byte(bom+"Never use tabs\n")); len(rules) != 1 || rules[0].text != "Never use tabs" {
+		t.Errorf("rule after a BOM: %+v", rules)
+	}
+}

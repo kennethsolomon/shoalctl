@@ -42,7 +42,12 @@ func splitLines(data []byte) [][]byte {
 	return out
 }
 
-func lineText(l []byte) string { return strings.TrimSpace(string(l)) }
+// utf8BOM is the byte order mark some editors write at the start of a file.
+const utf8BOM = "\ufeff"
+
+// lineText is a line without its surrounding space and without a byte
+// order mark, which only the first line can carry.
+func lineText(l []byte) string { return strings.TrimSpace(strings.TrimPrefix(string(l), utf8BOM)) }
 
 // withManagedBlock returns data with exactly one managed block holding
 // importLine, and whether that changed anything. Bytes outside the markers

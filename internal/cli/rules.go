@@ -88,7 +88,7 @@ func ruleLines(name string, data []byte) []projectRule {
 	var fence fences
 	managed := false
 	for n := 1; sc.Scan(); n++ {
-		l := strings.TrimSpace(sc.Text())
+		l := lineText([]byte(sc.Text()))
 		if fence.skip(l, n) {
 			continue
 		}
