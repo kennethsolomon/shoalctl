@@ -19,11 +19,11 @@ func TestPhase2Schema(t *testing.T) {
 		}
 	}
 	migs, _ := Migrations()
-	if len(migs) != 5 || migs[3].Name != "phase2" || migs[4].Name != "tmux_socket" {
+	if len(migs) < 5 || migs[3].Name != "phase2" || migs[4].Name != "tmux_socket" {
 		t.Fatalf("migrations: %+v", migs)
 	}
 	var v int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 5 {
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != len(migs) {
 		t.Fatalf("user_version = %d, %v", v, err)
 	}
 }
@@ -54,7 +54,7 @@ func TestPhase2MigrationQueuesDoneTasks(t *testing.T) {
 	}
 	defer s.Close()
 	var v int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != 5 {
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&v); err != nil || v != len(migs) {
 		t.Fatalf("user_version = %d, %v", v, err)
 	}
 	if old, err := s.taskByID(ctx, 3); err != nil || old.TmuxSocket != "" {

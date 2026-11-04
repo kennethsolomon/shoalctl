@@ -450,6 +450,12 @@ func refreshBlocked(ctx context.Context, tx *sql.Tx, id int64) (bool, error) {
 		}
 		return false, nil
 	}
+	// A started task waits only for its merge turn (a late overlap): its
+	// stage stays, its blocked_by clears.
+	if _, err := tx.ExecContext(ctx, `UPDATE tasks SET blocked_by = NULL, updated_at = ? WHERE id = ? AND stage <> ? AND blocked_by IS NOT NULL`,
+		ts, id, StageBlocked); err != nil {
+		return false, fmt.Errorf("clear the merge order of task %d: %w", id, err)
+	}
 	res, err := tx.ExecContext(ctx, `UPDATE tasks SET stage = ?, blocked_by = NULL, version = version + 1, updated_at = ?
 		WHERE id = ? AND stage = ?`, StageReady, ts, id, StageBlocked)
 	if err != nil {
