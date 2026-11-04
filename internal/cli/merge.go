@@ -100,7 +100,7 @@ func (env Env) cmdMerge(ctx context.Context, args []string) error {
 		}
 		if len(waits) > 0 {
 			if *only == "" {
-				fmt.Fprintf(env.Stdout, "%s: waits for %s to merge first (late overlap: it wrote files they claim)\n", t.Slug, strings.Join(waits, ", "))
+				fmt.Fprintf(env.Stdout, "%s: waits for %s to merge first (late overlap: it wrote files they claim); to merge it ahead anyway: shoalctl merge --task %s\n", t.Slug, strings.Join(waits, ", "), t.Slug)
 				behind = append(behind, t)
 				continue
 			}

@@ -466,8 +466,15 @@ func refreshBlocked(ctx context.Context, tx *sql.Tx, id int64) (bool, error) {
 }
 
 // UnblockAfterMerge drops every serialize choice behind the merged task and
-// returns the tasks that became ready, inside the merge's transaction.
+// returns the tasks that became ready, inside the merge's transaction. The
+// merged task's own waits go too: merge --task can land it ahead of them.
 func UnblockAfterMerge(ctx context.Context, tx *sql.Tx, merged int64) ([]int64, error) {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM task_blockers WHERE task_id = ?`, merged); err != nil {
+		return nil, fmt.Errorf("drop the waits of merged task %d: %w", merged, err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE tasks SET blocked_by = NULL WHERE id = ?`, merged); err != nil {
+		return nil, fmt.Errorf("clear blocked_by of merged task %d: %w", merged, err)
+	}
 	waiting, err := blockedOn(ctx, tx, merged)
 	if err != nil {
 		return nil, err

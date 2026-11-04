@@ -293,6 +293,41 @@ func TestPhase3LateOverlapFromEdits(t *testing.T) {
 	}
 }
 
+// The stuck-holder escape: X wrote onto E's claim, so X merges after E. E
+// never finishes. Plain merge skips X and names the way out; merge --task X
+// merges X ahead of E, and E, whose claim X changed, must rebase.
+func TestPhase3MergeTaskAheadOfStuckHolder(t *testing.T) {
+	h := newHarness(t).withSession()
+	h.initWith(junitConfig)
+	e := newTask(t, h, "feature", "Dropbox integration")
+	h.mustRun("plan", e, "config/services.php")
+	h.mustRun("start", e)
+	x := startedTask(t, h, "feature", "Clients CRUD")
+	inHook(t, h, x.Worktree, "post-tool-use", toolCall("sx", "Edit", filepath.Join(x.Worktree, "config", "services.php"), ""))
+	commitIn(t, x.Worktree, "config/services.php", "<?php return ['clients' => true];\n")
+	finish(t, h, x.Slug, x.Worktree)
+
+	out := h.mustRun("merge")
+	mustContain(t, "plain merge", out, x.Slug+": waits for "+e+" to merge first",
+		"shoalctl merge --task "+x.Slug, "merged 0 task(s)")
+	if got := h.task(x.Slug); got.Stage != store.StageDone {
+		t.Fatalf("plain merge moved X: %+v", got)
+	}
+
+	out = h.mustRun("merge", "--task", x.Slug)
+	mustContain(t, "merge --task", out, x.Slug+": merging ahead of "+e+", as --task asked",
+		"merged "+x.Slug+" into main", e+": needs-rebase: its claims overlap config/services.php", "merged 1 task(s)")
+	if got := h.task(x.Slug); got.Stage != store.StageMerged {
+		t.Fatalf("X after merge --task: %+v", got)
+	}
+	if got := h.task(e); got.Stage != store.StageNeedsRebase {
+		t.Fatalf("E after X merged onto its claim: %+v", got)
+	}
+	if n := countRows(t, h.project(), `SELECT count(*) FROM task_blockers WHERE task_id = ?`, h.task(x.Slug).ID); n != 0 || h.task(x.Slug).BlockedBy != 0 {
+		t.Errorf("X still has %d blocker row(s) after it merged", n)
+	}
+}
+
 // Hooks register once, in the main checkout, and exit early elsewhere
 // (Phase 0 decision). If a worktree registered them too, Claude Code would
 // run each hook twice: every handler then still acts once. Proven by
