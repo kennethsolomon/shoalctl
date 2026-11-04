@@ -500,11 +500,11 @@ func TestPhase3HookLatency(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		h.mustRun("convention", "propose", "--rule", fmt.Sprintf("module %d keeps one public entry point", i), "--scope", fmt.Sprintf("src/m%d/**", i))
 	}
-	h.env.Terminal = func() bool { return true }
+	h.asHuman()
 	for i := 1; i <= 20; i++ {
 		h.mustRun("convention", "agree", fmt.Sprint(i))
 	}
-	h.env.Terminal = nil
+	h.asAgent()
 	task := startedTask(t, h, "feature", "Timed")
 	t.Setenv("CLAUDE_PROJECT_DIR", task.Worktree)
 	const runs = 15

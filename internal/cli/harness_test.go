@@ -55,6 +55,7 @@ type harness struct {
 	repo    string
 	argsLog string
 	env     Env
+	answers string // stdin of each run when env.Stdin is nil
 }
 
 func newHarness(t *testing.T) *harness {
@@ -86,7 +87,7 @@ func (h *harness) run(args ...string) (int, string, string) {
 	env := h.env
 	env.Stdout, env.Stderr = &out, &errb
 	if env.Stdin == nil {
-		env.Stdin = strings.NewReader("")
+		env.Stdin = strings.NewReader(h.answers)
 	}
 	code := Main(args, env, "test")
 	return code, out.String(), errb.String()

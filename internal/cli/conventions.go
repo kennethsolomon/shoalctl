@@ -1,10 +1,15 @@
 package cli
 
 import (
+	"bufio"
+	"cmp"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -25,16 +30,57 @@ func scopeText(glob string) string {
 	return glob
 }
 
+// wordAt is an @ that starts a word: what Claude Code reads as an import.
+var wordAt = regexp.MustCompile(`(^|\s)@`)
+
+// inert makes agent-written text safe to put in a file Claude Code loads
+// as instructions (context.md, imported by the managed block): one line,
+// no word-initial @ (an @path import) and no HTML comment marker (an
+// unclosed <!-- would hide every later rule).
+func inert(s string, n int) string {
+	s = strings.NewReplacer("<!--", "< !--", "-->", "-- >").Replace(clip(s, n))
+	return wordAt.ReplaceAllString(s, "${1}@ ")
+}
+
+// literal renders text as a markdown code span, which Claude Code does not
+// read imports from and markdown does not parse: the fence is one backtick
+// longer than the longest run inside.
+func literal(s string) string {
+	longest, run := 0, 0
+	for _, r := range s {
+		if r == '`' {
+			run++
+			longest = max(longest, run)
+		} else {
+			run = 0
+		}
+	}
+	fence := strings.Repeat("`", longest+1)
+	if longest > 0 {
+		return fence + " " + s + " " + fence
+	}
+	return fence + s + fence
+}
+
+func scopeLiteral(glob string) string {
+	if glob == "" {
+		return scopeText(glob)
+	}
+	return literal(inert(glob, maxRecordText))
+}
+
+// conventionLine and promotedLine are the lines of context.md: every piece
+// of recorded text is inert and in a code span (§16 row 70).
 func conventionLine(c store.Convention) string {
-	s := fmt.Sprintf("- %s (files %s): %s", store.ConventionKey(c.ID), c.ScopeGlob, clip(c.Rule, maxRecordText))
+	s := fmt.Sprintf("- %s (files %s): %s", store.ConventionKey(c.ID), scopeLiteral(c.ScopeGlob), literal(inert(c.Rule, maxRecordText)))
 	if c.Conflict != "" {
-		s += " (agreed although " + clip(c.Conflict, 160) + " seemed to say otherwise)"
+		s += " (agreed although " + literal(inert(c.Conflict, 160)) + " seemed to say otherwise)"
 	}
 	return s
 }
 
 func promotedLine(l store.Lesson) string {
-	return fmt.Sprintf("- %s (files %s): %s Fix: %s", store.LessonKey(l.ID), scopeText(l.PathGlob), clip(l.Pattern, 300), clip(l.Fix, 300))
+	return fmt.Sprintf("- %s (files %s): %s", store.LessonKey(l.ID), scopeLiteral(l.PathGlob), literal(inert(l.Pattern, 300)+" Fix: "+inert(l.Fix, 300)))
 }
 
 func proposedLine(c store.Convention, slugs map[int64]string) string {
@@ -348,6 +394,10 @@ func (env Env) conventionAgree(ctx context.Context, args []string) error {
 		return fail(ExitState, "%s conflicts with %s, and project rules win: change that rule first, retire this proposal "+
 			"(shoalctl convention retire %d --why \"...\"), or, if the match is wrong, agree with --force", store.ConventionKey(id), a.Conflict, id)
 	}
+	line := conventionLine(store.Convention{ID: id, Rule: a.Rule, ScopeGlob: a.ScopeGlob, Conflict: a.Conflict})
+	if ok, err := env.confirm(fmt.Sprintf("%s becomes a project rule, written to %s as:\n%s\nAgree? [y/N]: ", store.ConventionKey(id), p.contextPath(), line)); err != nil || !ok {
+		return cmp.Or(err, fail(ExitState, "%s not agreed; nothing changed", store.ConventionKey(id)))
+	}
 	if err := p.db.AgreeConvention(ctx, id, a); err != nil {
 		return err
 	}
@@ -356,6 +406,16 @@ func (env Env) conventionAgree(ctx context.Context, args []string) error {
 	}
 	fmt.Fprintf(env.Stdout, "%s is active for %s; injected when those files are touched and written to %s\n", store.ConventionKey(id), a.ScopeGlob, p.contextPath())
 	return nil
+}
+
+// confirm prints prompt and reports whether the human answered y.
+func (env Env) confirm(prompt string) (bool, error) {
+	fmt.Fprint(env.Stdout, prompt)
+	line, err := bufio.NewReader(env.Stdin).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, fmt.Errorf("read the answer: %w", err)
+	}
+	return strings.EqualFold(strings.TrimSpace(line), "y"), nil
 }
 
 func lessonByID(ctx context.Context, db *store.Store, id int64) (store.Lesson, error) {
@@ -478,6 +538,10 @@ func (env Env) cmdPromote(ctx context.Context, args []string) error {
 	l, err := lessonByID(ctx, p.db, id)
 	if err != nil {
 		return err
+	}
+	if ok, err := env.confirm(fmt.Sprintf("%s becomes a project rule, written to %s as:\n%s\nPromote it into context.md? [y/N]: ",
+		store.LessonKey(id), p.contextPath(), promotedLine(l))); err != nil || !ok {
+		return cmp.Or(err, fail(ExitState, "%s not promoted; nothing changed", store.LessonKey(id)))
 	}
 	conflict, err := conflictOf(p, l.Fix)
 	if err != nil {

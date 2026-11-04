@@ -77,7 +77,6 @@ func TestRequireHumanRefusesClaudeCodeSession(t *testing.T) {
 				"inside a Claude Code session ("+k+" is set)", "your own terminal")
 			mustContain(t, "promote in Claude Code", h.expectCode(ExitState, "promote", "lesson:1"), "inside a Claude Code session")
 			t.Setenv(k, "")
-			h.env.Stdin = strings.NewReader("y\n")
 			h.mustRun("convention", "agree", "1")
 		})
 	}
