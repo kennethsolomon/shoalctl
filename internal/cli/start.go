@@ -660,6 +660,8 @@ func renderTeam(b *strings.Builder, t store.Task, cfg config.Config, items []sto
 	fmt.Fprintf(b, "- QA: shoalctl test %[1]s --kind qa; a human runs shoalctl qa %[1]s (at most %[2]d rounds, then the task escalates)\n", t.Slug, cfg.Lanes.QAMaxRounds)
 	fmt.Fprintf(b, `- memory: after a failed QA round, shoalctl record lesson %[1]s --pattern "<what went wrong>" --fix "<what fixed it>" --glob <files>;
   shoalctl record decision|qa %[1]s for choices and answers; shoalctl why <file> and shoalctl recall <words> read what earlier tasks recorded
+- conventions: when the human sets a rule from now on ("use X from now on"), shoalctl convention propose %[1]s --rule "<rule>" --scope <glob>;
+  the next session opens with a brainstorm about it, and only the human agrees (shoalctl convention agree) or retires it
 `, t.Slug)
 	if t.Lane == "hotfix" {
 		fmt.Fprintf(b, "- minimal diff: at most %d added + removed lines outside test files\n", cfg.Hotfix.MaxDiffLines)
