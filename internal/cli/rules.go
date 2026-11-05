@@ -66,29 +66,71 @@ var listMarker = regexp.MustCompile(`^(?:[#>*+\-\s]+|\d+[.)]\s+)+`)
 // opener is 0-3 spaces then 3+ backticks or tildes (a backtick opener's
 // info string holds no backtick); the closer is the same character, at
 // least as long, after 0-3 spaces, with only whitespace after it. A fence
-// left open runs to the end of the file. List context is ignored. Text
-// inside is an example, never a rule, a marker or an import.
+// left open runs to the end of the file. A fence may also open right after
+// a list marker (`-`, `*`, `+`, `1.`, `1)` then 1-4 spaces, after 0-3
+// spaces): it closes at a matching closer indented 0-3 columns past the
+// item's content, or ends without one at the first non-blank line indented
+// less than that content. Blockquotes and nested list markers are not
+// tracked. Text inside is an example, never a rule or an import.
 type fences struct {
 	open int  // line number of the open fence; 0 when outside
 	char byte // '`' or '~' of the open fence
 	size int  // length of the open fence's run
+	item int  // content column of a list-item fence; 0 for a top-level one
 }
+
+// listItemFence matches a list marker that a fence may open right after.
+var listItemFence = regexp.MustCompile("^ {0,3}(?:[-*+]|[0-9]{1,9}[.)]) {1,4}[`~]")
 
 // skip reports whether line l (line number n, with or without its line
 // ending or a byte order mark) is a fence line or inside a fence.
 func (f *fences) skip(l []byte, n int) bool {
-	ch, size, rest, ok := fenceRun(strings.TrimRight(strings.TrimPrefix(string(l), utf8BOM), "\r\n"))
+	s := strings.TrimRight(strings.TrimPrefix(string(l), utf8BOM), "\r\n")
+	if f.open != 0 && f.item > 0 && strings.TrimSpace(s) != "" && indentWidth(s) < f.item {
+		f.open = 0 // the list item, and its fence, ended before this line
+	}
 	if f.open == 0 {
+		ch, size, rest, ok := fenceRun(s)
+		item := 0
+		if !ok {
+			if m := listItemFence.FindString(s); m != "" {
+				item = len(m) - 1
+				ch, size, rest, ok = fenceRun(s[item:])
+			}
+		}
 		if !ok || ch == '`' && strings.ContainsRune(rest, '`') {
 			return false
 		}
-		f.open, f.char, f.size = n, ch, size
+		f.open, f.char, f.size, f.item = n, ch, size, item
 		return true
 	}
-	if ok && ch == f.char && size >= f.size && strings.TrimSpace(rest) == "" {
+	if f.item > 0 {
+		if w := indentWidth(s); w > f.item+3 {
+			return true
+		}
+		s = strings.TrimLeft(s, " \t")
+	}
+	if ch, size, rest, ok := fenceRun(s); ok && ch == f.char && size >= f.size && strings.TrimSpace(rest) == "" {
 		f.open = 0
 	}
 	return true
+}
+
+// indentWidth is the column of s's first non-blank character, a tab
+// advancing to the next multiple of 4.
+func indentWidth(s string) int {
+	w := 0
+	for _, c := range []byte(s) {
+		switch c {
+		case ' ':
+			w++
+		case '\t':
+			w += 4 - w%4
+		default:
+			return w
+		}
+	}
+	return w
 }
 
 // fenceRun splits a line that starts, after at most 3 spaces, with a run
@@ -124,7 +166,7 @@ func ruleLines(name string, data []byte) []projectRule {
 			continue
 		}
 		l := lineText(sc.Bytes())
-		switch m := markerText(sc.Bytes()); {
+		switch m := markerText(sc.Bytes(), n); {
 		case m == blockBegin:
 			managed = true
 			continue

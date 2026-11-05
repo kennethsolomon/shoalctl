@@ -39,6 +39,19 @@ func TestFencesCommonMark(t *testing.T) {
 		{"unclosed inner fence stays content", "````md\n```go\nx\n````\nz\n", "ffff.", 0},
 		{"crlf", "a\r\n```\r\nb\r\n```\r\nc\r\n", ".fff.", 0},
 		{"bom before an opener", "\xef\xbb\xbf```\nb\n```\nc\n", "fff.", 0},
+		{"dash list-item fence", "- ```\n  x\n  ```\nz\n", "fff.", 0},
+		{"ordered list-item fence", "1. ```md\n   x\n   ```\n", "fff", 0},
+		{"paren list-item fence", "1) ~~~\n   x\n   ~~~\nz\n", "fff.", 0},
+		{"star and plus list-item fences", "* ```\n  x\n  ```\n+ ~~~\n  y\n  ~~~\n", "ffffff", 0},
+		{"indented list item fence", "  - ```\n    x\n    ```\nz\n", "fff.", 0},
+		{"list fence keeps blank lines", "- ```\n  x\n\n  y\n  ```\nz\n", "fffff.", 0},
+		{"list closer indented within the item", "- ```\n  x\n     ```\nz\n", "fff.", 0},
+		{"list fence ends at a less-indented line", "- ```\n  x\nz\n", "ff.", 0},
+		{"list fence ends at the next item", "- ```\n  x\n- y\n", "ff.", 0},
+		{"top-level fence after a list fence", "- ```\n  x\n```\ny\n```\nz\n", "fffff.", 0},
+		{"unclosed list fence", "- ```\n  x\n", "ff", 1},
+		{"list item with inline code is not a fence", "- use ```x``` here\nx\n", "..", 0},
+		{"list marker needs a space", "-```\nx\n", "..", 0},
 	} {
 		var f fences
 		var got strings.Builder

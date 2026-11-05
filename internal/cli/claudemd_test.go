@@ -38,9 +38,9 @@ func TestWithManagedBlockAppends(t *testing.T) {
 // A block whose import line differs (edited by hand) gets the right line
 // back; everything around it stays byte for byte.
 func TestWithManagedBlockRepairsInside(t *testing.T) {
-	in := "top\r\n  " + blockBegin + "\r\n@elsewhere\r\nextra\r\n" + blockEnd + "  \r\nbottom"
+	in := "top\r\n" + blockBegin + "\r\n@elsewhere\r\nextra\r\n" + blockEnd + "  \r\nbottom"
 	got, changed, err := withManagedBlock("CLAUDE.md", []byte(in), testImport)
-	want := "top\r\n  " + blockBegin + "\r\n" + testImport + "\r\n" + blockEnd + "  \r\nbottom"
+	want := "top\r\n" + blockBegin + "\r\n" + testImport + "\r\n" + blockEnd + "  \r\nbottom"
 	if err != nil || !changed || string(got) != want {
 		t.Fatalf("%q %v %v", got, changed, err)
 	}
@@ -176,27 +176,58 @@ func TestWithManagedBlockBOM(t *testing.T) {
 	}
 }
 
-// A marker counts only with 0-3 leading spaces, the indent CommonMark
-// allows before a block: 4+ spaces or a tab make it indented code (or a
-// list item's nested code), an example that stays byte for byte (§5.1).
-func TestWithManagedBlockMarkerIndent(t *testing.T) {
+// A marker counts only at column 0 (after a BOM on line 1), the form
+// shoal writes, and outside a fence. Round 3 let 0-3 spaces count; round 4
+// changed the rule: any leading whitespace (spaces, a tab, NBSP) makes it
+// plain text, so list-item content and indented code can never be the
+// block. Plain-text markers stay byte for byte, the real block is
+// appended, importsContext does not count them and they hide no rules
+// (§5.1, row 75).
+func TestWithManagedBlockMarkerColumnZero(t *testing.T) {
+	const bom = "\xef\xbb\xbf"
 	block := blockBegin + "\n" + testImport + "\n" + blockEnd + "\n"
+	example := func(indent string) string {
+		return indent + blockBegin + "\n" + indent + "@~/OLD\n" + indent + blockEnd + "\n"
+	}
+	appended := func(in string) string { return in + strings.ReplaceAll(block, "\n", eolOf(in)) }
 	for name, tc := range map[string]struct {
 		in, want string
-		counts   bool
+		counts   bool // importsContext on the input
 	}{
-		"indented code block": {"Example:\n\n    " + blockBegin + "\n    @~/OLD\n    " + blockEnd + "\n",
-			"Example:\n\n    " + blockBegin + "\n    @~/OLD\n    " + blockEnd + "\n" + block, false},
-		"list-item fence": {"1. Example:\n\n    ```\n    " + blockBegin + "\n    @~/OLD\n    " + blockEnd + "\n    ```\n",
-			"1. Example:\n\n    ```\n    " + blockBegin + "\n    @~/OLD\n    " + blockEnd + "\n    ```\n" + block, false},
-		"tab": {"\t" + blockBegin + "\n@~/OLD\n\t" + blockEnd + "\n",
-			"\t" + blockBegin + "\n@~/OLD\n\t" + blockEnd + "\n" + block, false},
-		"three spaces": {"   " + blockBegin + "\n@~/OLD\n   " + blockEnd + "\n",
-			"   " + blockBegin + "\n" + testImport + "\n   " + blockEnd + "\n", true},
+		"dash list fence":       {"- ```\n" + example("  ") + "  ```\n", "", false},
+		"ordered list fence md": {"1. ```md\n" + example("   ") + "   ```\n", "", false},
+		"star list fence":       {"* ```\n" + example("  ") + "  ```\n", "", false},
+		"plus list fence":       {"+ ~~~\n" + example("  ") + "  ~~~\n", "", false},
+		"paren list fence":      {"1) ```\n" + example("   ") + "   ```\n", "", false},
+		"one space":             {example(" "), "", false},
+		"two spaces":            {example("  "), "", false},
+		"three spaces":          {example("   "), "", false},
+		"four spaces":           {"Example:\n\n" + example("    "), "", false},
+		"tab":                   {example("\t"), "", false},
+		"nbsp":                  {example("\u00a0"), "", false},
+		"bom on line 2":         {"# Rules\n" + bom + blockBegin + "\n@~/OLD\n" + bom + blockEnd + "\n", "", false},
+		"crlf list fence":       {strings.ReplaceAll("- ```\n"+example("  ")+"  ```\n", "\n", "\r\n"), "", false},
+		"unclosed list fence":   {"- ```\n" + example("  "), "", false},
+		"bom then column 0":     {bom + blockBegin + "\n@~/OLD\n" + blockEnd + "\nrest\n", bom + block + "rest\n", true},
+		"crlf column 0": {"a\r\n" + blockBegin + "\r\n@~/OLD\r\n" + blockEnd + "\r\n",
+			"a\r\n" + blockBegin + "\r\n" + testImport + "\r\n" + blockEnd + "\r\n", true},
+		"trailing space column 0": {blockBegin + " \n@~/OLD\n" + blockEnd + "\t\n",
+			blockBegin + " \n" + testImport + "\n" + blockEnd + "\t\n", true},
+		"indented example before the real block": {"- " + blockBegin + "\n" + example("  ") + blockBegin + "\n@old\n" + blockEnd + "\n",
+			"- " + blockBegin + "\n" + example("  ") + block, true},
 	} {
+		want := tc.want
+		if want == "" {
+			want = appended(tc.in)
+		}
 		got, changed, err := withManagedBlock("CLAUDE.md", []byte(tc.in), testImport)
-		if err != nil || !changed || string(got) != tc.want {
-			t.Errorf("%s: %q %v %v, want %q", name, got, changed, err, tc.want)
+		if err != nil || !changed || string(got) != want {
+			t.Errorf("%s: %q %v %v, want %q", name, got, changed, err, want)
+			continue
+		}
+		again, changed, err := withManagedBlock("CLAUDE.md", got, testImport)
+		if err != nil || changed || !bytes.Equal(again, got) {
+			t.Errorf("%s: second run changed the file: %q %v %v", name, again, changed, err)
 		}
 		dir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(tc.in), 0o644); err != nil {
@@ -205,13 +236,31 @@ func TestWithManagedBlockMarkerIndent(t *testing.T) {
 		if importsContext(dir) != tc.counts {
 			t.Errorf("%s: importsContext = %v, want %v", name, !tc.counts, tc.counts)
 		}
+		if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), got, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if !importsContext(dir) {
+			t.Errorf("%s: the real block is not found", name)
+		}
+		for _, r := range ruleLines("CLAUDE.md", []byte(tc.in)) {
+			if strings.Contains(r.text, "@~/OLD") && strings.Contains(name, "list fence") {
+				t.Errorf("%s: code in a list-item fence read as a rule: %+v", name, r)
+			}
+		}
 	}
-	// An indented begin marker does not open the managed block, so the rule
-	// after it is still read; a 3-space one does.
-	for in, want := range map[string]bool{"    " + blockBegin: true, "\t" + blockBegin: true, "   " + blockBegin: false} {
+	// A begin marker with any leading whitespace does not open the managed
+	// block, so the rule after it is still read; a column-0 one does.
+	for in, want := range map[string]bool{
+		" " + blockBegin: true, "  " + blockBegin: true, "   " + blockBegin: true, "    " + blockBegin: true,
+		"\t" + blockBegin: true, "\u00a0" + blockBegin: true, "- " + blockBegin: true,
+		blockBegin + "\n" + blockEnd: true, blockBegin + "\nx\n" + blockEnd + "\n" + blockBegin + "\n" + blockEnd: true,
+	} {
 		rules := ruleLines("CLAUDE.md", []byte(in+"\nNever use tabs\n"))
 		if read := len(rules) > 0 && rules[len(rules)-1].text == "Never use tabs"; read != want {
 			t.Errorf("%q: rule after the marker read = %v, want %v (%+v)", in, read, want, rules)
 		}
+	}
+	if rules := ruleLines("CLAUDE.md", []byte(blockBegin+"\nInside\n"+blockEnd+"\n")); len(rules) != 0 {
+		t.Errorf("a column-0 block's lines read as rules: %+v", rules)
 	}
 }
