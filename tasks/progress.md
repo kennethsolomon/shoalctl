@@ -60,7 +60,7 @@ Accepted residuals, documented: the pty plus `env -u CLAUDECODE` bypass of `requ
 | 69 | `requireHuman`: stdin and stdout real terminals (isatty), and no Claude Code session (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`); pty wrappers remain a documented residual |
 | 70 | Rule text in context.md is inert (word-initial `@`, `<!--`, `-->` broken) and in a code span; agree and promote print the line and ask `y/N` |
 | 71 | One CommonMark §4.5 fence scanner; an unclosed fence runs to the end and init refuses to append inside it |
-| 72 | Conventions compare by `RuleKey` (case, whitespace, trailing punctuation) for duplicates and retired refusals |
+| 72 | Conventions compare by `RuleKey` (case, whitespace, trailing sentence punctuation only; no NFC) for duplicates and retired refusals |
 | 73 | `promote` checks conflicts before asking; with one, the prompt offers a proposal, never a promotion |
 | 74 | Hook latency bound 1.5 s: p95 of 15 plain, median of 5 (early stop at 3) under -race |
 

@@ -46,11 +46,16 @@ func nullID(id int64) any {
 }
 
 // RuleKey is the form two convention rules are compared in: case-folded,
-// runs of whitespace collapsed to one space, trailing punctuation dropped.
-// "Never use tabs." and "never  use tabs" are the same rule.
+// runs of whitespace collapsed to one space, and trailing sentence
+// punctuation (. ! ? , ; : and the ideographic full stop) dropped. "Never
+// use tabs." and "never  use tabs" are the same rule; "Use C#" and "Use C",
+// or "Call init()" and "Call init", are not: punctuation inside a rule, at
+// its start, or at its end other than a sentence mark is part of it. No
+// Unicode normalization is done, so a composed and a decomposed spelling
+// of the same text are different keys (§16).
 func RuleKey(rule string) string {
 	k := strings.Join(strings.Fields(strings.ToLower(rule)), " ")
-	return strings.TrimRightFunc(k, func(r rune) bool { return unicode.IsPunct(r) || unicode.IsSpace(r) })
+	return strings.TrimRightFunc(k, func(r rune) bool { return strings.ContainsRune(".!?,;:。", r) || unicode.IsSpace(r) })
 }
 
 // ProposeConvention records a proposed convention and returns its id. A

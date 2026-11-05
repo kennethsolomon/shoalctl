@@ -285,9 +285,24 @@ func TestRuleKey(t *testing.T) {
 		"Use `go vet`.":         "use `go vet`",
 		"v1.2":                  "v1.2",
 		"":                      "",
+		"Use tabs;:,":           "use tabs",
+		"テストを書く。":               "テストを書く",
+		// Only trailing sentence punctuation goes: what is part of the
+		// rule, at its end, inside it or leading it, stays.
+		"Use C#":           "use c#",
+		"Call init()":      "call init()",
+		"Call init().":     "call init()",
+		"Use \"quotes\"":   "use \"quotes\"",
+		"...or not":        "...or not",
+		"Use a-b, not a_b": "use a-b, not a_b",
 	} {
 		if got := RuleKey(in); got != want {
 			t.Errorf("RuleKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for _, pair := range [][2]string{{"Use C#", "Use C"}, {"Call init()", "Call init"}, {"Use C++", "Use C"}} {
+		if RuleKey(pair[0]) == RuleKey(pair[1]) {
+			t.Errorf("RuleKey(%q) == RuleKey(%q): different rules compare equal", pair[0], pair[1])
 		}
 	}
 }
