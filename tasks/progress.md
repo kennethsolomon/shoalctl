@@ -15,6 +15,7 @@ CI (ubuntu, windows) failed `internal/gitx` with "Author identity unknown". Caus
 - Decisions: spec §16 rows 63-68.
 - Vex BLOCK round 1 on `d26c7ba`: four FAILs and five RISKs fixed test-first, one commit each (table below).
 - Vex HOLD round 2 on `3ccca1e`: two FAILs and three RISKs fixed test-first (table below); spec §16 rows 71-74.
+- Vex HOLD round 3 on `4af9714` and round 4 on `dc7103a`: fixed test-first (tables below); round 4 replaced the marker indent rule with column 0 (row 75).
 - Next: Vex re-review. Phase 5 not started.
 
 ## Vex BLOCK round 1
@@ -31,7 +32,7 @@ Vex returned BLOCK on `d26c7ba` with four FAILs and five RISKs; each fixed test-
 | 6 "No tabs" / "spaces, not tabs" missed; `.claude/CLAUDE.md` unread | A negated one-word clause conflicts with any opposite clause naming the word; `.claude/CLAUDE.md` read. Limits in §5.3 (synonyms, "prefer A over B", "X not Y" without a comma, nested CLAUDE.md) | `TestConflictWithOneWordNegation`, `TestReadProjectRulesDotClaude`, `TestConflictWith` unchanged |
 | 7 `promote` accepted a lesson whose convention the human retired | `promote` refuses any non-candidate before the prompt, with the reason; `PromoteLesson` refuses a lesson carried by any convention in its transaction | `TestPhase4ConflictWithProjectRule`, `TestPromoteLessonRefusesRetiredConvention` |
 | 8 A BOM before the marker on line 1 gave "unpaired, lines []" | `lineText` drops a leading BOM for matching; the bytes are kept | `TestWithManagedBlockBOM` |
-| 9 `internal/cli` -race near the 600 s timeout | Hook latency check runs fewer times per event under `-race` (build tag `race`), 15 otherwise. The 1.5 s bound stays asserted, but by statistic (round 2 item 5, row 74): under -race the blocking Linux and macOS jobs assert the median of 5; the p95 of 15 runs only locally and in the non-blocking Windows job. `t.Parallel` not used: every e2e test goes through `Isolate`'s `t.Setenv` | `TestPhase3HookLatency`: 87.6 s -> 30.8 s under -race; package time in Measurements |
+| 9 `internal/cli` -race near the 600 s timeout | Hook latency check runs fewer times per event under `-race` (build tag `race`), 15 otherwise. The 1.5 s bound stays asserted, but by statistic (round 2 item 5, row 74): under -race the blocking Linux and macOS jobs assert the median of 5; the p95 of 15 is asserted only in local non-race runs (the test needs sh via `testutil.RequireSh` and skips on Windows, so the non-blocking Windows job does not run it). `t.Parallel` not used: every e2e test goes through `Isolate`'s `t.Setenv` | `TestPhase3HookLatency`: 87.6 s -> 30.8 s under -race; package time in Measurements |
 
 ## Vex HOLD round 2
 
@@ -59,6 +60,16 @@ Vex returned HOLD on `4af9714`: one FAIL (indented markers) and one RISK (RuleKe
 
 Accepted, not fixed: an HTML-comment ``` opening a "fence" that makes init refuse (the safe direction); an NBSP after a closer. Documented: blockquote and list-item fences not tracked (§5.3, row 71); no NFC in RuleKey (row 72).
 
+## Vex HOLD round 4
+
+Vex returned HOLD on `dc7103a`, the third round on CLAUDE.md marker parsing. Instead of chasing more CommonMark cases, the class is closed with a simpler rule. Each item fixed test-first in its own commit (spec §5.1, §5.3, §16 rows 71, 72, 74, 75, 76).
+
+| Item | Fix | Test |
+|------|-----|------|
+| 1 A fence opened on a list-marker line (`` - ``` ``, `` 1. ```md ``) was not seen: its 2-3-space markers counted, `@~/OLD` inside the user's fence was rewritten, no real block appended, importsContext true | A marker counts only at column 0 (after a BOM on line 1), the exact form shoal writes, and outside a tracked fence (`markerText`, used by withManagedBlock, importsContext, ruleLines). Any leading whitespace (spaces, tab, NBSP) is plain text, so list-item content and indented code can never match. Round 3's "0-3 spaces count" is reversed (row 75). `fences` also tracks a fence opened right after a list marker (`-`, `*`, `+`, `1.`, `1)`): it ends at its closer or at the first non-blank line indented less than the item's content, so its code is not read as rules; an unclosed one does not make init refuse, since the appended column-0 block ends it (row 71) | `TestWithManagedBlockMarkerColumnZero` (both repros, `*`/`+`/`1)` variants, 1/2/3/4 spaces, tab, NBSP, BOM plus column 0, BOM on line 2, CRLF, trailing whitespace, unclosed list fence, indented example before a real column-0 block; withManagedBlock, rerun idempotence, importsContext before and after, ruleLines; an indented begin hides no rules), `TestFencesCommonMark` (13 list-item fence cases) |
+| 2 An unpaired column-0 begin marker hid every later rule from ruleLines, so agree, promote and propose's conflict check was blind | `ruleLines` holds the lines after a begin until its end; with no end it reads them as rules (init still refuses the file, exit 3) (row 76) | `TestRuleLinesReadPastUnpairedBegin` (unpaired begin, stray end, paired then unpaired, CRLF, a fenced end, readProjectRules plus conflictWith) |
+| 3 Docs: progress round 1 item 9 said the p95 of 15 runs in the non-blocking Windows job | `TestPhase3HookLatency` calls `testutil.RequireSh` and skips on Windows: the p95 of 15 is asserted only in local non-race runs (here and row 74). README and §5.1, §5.3, rows 71, 75, 76 for the column-0 rule and list-item fences; RuleKey keeps fullwidth `！` `？` and `…` as a documented limit, no code change (row 72) | Docs only |
+
 ## Decisions (spec §16)
 
 | Row | Decision |
@@ -75,7 +86,8 @@ Accepted, not fixed: an HTML-comment ``` opening a "fence" that makes init refus
 | 72 | Conventions compare by `RuleKey` (case, whitespace, trailing sentence punctuation only; no NFC) for duplicates and retired refusals |
 | 73 | `promote` checks conflicts before asking; with one, the prompt offers a proposal, never a promotion |
 | 74 | Hook latency bound 1.5 s: p95 of 15 plain, median of 5 (early stop at 3) under -race |
-| 75 | A shoal marker counts only after 0-3 spaces and no tab; indented markers are examples |
+| 75 | A shoal marker counts only at column 0 (after a BOM on line 1), outside a tracked fence; any leading whitespace is plain text (round 4; round 3 allowed 0-3 spaces) |
+| 76 | An unpaired begin marker hides no rules from ruleLines; init still refuses the file |
 
 ## Measurements
 
