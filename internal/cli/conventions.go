@@ -577,15 +577,15 @@ func (env Env) cmdPromote(ctx context.Context, args []string) error {
 	if why := s.notCandidate(l); why != "" {
 		return fail(ExitState, "lesson:%d is not up for promotion: %s", id, why)
 	}
-	if ok, err := env.confirm(fmt.Sprintf("%s becomes a project rule, written to %s as:\n%s\nPromote it into context.md? [y/N]: ",
-		store.LessonKey(id), p.contextPath(), promotedLine(l))); err != nil || !ok {
-		return cmp.Or(err, fail(ExitState, "%s not promoted; nothing changed", store.LessonKey(id)))
-	}
 	conflict, err := conflictOf(p, l.Fix)
 	if err != nil {
 		return err
 	}
 	if conflict != "" {
+		if ok, err := env.confirm(fmt.Sprintf("%s conflicts with %s, and the project rule wins: it cannot be promoted.\n%s\nRecord it as a proposed convention for the next brainstorm instead? [y/N]: ",
+			store.LessonKey(id), conflict, promotedLine(l))); err != nil || !ok {
+			return cmp.Or(err, fail(ExitState, "%s not promoted; nothing changed", store.LessonKey(id)))
+		}
 		cid, _, err := p.db.ProposeConvention(ctx, store.Convention{Rule: lessonRule(l), ScopeGlob: lessonScope(l), Conflict: conflict, LessonID: l.ID}, 0)
 		if err != nil {
 			return err
@@ -593,6 +593,10 @@ func (env Env) cmdPromote(ctx context.Context, args []string) error {
 		fmt.Fprintf(env.Stdout, "lesson:%d not promoted: it conflicts with %s, and the project rule wins. Recorded as proposed %s for the next brainstorm\n",
 			id, conflict, store.ConventionKey(cid))
 		return nil
+	}
+	if ok, err := env.confirm(fmt.Sprintf("%s becomes a project rule, written to %s as:\n%s\nPromote it into context.md? [y/N]: ",
+		store.LessonKey(id), p.contextPath(), promotedLine(l))); err != nil || !ok {
+		return cmp.Or(err, fail(ExitState, "%s not promoted; nothing changed", store.LessonKey(id)))
 	}
 	if err := p.db.PromoteLesson(ctx, id, promoteTasks); err != nil {
 		return err

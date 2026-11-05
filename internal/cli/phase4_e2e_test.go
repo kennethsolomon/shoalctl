@@ -333,6 +333,19 @@ func TestPhase4ConflictWithProjectRule(t *testing.T) {
 	for i, ft := range ts[1:] {
 		preTool(t, h, ft, fmt.Sprintf("m%d", i), "tests/a_test.go")
 	}
+	// The prompt names the conflict and what y does, so a y is never read
+	// as a promotion (Vex round 2); a decline records nothing.
+	h.env.Terminal, h.answers = func() bool { return true }, "\n"
+	_, promptOut, promptErr := h.run("promote", "lesson:1")
+	mustContain(t, "conflict prompt", promptOut, "lesson:1 conflicts with .claude/rules/tests.md:1", "the project rule wins",
+		"Record it as a proposed convention for the next brainstorm instead? [y/N]")
+	if strings.Contains(promptOut, "Promote it into") {
+		t.Fatalf("a conflicting promotion asks to promote:\n%s", promptOut)
+	}
+	mustContain(t, "declined proposal", promptErr, "lesson:1 not promoted; nothing changed")
+	if cs, _ := h.db().Conventions(t.Context()); len(cs) != 1 {
+		t.Fatalf("a declined conflict prompt recorded a proposal: %+v", cs)
+	}
 	h.asHuman()
 	mustContain(t, "promote", h.mustRun("promote", "lesson:1"), "lesson:1 not promoted", "conflicts with .claude/rules/tests.md:1", "proposed convention:2")
 	h.asAgent()
