@@ -49,16 +49,32 @@ const utf8BOM = "\ufeff"
 // order mark, which only the first line can carry.
 func lineText(l []byte) string { return strings.TrimSpace(strings.TrimPrefix(string(l), utf8BOM)) }
 
+// markerText is lineText for a line that may hold a shoal marker, or ""
+// when the line is indented by a tab or by 4+ spaces: by CommonMark that is
+// indented code (or code nested in a list item), the same 0-3 space rule
+// fenceRun uses, so a marker there is an example, not the block.
+func markerText(l []byte) string {
+	s := strings.TrimPrefix(string(l), utf8BOM)
+	indent := 0
+	for indent < len(s) && s[indent] == ' ' {
+		indent++
+	}
+	if indent > 3 || indent < len(s) && s[indent] == '\t' {
+		return ""
+	}
+	return strings.TrimSpace(s)
+}
+
 // withManagedBlock returns data with exactly one managed block holding
 // importLine, and whether that changed anything. Bytes outside the markers
 // are kept as they are; a missing block is appended with the file's own line
 // ending (CRLF when the file uses it) and the file keeps ending with a
 // newline, or not, as it did. Markers inside code fences (CommonMark, see
-// fences) are examples and are ignored; a file ending inside an open fence
-// is refused, since by CommonMark the fence runs to the end and would
-// swallow an appended block. A block whose markers are duplicated, missing
-// their partner or out of order is refused: shoal does not guess which
-// lines it owns.
+// fences) or indented as code (see markerText) are examples and are
+// ignored; a file ending inside an open fence is refused, since by
+// CommonMark the fence runs to the end and would swallow an appended block.
+// A block whose markers are duplicated, missing their partner or out of
+// order is refused: shoal does not guess which lines it owns.
 func withManagedBlock(name string, data []byte, importLine string) ([]byte, bool, error) {
 	lines := splitLines(data)
 	var begins, ends []int
@@ -67,7 +83,7 @@ func withManagedBlock(name string, data []byte, importLine string) ([]byte, bool
 		if fence.skip(l, i+1) {
 			continue
 		}
-		switch lineText(l) {
+		switch markerText(l) {
 		case blockBegin:
 			begins = append(begins, i)
 		case blockEnd:
@@ -159,7 +175,7 @@ func installManagedBlock(root, importLine string) (bool, error) {
 }
 
 // importsContext reports whether dir's CLAUDE.md holds shoal's managed
-// block outside code fences, so Claude Code loads context.md itself.
+// block outside code fences and indented code, so Claude Code loads context.md itself.
 func importsContext(dir string) bool {
 	data, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
 	if err != nil {
@@ -167,7 +183,7 @@ func importsContext(dir string) bool {
 	}
 	var fence fences
 	for i, l := range splitLines(data) {
-		if !fence.skip(l, i+1) && lineText(l) == blockBegin {
+		if !fence.skip(l, i+1) && markerText(l) == blockBegin {
 			return true
 		}
 	}

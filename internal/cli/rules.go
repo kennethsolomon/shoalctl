@@ -124,11 +124,11 @@ func ruleLines(name string, data []byte) []projectRule {
 			continue
 		}
 		l := lineText(sc.Bytes())
-		switch {
-		case l == blockBegin:
+		switch m := markerText(sc.Bytes()); {
+		case m == blockBegin:
 			managed = true
 			continue
-		case l == blockEnd:
+		case m == blockEnd:
 			managed = false
 			continue
 		}

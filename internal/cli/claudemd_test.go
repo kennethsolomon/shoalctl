@@ -175,3 +175,43 @@ func TestWithManagedBlockBOM(t *testing.T) {
 		t.Errorf("rule after a BOM: %+v", rules)
 	}
 }
+
+// A marker counts only with 0-3 leading spaces, the indent CommonMark
+// allows before a block: 4+ spaces or a tab make it indented code (or a
+// list item's nested code), an example that stays byte for byte (§5.1).
+func TestWithManagedBlockMarkerIndent(t *testing.T) {
+	block := blockBegin + "\n" + testImport + "\n" + blockEnd + "\n"
+	for name, tc := range map[string]struct {
+		in, want string
+		counts   bool
+	}{
+		"indented code block": {"Example:\n\n    " + blockBegin + "\n    @~/OLD\n    " + blockEnd + "\n",
+			"Example:\n\n    " + blockBegin + "\n    @~/OLD\n    " + blockEnd + "\n" + block, false},
+		"list-item fence": {"1. Example:\n\n    ```\n    " + blockBegin + "\n    @~/OLD\n    " + blockEnd + "\n    ```\n",
+			"1. Example:\n\n    ```\n    " + blockBegin + "\n    @~/OLD\n    " + blockEnd + "\n    ```\n" + block, false},
+		"tab": {"\t" + blockBegin + "\n@~/OLD\n\t" + blockEnd + "\n",
+			"\t" + blockBegin + "\n@~/OLD\n\t" + blockEnd + "\n" + block, false},
+		"three spaces": {"   " + blockBegin + "\n@~/OLD\n   " + blockEnd + "\n",
+			"   " + blockBegin + "\n" + testImport + "\n   " + blockEnd + "\n", true},
+	} {
+		got, changed, err := withManagedBlock("CLAUDE.md", []byte(tc.in), testImport)
+		if err != nil || !changed || string(got) != tc.want {
+			t.Errorf("%s: %q %v %v, want %q", name, got, changed, err, tc.want)
+		}
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(tc.in), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if importsContext(dir) != tc.counts {
+			t.Errorf("%s: importsContext = %v, want %v", name, !tc.counts, tc.counts)
+		}
+	}
+	// An indented begin marker does not open the managed block, so the rule
+	// after it is still read; a 3-space one does.
+	for in, want := range map[string]bool{"    " + blockBegin: true, "\t" + blockBegin: true, "   " + blockBegin: false} {
+		rules := ruleLines("CLAUDE.md", []byte(in+"\nNever use tabs\n"))
+		if read := len(rules) > 0 && rules[len(rules)-1].text == "Never use tabs"; read != want {
+			t.Errorf("%q: rule after the marker read = %v, want %v (%+v)", in, read, want, rules)
+		}
+	}
+}
