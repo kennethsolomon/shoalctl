@@ -13,18 +13,37 @@ CI (ubuntu, windows) failed `internal/gitx` with "Author identity unknown". Caus
 - E2E (`internal/cli/phase4_e2e_test.go`), one per Done-when item: TestPhase4StrategyPatternEndToEnd, TestPhase4LessonPromotion, TestPhase4ManagedBlock, TestPhase4StealthDefault, TestPhase4ConflictWithProjectRule; plus TestPhase4ConventionInjectionLimits (deny_globs, `.git/`, `.shoal/`, 300-token budget, once per session). Unit: TestBriefBudgetKeepsTheBrainstorm, TestWithManagedBlock*, TestInstallManagedBlockFile, TestContextImport, TestReadProjectRules, TestConflictWith, TestStealthOffAccepted; store: TestPhase4*, TestConvention*, TestMarkCountsLessonHitsPerTask, TestProposeFromPromotedLesson.
 - Windows: every Phase 4 test runs on Windows. The e2e tests drive the hooks in-process against task directories holding only `task.json` (all the hooks read), so they need neither tmux nor sh. Per-test skips: none. One sub-check skips on Windows: the symlinked-CLAUDE.md refusal in TestInstallManagedBlockFile (creating a symlink needs a privilege Windows runners do not grant by default). TestPhase3HookLatency, extended with conventions, still skips there (it starts real tasks with the sh fake claude and tmux).
 - Decisions: spec §16 rows 63-68.
-- Next: Vex review. Phase 5 not started.
+- Vex BLOCK round 1 on `d26c7ba`: four FAILs and five RISKs fixed test-first, one commit each (table below).
+- Next: Vex re-review. Phase 5 not started.
+
+## Vex BLOCK round 1
+
+Vex returned BLOCK on `d26c7ba` with four FAILs and five RISKs; each fixed test-first in its own commit (spec §5.1, §5.3, §16 rows 63-70).
+
+| Item | Fix | Test |
+|------|-----|------|
+| 1 `requireHuman` passed `/dev/null` (a character device) as a human | Real terminal check on stdin and stdout (`go-isatty`, already in the module graph); any process with `CLAUDECODE` or `CLAUDE_CODE_ENTRYPOINT` set is refused with "run it in your own terminal". Applies to every caller (scope, merge, plan, doctor, conventions). pty wrappers documented as residual (row 69, README) | `TestRequireHumanRefusesNullStdin` (subprocess, stdin = `os.DevNull`, agree/retire/merge), `TestInteractiveRealCheck`, `TestRequireHumanRefusesClaudeCodeSession`; `TestMergeAcceptanceNeedsHuman` still green |
+| 2 Agent rule text reached context.md verbatim (`@~/.aws/credentials`, unclosed `<!--`) | `inert` breaks word-initial `@` and `<!--`/`-->`, one line; `literal` puts rule, scope and conflict text in a code span longer than any backtick run. `agree` and `promote` print the exact line and ask `y/N`; anything else exits 5, nothing changed | `TestPhase4RuleTextIsInert`, `TestPhase4PromoteShowsRule` |
+| 3 Markers inside a code fence were taken as the block | Shared `fences` scanner (``` and ~~~) in `ruleLines`, `withManagedBlock` and `importsContext`; a file ending inside an open fence is refused (exit 3) | `TestWithManagedBlockIgnoresFences` |
+| 4 Non-stealth task sessions could miss the rules (unapproved import) | The brief carries the rules in every task worktree; only a main-checkout session with the block relies on the import. init, §5.1, §5.2, rows 66 and 68 reworded | `TestPhase4ManagedBlock` |
+| 5 Proposals crowded out agreed rules; unbounded proposals; retired rules silently reopened | Drop order keeps one proposal of each kind and then the agreed rules (conventions before promoted lessons, which have no per-file path); `maxOpenProposals` = 10, propose past it exits 5; an identical retired rule and scope exits 5 naming it and why (`store.ErrProposalRefused`) | `TestBriefBudgetKeepsTheBrainstorm`, `TestPhase4ProposalsDoNotCrowdOutRules`, `TestProposeConventionLimits` |
+| 6 "No tabs" / "spaces, not tabs" missed; `.claude/CLAUDE.md` unread | A negated one-word clause conflicts with any opposite clause naming the word; `.claude/CLAUDE.md` read. Limits in §5.3 (synonyms, "prefer A over B", "X not Y" without a comma, nested CLAUDE.md) | `TestConflictWithOneWordNegation`, `TestReadProjectRulesDotClaude`, `TestConflictWith` unchanged |
+| 7 `promote` accepted a lesson whose convention the human retired | `promote` refuses any non-candidate before the prompt, with the reason; `PromoteLesson` refuses a lesson carried by any convention in its transaction | `TestPhase4ConflictWithProjectRule`, `TestPromoteLessonRefusesRetiredConvention` |
+| 8 A BOM before the marker on line 1 gave "unpaired, lines []" | `lineText` drops a leading BOM for matching; the bytes are kept | `TestWithManagedBlockBOM` |
+| 9 `internal/cli` -race near the 600 s timeout | Hook latency check runs 3 times per event under `-race` (build tag `race`), 15 otherwise; the 1.5 s p95 bound stays asserted. `t.Parallel` not used: every e2e test goes through `Isolate`'s `t.Setenv` | `TestPhase3HookLatency`: 87.6 s -> 30.8 s under -race; package time in Measurements |
 
 ## Decisions (spec §16)
 
 | Row | Decision |
 |-----|----------|
 | 63 | Anyone proposes; agree, retire and promote need a human at a terminal (`requireHuman`). Retire keeps who, when and why, searchable |
-| 64 | Brief drop order: lessons, todo lines, context.md rule lines, promotion proposals, proposed conventions; every cut rule or proposal is counted in a `+N more` line |
+| 64 | Brief drop order: lessons, todo lines, proposals past the first of each kind, active convention lines, promoted lesson lines, the last proposals; every cut rule or proposal is counted in a `+N more` line. At most 10 open proposals; a retired rule and scope is refused |
 | 65 | Promotion counts different tasks (`lesson_hits`); a lesson with any linked convention is not a candidate (a retired one means declined) |
-| 66 | Stealth delivers context.md through the SessionStart brief, not a CLAUDE.local.md import: an outside import asks for approval in every new worktree and would block unattended sessions |
+| 66 | The SessionStart brief carries context.md's rules in every task worktree, in both modes (a worktree's import may be unapproved); no CLAUDE.local.md import |
 | 67 | Conflict check: clause-and-polarity word overlap, deterministic; `agree` refuses while a conflict stands unless `--force` |
-| 68 | Managed block: appended once, bytes outside the markers kept, CRLF and final newline kept, malformed markers and symlinks refused with exit 3 |
+| 68 | Managed block: appended once, bytes outside the markers kept, CRLF and final newline kept, malformed markers and symlinks refused with exit 3; fenced markers ignored, a BOM kept |
+| 69 | `requireHuman`: stdin and stdout real terminals (isatty), and no Claude Code session (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`); pty wrappers remain a documented residual |
+| 70 | Rule text in context.md is inert (word-initial `@`, `<!--`, `-->` broken) and in a code span; agree and promote print the line and ask `y/N` |
 
 ## Measurements
 
@@ -35,9 +54,10 @@ Hook latency (TestPhase3HookLatency, now seeded with 20 lessons, 20 active and 5
 ## Open risks
 
 - `internal/cli` under `-race` is about 451 s, near the 600 s default timeout (see Measurements).
-- The conflict heuristic misses paraphrases, synonyms and "prefer A over B", and can flag unrelated lines that share two words with opposite polarity (spec §5.3). A false positive costs a brainstorm and `agree --force`.
+- The conflict heuristic misses paraphrases, synonyms, "prefer A over B", "X not Y" without a comma and nested CLAUDE.md files, and can flag unrelated lines that share two words with opposite polarity (spec §5.3). A false positive costs a brainstorm and `agree --force`.
 - `context.md` is rendered by each command from the DB it read; two humans agreeing at the same instant could leave the older render last. The brief reads the DB directly, so only the non-stealth import can lag, until the next agree, retire, promote or `init`.
-- Non-stealth worktrees load the managed block only once `CLAUDE.md` is committed on the task's base; until then the brief carries the rules (it checks the worktree's own `CLAUDE.md`).
+- Non-stealth: if a new task worktree shows Claude Code's external-import dialog, an unattended session waits on it; the brief carries the rules, but the dialog itself needs an answer in the tmux window. Whether a worktree reuses the main checkout's approval is unconfirmed.
+- `requireHuman` is a guard rail, not a sandbox: a pty wrapper (`script(1)`, `expect`) fakes a terminal and an agent can unset `CLAUDECODE`; the `y/N` prompts of agree and promote need a deliberate answer on top.
 - `context.md` has no size cap; a project with hundreds of agreed rules makes every non-stealth session pay for them (the stealth brief caps them under its budget).
 
 # Phase 3 progress
