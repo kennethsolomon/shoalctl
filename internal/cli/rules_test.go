@@ -89,3 +89,37 @@ func TestReadProjectRulesDotClaude(t *testing.T) {
 		t.Fatalf("rules %+v %v", rules, err)
 	}
 }
+
+// An unpaired begin marker (init refuses that file, but agree, promote and
+// propose still read it) hides nothing: the rules after it are read, so the
+// conflict check is not blind. A paired block's lines stay unread.
+func TestRuleLinesReadPastUnpairedBegin(t *testing.T) {
+	for name, tc := range map[string]struct {
+		in   string
+		want []string
+	}{
+		"unpaired begin":        {"Use spaces\n" + blockBegin + "\nNever use tabs\n", []string{"Use spaces", "Never use tabs"}},
+		"stray end":             {blockEnd + "\nNever use tabs\n", []string{"Never use tabs"}},
+		"paired then unpaired":  {blockBegin + "\n@x\n" + blockEnd + "\n" + blockBegin + "\nNever use tabs\n", []string{"Never use tabs"}},
+		"paired block unread":   {"a\n" + blockBegin + "\n@x\n" + blockEnd + "\nb\n", []string{"a", "b"}},
+		"unpaired begin, crlf":  {blockBegin + "\r\nNever use tabs\r\n", []string{"Never use tabs"}},
+		"fenced end not a pair": {blockBegin + "\n```\n" + blockEnd + "\n```\nNever use tabs\n", []string{"Never use tabs"}},
+	} {
+		var got []string
+		for _, r := range ruleLines("CLAUDE.md", []byte(tc.in)) {
+			got = append(got, r.text)
+		}
+		if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+			t.Errorf("%s: %q, want %q", name, got, tc.want)
+		}
+	}
+	root := t.TempDir()
+	testutil.WriteFile(t, filepath.Join(root, "CLAUDE.md"), "# Rules\n"+blockBegin+"\nNever use tabs\n")
+	rules, err := readProjectRules(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := conflictWith("Use tabs for indentation", rules); c != "CLAUDE.md:3: Never use tabs" {
+		t.Errorf("conflict after an unpaired begin: %q", c)
+	}
+}

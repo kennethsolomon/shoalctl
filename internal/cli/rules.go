@@ -155,8 +155,12 @@ func fenceRun(l string) (byte, int, string, bool) {
 	return l[0], size, l[size:], true
 }
 
+// ruleLines returns the rule lines of one file. Lines between a column-0
+// begin marker and its end are shoal's own block; after a begin with no
+// end the held lines are rules again, so an unpaired marker hides nothing
+// from the conflict check.
 func ruleLines(name string, data []byte) []projectRule {
-	var out []projectRule
+	var out, held []projectRule
 	sc := bufio.NewScanner(bytes.NewReader(data))
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	var fence fences
@@ -165,22 +169,26 @@ func ruleLines(name string, data []byte) []projectRule {
 		if fence.skip(sc.Bytes(), n) {
 			continue
 		}
-		l := lineText(sc.Bytes())
-		switch m := markerText(sc.Bytes(), n); {
-		case m == blockBegin:
-			managed = true
+		switch markerText(sc.Bytes(), n) {
+		case blockBegin:
+			out, held, managed = append(out, held...), nil, true
 			continue
-		case m == blockEnd:
-			managed = false
-			continue
-		}
-		l = listMarker.ReplaceAllString(l, "")
-		if managed || l == "" {
+		case blockEnd:
+			held, managed = nil, false
 			continue
 		}
-		out = append(out, projectRule{where: fmt.Sprintf("%s:%d", name, n), text: l})
+		l := listMarker.ReplaceAllString(lineText(sc.Bytes()), "")
+		if l == "" {
+			continue
+		}
+		r := projectRule{where: fmt.Sprintf("%s:%d", name, n), text: l}
+		if managed {
+			held = append(held, r)
+		} else {
+			out = append(out, r)
+		}
 	}
-	return out
+	return append(out, held...)
 }
 
 // conflictWith returns the first project rule that contradicts text, as
