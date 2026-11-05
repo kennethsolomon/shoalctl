@@ -31,7 +31,7 @@ Vex returned BLOCK on `d26c7ba` with four FAILs and five RISKs; each fixed test-
 | 6 "No tabs" / "spaces, not tabs" missed; `.claude/CLAUDE.md` unread | A negated one-word clause conflicts with any opposite clause naming the word; `.claude/CLAUDE.md` read. Limits in §5.3 (synonyms, "prefer A over B", "X not Y" without a comma, nested CLAUDE.md) | `TestConflictWithOneWordNegation`, `TestReadProjectRulesDotClaude`, `TestConflictWith` unchanged |
 | 7 `promote` accepted a lesson whose convention the human retired | `promote` refuses any non-candidate before the prompt, with the reason; `PromoteLesson` refuses a lesson carried by any convention in its transaction | `TestPhase4ConflictWithProjectRule`, `TestPromoteLessonRefusesRetiredConvention` |
 | 8 A BOM before the marker on line 1 gave "unpaired, lines []" | `lineText` drops a leading BOM for matching; the bytes are kept | `TestWithManagedBlockBOM` |
-| 9 `internal/cli` -race near the 600 s timeout | Hook latency check runs 3 times per event under `-race` (build tag `race`), 15 otherwise; the 1.5 s p95 bound stays asserted (round 2 item 5 changed the -race statistic). `t.Parallel` not used: every e2e test goes through `Isolate`'s `t.Setenv` | `TestPhase3HookLatency`: 87.6 s -> 30.8 s under -race; package time in Measurements |
+| 9 `internal/cli` -race near the 600 s timeout | Hook latency check runs fewer times per event under `-race` (build tag `race`), 15 otherwise. The 1.5 s bound stays asserted, but by statistic (round 2 item 5, row 74): under -race the blocking Linux and macOS jobs assert the median of 5; the p95 of 15 runs only locally and in the non-blocking Windows job. `t.Parallel` not used: every e2e test goes through `Isolate`'s `t.Setenv` | `TestPhase3HookLatency`: 87.6 s -> 30.8 s under -race; package time in Measurements |
 
 ## Vex HOLD round 2
 
@@ -46,6 +46,18 @@ Vex returned HOLD on `3ccca1e`: two FAILs (fence scanner) and three cheap RISKs.
 | 5 -race latency "p95 of 3" was the max (1.04-1.09 s vs 1.5 s) | Under -race the 1.5 s bound holds for the median of 5, decided once 3 runs fall on one side (3 processes per event when healthy); plain runs keep the p95 of 15 (row 74). Still asserted in the blocking -race jobs | `TestPhase3HookLatency`: 24.8 s under -race (3 runs per event, medians 1.03-1.07 s) |
 
 Accepted residuals, documented: the pty plus `env -u CLAUDECODE` bypass of `requireHuman` (row 69, README); one-word negation false positives such as "No globals" vs "Read globals from config" (§5.3, README; `--force` covers it).
+
+## Vex HOLD round 3
+
+Vex returned HOLD on `4af9714`: one FAIL (indented markers) and one RISK (RuleKey), plus docs. Each fixed test-first in its own commit (spec §5.1, §5.3, §16 rows 71, 72, 75).
+
+| Item | Fix | Test |
+|------|-----|------|
+| 1 Markers indented 4+ spaces (indented code block, list-item fence) were taken as the block: `    @~/OLD` rewritten, importsContext true | `markerText`: a marker counts only after 0-3 spaces and no tab, the fenceRun rule, in withManagedBlock, importsContext and ruleLines (no uninstall code exists yet) (row 75) | `TestWithManagedBlockMarkerIndent` (indented code block, list-item fence, tab: block appended, example kept, importsContext false; 3 spaces: counts; an indented begin marker does not hide the rules after it) |
+| 2 `RuleKey` stripped any trailing punctuation: "Use C#" == "Use C", "Call init()" == "Call init" | Only trailing `. ! ? , ; :` and `。` dropped; no NFC (no x/text), composed vs decomposed documented (row 72) | `TestRuleKey` (C#, init(), quotes, leading `...`, inner punctuation kept; `;:,` and `。` dropped; unequal pairs) |
+| 3 Docs | Blockquote and list-item fences not tracked, with the false-conflict consequence (§5.3, row 71, README); round 1 item 9 latency wording; README marker claim matches item 1 | Docs only |
+
+Accepted, not fixed: an HTML-comment ``` opening a "fence" that makes init refuse (the safe direction); an NBSP after a closer. Documented: blockquote and list-item fences not tracked (§5.3, row 71); no NFC in RuleKey (row 72).
 
 ## Decisions (spec §16)
 
@@ -63,6 +75,7 @@ Accepted residuals, documented: the pty plus `env -u CLAUDECODE` bypass of `requ
 | 72 | Conventions compare by `RuleKey` (case, whitespace, trailing sentence punctuation only; no NFC) for duplicates and retired refusals |
 | 73 | `promote` checks conflicts before asking; with one, the prompt offers a proposal, never a promotion |
 | 74 | Hook latency bound 1.5 s: p95 of 15 plain, median of 5 (early stop at 3) under -race |
+| 75 | A shoal marker counts only after 0-3 spaces and no tab; indented markers are examples |
 
 ## Measurements
 
