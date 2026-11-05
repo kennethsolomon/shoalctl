@@ -68,7 +68,7 @@ Accepted residuals, documented: the pty plus `env -u CLAUDECODE` bypass of `requ
 
 Hook latency (TestPhase3HookLatency, now seeded with 20 lessons, 20 active and 5 proposed conventions; 15 runs, process start included, macOS): p50/p95 stop 5.2/5.6 ms, session-start 6.0/6.9 ms, pre-tool-use 17.8/20.4 ms, no-match 5.1/5.6 ms, post-tool-use 5.0/5.3 ms. Phase 3 p95: 5.1, 5.7, 19.3, 5.2, 5.3 ms.
 
-`go test -race -count=1 ./internal/cli`: 404.8 s at `c789a52` (run alone), 451.1 s at `6781ccc` (inside the full `./...` run of the fresh-clone gate, packages in parallel). The Phase 4 tests add about 13 s without `-race`. RISK: above 450 s, about 75% of Go's default 10-minute `go test` timeout; CI config was not touched.
+`go test -race -count=1 ./internal/cli`: 404.8 s at `c789a52` (run alone), 451.1 s at `6781ccc` (inside the full `./...` run of the fresh-clone gate, packages in parallel). The Phase 4 tests add about 13 s without `-race`. RISK: above 450 s, about 75% of Go's default 10-minute `go test` timeout; CI config was not touched. After Vex round 2 (`a98f1b6`, fresh clone, full `./...` run): 384.5 s.
 
 ## Open risks
 
