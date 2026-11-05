@@ -14,6 +14,7 @@ CI (ubuntu, windows) failed `internal/gitx` with "Author identity unknown". Caus
 - Windows: every Phase 4 test runs on Windows. The e2e tests drive the hooks in-process against task directories holding only `task.json` (all the hooks read), so they need neither tmux nor sh. Per-test skips: none. One sub-check skips on Windows: the symlinked-CLAUDE.md refusal in TestInstallManagedBlockFile (creating a symlink needs a privilege Windows runners do not grant by default). TestPhase3HookLatency, extended with conventions, still skips there (it starts real tasks with the sh fake claude and tmux).
 - Decisions: spec §16 rows 63-68.
 - Vex BLOCK round 1 on `d26c7ba`: four FAILs and five RISKs fixed test-first, one commit each (table below).
+- Vex HOLD round 2 on `3ccca1e`: two FAILs and three RISKs fixed test-first (table below); spec §16 rows 71-74.
 - Next: Vex re-review. Phase 5 not started.
 
 ## Vex BLOCK round 1
@@ -24,13 +25,27 @@ Vex returned BLOCK on `d26c7ba` with four FAILs and five RISKs; each fixed test-
 |------|-----|------|
 | 1 `requireHuman` passed `/dev/null` (a character device) as a human | Real terminal check on stdin and stdout (`go-isatty`, already in the module graph); any process with `CLAUDECODE` or `CLAUDE_CODE_ENTRYPOINT` set is refused with "run it in your own terminal". Applies to every caller (scope, merge, plan, doctor, conventions). pty wrappers documented as residual (row 69, README) | `TestRequireHumanRefusesNullStdin` (subprocess, stdin = `os.DevNull`, agree/retire/merge), `TestInteractiveRealCheck`, `TestRequireHumanRefusesClaudeCodeSession`; `TestMergeAcceptanceNeedsHuman` still green |
 | 2 Agent rule text reached context.md verbatim (`@~/.aws/credentials`, unclosed `<!--`) | `inert` breaks word-initial `@` and `<!--`/`-->`, one line; `literal` puts rule, scope and conflict text in a code span longer than any backtick run. `agree` and `promote` print the exact line and ask `y/N`; anything else exits 5, nothing changed | `TestPhase4RuleTextIsInert`, `TestPhase4PromoteShowsRule` |
-| 3 Markers inside a code fence were taken as the block | Shared `fences` scanner (``` and ~~~) in `ruleLines`, `withManagedBlock` and `importsContext`; a file ending inside an open fence is refused (exit 3) | `TestWithManagedBlockIgnoresFences` |
+| 3 Markers inside a code fence were taken as the block | Shared `fences` scanner (``` and ~~~; made CommonMark in round 2) in `ruleLines`, `withManagedBlock` and `importsContext`; a file ending inside an open fence is refused (exit 3) | `TestWithManagedBlockIgnoresFences` |
 | 4 Non-stealth task sessions could miss the rules (unapproved import) | The brief carries the rules in every task worktree; only a main-checkout session with the block relies on the import. init, §5.1, §5.2, rows 66 and 68 reworded | `TestPhase4ManagedBlock` |
 | 5 Proposals crowded out agreed rules; unbounded proposals; retired rules silently reopened | Drop order keeps one proposal of each kind and then the agreed rules (conventions before promoted lessons, which have no per-file path); `maxOpenProposals` = 10, propose past it exits 5; an identical retired rule and scope exits 5 naming it and why (`store.ErrProposalRefused`) | `TestBriefBudgetKeepsTheBrainstorm`, `TestPhase4ProposalsDoNotCrowdOutRules`, `TestProposeConventionLimits` |
 | 6 "No tabs" / "spaces, not tabs" missed; `.claude/CLAUDE.md` unread | A negated one-word clause conflicts with any opposite clause naming the word; `.claude/CLAUDE.md` read. Limits in §5.3 (synonyms, "prefer A over B", "X not Y" without a comma, nested CLAUDE.md) | `TestConflictWithOneWordNegation`, `TestReadProjectRulesDotClaude`, `TestConflictWith` unchanged |
 | 7 `promote` accepted a lesson whose convention the human retired | `promote` refuses any non-candidate before the prompt, with the reason; `PromoteLesson` refuses a lesson carried by any convention in its transaction | `TestPhase4ConflictWithProjectRule`, `TestPromoteLessonRefusesRetiredConvention` |
 | 8 A BOM before the marker on line 1 gave "unpaired, lines []" | `lineText` drops a leading BOM for matching; the bytes are kept | `TestWithManagedBlockBOM` |
-| 9 `internal/cli` -race near the 600 s timeout | Hook latency check runs 3 times per event under `-race` (build tag `race`), 15 otherwise; the 1.5 s p95 bound stays asserted. `t.Parallel` not used: every e2e test goes through `Isolate`'s `t.Setenv` | `TestPhase3HookLatency`: 87.6 s -> 30.8 s under -race; package time in Measurements |
+| 9 `internal/cli` -race near the 600 s timeout | Hook latency check runs 3 times per event under `-race` (build tag `race`), 15 otherwise; the 1.5 s p95 bound stays asserted (round 2 item 5 changed the -race statistic). `t.Parallel` not used: every e2e test goes through `Isolate`'s `t.Setenv` | `TestPhase3HookLatency`: 87.6 s -> 30.8 s under -race; package time in Measurements |
+
+## Vex HOLD round 2
+
+Vex returned HOLD on `3ccca1e`: two FAILs (fence scanner) and three cheap RISKs. Each fixed test-first in its own commit (spec §5.1, §5.3, §16 rows 71-74).
+
+| Item | Fix | Test |
+|------|-----|------|
+| 1 Fence scanner not CommonMark: a ````md example holding a ``` fence with the markers was rewritten as the block, no real block appended, importsContext true, the main-checkout brief dropped the rules; same for ``` closed by ~~~ or ```bash | `fences` follows CommonMark §4.5: opener 0-3 spaces, 3+ backticks or tildes, no backtick in a backtick info string; closer same character, at least as long, 0-3 spaces, only whitespace after; 4+ spaces or a tab is not a fence. One scanner for ruleLines, withManagedBlock, importsContext. An unclosed fence runs to the end: its markers are not a block, its lines not rules, and init still refuses (exit 3) to append inside it, so user bytes are never rewritten (row 71) | `TestFencesCommonMark` (table: nesting, mismatched characters, shorter closer, closer with an info string, longer closer, trailing space, 3-space and 4-space indent, tab, backtick info string, tildes holding backticks, inline triple backticks, unclosed, CRLF, BOM), `TestFencedMarkersRepros` (every repro through withManagedBlock, importsContext and ruleLines) |
+| 2 init refused valid markdown (exit 3): ````md holding an unclosed ```go, a 4-space-indented ```; nested code read as rules | Fixed by item 1 | `TestFencedMarkersRepros` cases "unclosed inner fence", "four-space indented ticks", and the nested rules check (no false conflict) |
+| 3 Retired-rule refusal matched exact text only; a trailing period got past it | `store.RuleKey` (lower case, collapsed whitespace, trailing punctuation dropped), compared in Go in `ProposeConvention` for both the open-duplicate and the retired checks (row 72) | `TestProposeConventionLimits` (four variants of the retired rule, an open rule with a period), `TestRuleKey` |
+| 4 `promote` asked y/N before the conflict check, so y gave a proposal | Conflict check first; the prompt names the conflict and asks to record a proposed convention instead; a decline changes nothing (row 73) | `TestPhase4ConflictWithProjectRule` (prompt text, no "Promote it", decline records nothing, y records convention:2) |
+| 5 -race latency "p95 of 3" was the max (1.04-1.09 s vs 1.5 s) | Under -race the 1.5 s bound holds for the median of 5, decided once 3 runs fall on one side (3 processes per event when healthy); plain runs keep the p95 of 15 (row 74). Still asserted in the blocking -race jobs | `TestPhase3HookLatency`: 24.8 s under -race (3 runs per event, medians 1.03-1.07 s) |
+
+Accepted residuals, documented: the pty plus `env -u CLAUDECODE` bypass of `requireHuman` (row 69, README); one-word negation false positives such as "No globals" vs "Read globals from config" (§5.3, README; `--force` covers it).
 
 ## Decisions (spec §16)
 
@@ -44,6 +59,10 @@ Vex returned BLOCK on `d26c7ba` with four FAILs and five RISKs; each fixed test-
 | 68 | Managed block: appended once, bytes outside the markers kept, CRLF and final newline kept, malformed markers and symlinks refused with exit 3; fenced markers ignored, a BOM kept |
 | 69 | `requireHuman`: stdin and stdout real terminals (isatty), and no Claude Code session (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`); pty wrappers remain a documented residual |
 | 70 | Rule text in context.md is inert (word-initial `@`, `<!--`, `-->` broken) and in a code span; agree and promote print the line and ask `y/N` |
+| 71 | One CommonMark §4.5 fence scanner; an unclosed fence runs to the end and init refuses to append inside it |
+| 72 | Conventions compare by `RuleKey` (case, whitespace, trailing punctuation) for duplicates and retired refusals |
+| 73 | `promote` checks conflicts before asking; with one, the prompt offers a proposal, never a promotion |
+| 74 | Hook latency bound 1.5 s: p95 of 15 plain, median of 5 (early stop at 3) under -race |
 
 ## Measurements
 
