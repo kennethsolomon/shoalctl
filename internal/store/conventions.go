@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 // KindConvention is the record kind of a convention (§11.5).
@@ -44,39 +45,53 @@ func nullID(id int64) any {
 	return id
 }
 
+// RuleKey is the form two convention rules are compared in: case-folded,
+// runs of whitespace collapsed to one space, trailing punctuation dropped.
+// "Never use tabs." and "never  use tabs" are the same rule.
+func RuleKey(rule string) string {
+	k := strings.Join(strings.Fields(strings.ToLower(rule)), " ")
+	return strings.TrimRightFunc(k, func(r rune) bool { return unicode.IsPunct(r) || unicode.IsSpace(r) })
+}
+
 // ProposeConvention records a proposed convention and returns its id. A
-// rule already open (proposed or active) with the same text and scope, or
+// rule already open (proposed or active) with the same RuleKey and scope, or
 // an open proposal from the same lesson, is not added twice: its id comes
 // back with existing = true. A new proposal is refused (ErrProposalRefused) when
 // maxOpen > 0 proposals are already open, or when the human retired the
-// same rule and scope before: the refusal names it and why.
+// same RuleKey and scope before: the refusal names it and why.
 func (s *Store) ProposeConvention(ctx context.Context, c Convention, maxOpen int) (id int64, existing bool, err error) {
 	err = s.write(ctx, func(tx *sql.Tx) error {
 		existing = false
-		q := `SELECT id FROM conventions WHERE (status != 'retired' AND lower(trim(rule)) = lower(trim(?)) AND scope_glob = ?)`
-		args := []any{c.Rule, c.ScopeGlob}
-		if c.LessonID != 0 {
-			q += ` OR (status = 'proposed' AND lesson_id = ?)`
-			args = append(args, c.LessonID)
+		key := RuleKey(c.Rule)
+		rows, err := tx.QueryContext(ctx, `SELECT id, rule, scope_glob, status, COALESCE(lesson_id, 0), COALESCE(retired_by, ''), COALESCE(retire_reason, '')
+			FROM conventions WHERE scope_glob = ? OR (status = 'proposed' AND lesson_id = ?) ORDER BY id`, c.ScopeGlob, c.LessonID)
+		if err != nil {
+			return fmt.Errorf("look for a convention like %q: %w", c.Rule, err)
 		}
-		err := tx.QueryRowContext(ctx, q+` ORDER BY id LIMIT 1`, args...).Scan(&id)
-		switch {
-		case err == nil:
-			existing = true
-			return nil
-		case !errors.Is(err, sql.ErrNoRows):
-			return fmt.Errorf("look for an open convention like %q: %w", c.Rule, err)
-		}
+		defer rows.Close()
 		var retired int64
 		var by, reason string
-		err = tx.QueryRowContext(ctx, `SELECT id, COALESCE(retired_by, ''), COALESCE(retire_reason, '') FROM conventions
-			WHERE status = 'retired' AND lower(trim(rule)) = lower(trim(?)) AND scope_glob = ? ORDER BY id DESC LIMIT 1`, c.Rule, c.ScopeGlob).Scan(&retired, &by, &reason)
-		switch {
-		case err == nil:
+		for rows.Next() {
+			var rid, lessonID int64
+			var rule, scope, status, rby, rreason string
+			if err := rows.Scan(&rid, &rule, &scope, &status, &lessonID, &rby, &rreason); err != nil {
+				return fmt.Errorf("look for a convention like %q: %w", c.Rule, err)
+			}
+			same := scope == c.ScopeGlob && RuleKey(rule) == key
+			switch {
+			case status != ConventionRetired && (same || c.LessonID != 0 && status == ConventionProposed && lessonID == c.LessonID):
+				id, existing = rid, true
+				return nil
+			case status == ConventionRetired && same:
+				retired, by, reason = rid, rby, rreason
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("look for a convention like %q: %w", c.Rule, err)
+		}
+		if retired != 0 {
 			return fmt.Errorf("%w: %s with this rule and scope was retired by %s: %s. Propose it again only with a different rule or scope, "+
 				"after the human changed their mind", ErrProposalRefused, ConventionKey(retired), by, reason)
-		case !errors.Is(err, sql.ErrNoRows):
-			return fmt.Errorf("look for a retired convention like %q: %w", c.Rule, err)
 		}
 		if maxOpen > 0 {
 			var open int

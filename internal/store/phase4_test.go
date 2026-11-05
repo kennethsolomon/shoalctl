@@ -266,6 +266,30 @@ func TestProposeConventionLimits(t *testing.T) {
 	if _, existing, err := s.ProposeConvention(ctx, Convention{Rule: "rule 1", ScopeGlob: "src/**"}, 0); err != nil || existing {
 		t.Fatalf("the retired rule in another scope: %v %v", existing, err)
 	}
+	for _, rule := range []string{"rule 1.", "Rule   1!", "rule\t1 ;", "RULE 1..."} {
+		if _, _, err := s.ProposeConvention(ctx, Convention{Rule: rule, ScopeGlob: "**"}, 0); !errors.Is(err, ErrProposalRefused) || !strings.Contains(err.Error(), "too vague") {
+			t.Errorf("re-proposing the retired rule as %q: %v", rule, err)
+		}
+	}
+	if id, existing, err := s.ProposeConvention(ctx, Convention{Rule: "rule  2.", ScopeGlob: "**"}, 0); err != nil || !existing || id != ids[2] {
+		t.Errorf("an open rule with extra space and a period: %d %v %v", id, existing, err)
+	}
+}
+
+// RuleKey is the one normalization conventions are compared by.
+func TestRuleKey(t *testing.T) {
+	for in, want := range map[string]string{
+		"Never use tabs":        "never use tabs",
+		"  never  use\ttabs.  ": "never use tabs",
+		"NEVER use tabs!?":      "never use tabs",
+		"Use `go vet`.":         "use `go vet`",
+		"v1.2":                  "v1.2",
+		"":                      "",
+	} {
+		if got := RuleKey(in); got != want {
+			t.Errorf("RuleKey(%q) = %q, want %q", in, got, want)
+		}
+	}
 }
 
 // A lesson whose convention the human retired is never promoted.
