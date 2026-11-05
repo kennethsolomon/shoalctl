@@ -62,25 +62,55 @@ func readProjectRules(root string) ([]projectRule, error) {
 // listMarker is a line's markdown prefix: heading, quote, bullet or number.
 var listMarker = regexp.MustCompile(`^(?:[#>*+\-\s]+|\d+[.)]\s+)+`)
 
-// fences tracks markdown code fences line by line: a trimmed line starting
-// with ``` or ~~~ opens or closes one. Text inside is an example, never a
-// rule, a marker or an import.
+// fences tracks markdown code fences line by line, per CommonMark §4.5. An
+// opener is 0-3 spaces then 3+ backticks or tildes (a backtick opener's
+// info string holds no backtick); the closer is the same character, at
+// least as long, after 0-3 spaces, with only whitespace after it. A fence
+// left open runs to the end of the file. List context is ignored. Text
+// inside is an example, never a rule, a marker or an import.
 type fences struct {
-	open int // line number of the open fence; 0 when outside
+	open int  // line number of the open fence; 0 when outside
+	char byte // '`' or '~' of the open fence
+	size int  // length of the open fence's run
 }
 
-// skip reports whether the trimmed line l (line number n) is a fence line
-// or inside a fence.
-func (f *fences) skip(l string, n int) bool {
-	if strings.HasPrefix(l, "```") || strings.HasPrefix(l, "~~~") {
-		if f.open == 0 {
-			f.open = n
-		} else {
-			f.open = 0
+// skip reports whether line l (line number n, with or without its line
+// ending or a byte order mark) is a fence line or inside a fence.
+func (f *fences) skip(l []byte, n int) bool {
+	ch, size, rest, ok := fenceRun(strings.TrimRight(strings.TrimPrefix(string(l), utf8BOM), "\r\n"))
+	if f.open == 0 {
+		if !ok || ch == '`' && strings.ContainsRune(rest, '`') {
+			return false
 		}
+		f.open, f.char, f.size = n, ch, size
 		return true
 	}
-	return f.open != 0
+	if ok && ch == f.char && size >= f.size && strings.TrimSpace(rest) == "" {
+		f.open = 0
+	}
+	return true
+}
+
+// fenceRun splits a line that starts, after at most 3 spaces, with a run
+// of 3+ backticks or tildes into the run's character, its length and the
+// rest of the line.
+func fenceRun(l string) (byte, int, string, bool) {
+	indent := 0
+	for indent < len(l) && l[indent] == ' ' {
+		indent++
+	}
+	if indent > 3 || indent == len(l) || l[indent] != '`' && l[indent] != '~' {
+		return 0, 0, "", false
+	}
+	l = l[indent:]
+	size := 0
+	for size < len(l) && l[size] == l[0] {
+		size++
+	}
+	if size < 3 {
+		return 0, 0, "", false
+	}
+	return l[0], size, l[size:], true
 }
 
 func ruleLines(name string, data []byte) []projectRule {
@@ -90,10 +120,10 @@ func ruleLines(name string, data []byte) []projectRule {
 	var fence fences
 	managed := false
 	for n := 1; sc.Scan(); n++ {
-		l := lineText([]byte(sc.Text()))
-		if fence.skip(l, n) {
+		if fence.skip(sc.Bytes(), n) {
 			continue
 		}
+		l := lineText(sc.Bytes())
 		switch {
 		case l == blockBegin:
 			managed = true

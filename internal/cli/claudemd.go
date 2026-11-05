@@ -53,9 +53,10 @@ func lineText(l []byte) string { return strings.TrimSpace(strings.TrimPrefix(str
 // importLine, and whether that changed anything. Bytes outside the markers
 // are kept as they are; a missing block is appended with the file's own line
 // ending (CRLF when the file uses it) and the file keeps ending with a
-// newline, or not, as it did. Markers inside code fences are examples and
-// are ignored; a file ending inside an open fence is refused, since the
-// fence would swallow an appended block. A block whose markers are duplicated, missing
+// newline, or not, as it did. Markers inside code fences (CommonMark, see
+// fences) are examples and are ignored; a file ending inside an open fence
+// is refused, since by CommonMark the fence runs to the end and would
+// swallow an appended block. A block whose markers are duplicated, missing
 // their partner or out of order is refused: shoal does not guess which
 // lines it owns.
 func withManagedBlock(name string, data []byte, importLine string) ([]byte, bool, error) {
@@ -63,7 +64,7 @@ func withManagedBlock(name string, data []byte, importLine string) ([]byte, bool
 	var begins, ends []int
 	var fence fences
 	for i, l := range lines {
-		if fence.skip(lineText(l), i+1) {
+		if fence.skip(l, i+1) {
 			continue
 		}
 		switch lineText(l) {
@@ -166,7 +167,7 @@ func importsContext(dir string) bool {
 	}
 	var fence fences
 	for i, l := range splitLines(data) {
-		if !fence.skip(lineText(l), i+1) && lineText(l) == blockBegin {
+		if !fence.skip(l, i+1) && lineText(l) == blockBegin {
 			return true
 		}
 	}
