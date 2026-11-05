@@ -510,13 +510,14 @@ func TestPhase3HookLatency(t *testing.T) {
 	}
 	task := startedTask(t, h, "feature", "Timed")
 	t.Setenv("CLAUDE_PROJECT_DIR", task.Worktree)
-	// Under -race every hook process is a race-instrumented binary taking
-	// about a second, so fewer runs keep the bound asserted at a fraction of
-	// the cost; the measured numbers come from the plain run.
-	runs := 15
-	if raceDetector {
-		runs = 3
-	}
+	// The bound is 1.5s, under the 2s hook deadline. The plain run asserts
+	// it on the p95 of 15 runs. Under -race every hook process is a
+	// race-instrumented binary taking about a second, so one busy-runner
+	// stall would sink a p95 (on 3 runs, the max). There the bound holds
+	// for the median of 5, decided as soon as 3 runs land on one side of
+	// it: a healthy run still costs 3 processes per event, and a single
+	// outlier never fails the blocking -race job.
+	const bound = 1500 * time.Millisecond
 	for _, ev := range []struct{ event, stdin string }{
 		{"stop", `{"session_id": "lat"}`},
 		{"session-start", `{"session_id": "lat", "source": "startup"}`},
@@ -526,7 +527,11 @@ func TestPhase3HookLatency(t *testing.T) {
 	} {
 		event, _, _ := strings.Cut(ev.event, " ")
 		var took []time.Duration
-		for i := 0; i < runs; i++ {
+		over := 0
+		for i := 0; i < 15; i++ {
+			if raceDetector && (len(took)-over == 3 || over == 3) {
+				break
+			}
 			cmd := h.command("hook", event)
 			cmd.Stdin = strings.NewReader(strings.ReplaceAll(ev.stdin, `"lat"`, fmt.Sprintf(`"lat-%d"`, i)))
 			start := time.Now()
@@ -534,11 +539,24 @@ func TestPhase3HookLatency(t *testing.T) {
 				t.Fatal(err)
 			}
 			took = append(took, time.Since(start))
+			if took[len(took)-1] > bound {
+				over++
+			}
 		}
 		sort.Slice(took, func(i, j int) bool { return took[i] < took[j] })
+		runs := len(took)
+		if raceDetector {
+			// 3 runs on one side fix the side of the median of 5.
+			median := took[runs-3]
+			t.Logf("hook %-24s median-of-5 side %6.1fms  (%d runs, -race, process start included)", ev.event, ms(median), runs)
+			if over == 3 {
+				t.Errorf("hook %s: 3 of at most 5 runs under -race over %s (third slowest %s)", ev.event, bound, median)
+			}
+			continue
+		}
 		p50, p95 := took[runs/2], took[runs*95/100]
 		t.Logf("hook %-24s p50 %6.1fms  p95 %6.1fms  (%d runs, process start included)", ev.event, ms(p50), ms(p95), runs)
-		if p95 > 1500*time.Millisecond {
+		if p95 > bound {
 			t.Errorf("hook %s p95 %s: too close to the 2s hook deadline", ev.event, p95)
 		}
 	}
