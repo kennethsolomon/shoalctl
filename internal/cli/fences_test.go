@@ -12,6 +12,7 @@ import (
 // closer is the same character, at least as long, after 0-3 spaces, with
 // only whitespace after it; an unclosed fence runs to the end.
 func TestFencesCommonMark(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		in     string
@@ -72,6 +73,7 @@ func TestFencesCommonMark(t *testing.T) {
 // example; the real block is appended after it, importsContext does not
 // count the example, and no fenced code is read as a project rule.
 func TestFencedMarkersRepros(t *testing.T) {
+	t.Parallel()
 	example := blockBegin + "\n@example\n" + blockEnd + "\n"
 	block := blockBegin + "\n" + testImport + "\n" + blockEnd + "\n"
 	for name, in := range map[string]string{

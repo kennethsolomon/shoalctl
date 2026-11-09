@@ -12,6 +12,7 @@ import (
 // The real check, not the Env.Terminal swap: a subprocess whose stdin is the
 // null device (a character device on Unix) is no human.
 func TestRequireHumanRefusesNullStdin(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.mustRun("init")
 	h.mustRun("convention", "propose", "--rule", "Keep handlers thin", "--scope", "**")
@@ -41,6 +42,7 @@ func TestRequireHumanRefusesNullStdin(t *testing.T) {
 }
 
 func TestInteractiveRealCheck(t *testing.T) {
+	t.Parallel()
 	devnull, err := os.Open(os.DevNull)
 	if err != nil {
 		t.Fatal(err)
@@ -66,8 +68,10 @@ func TestInteractiveRealCheck(t *testing.T) {
 
 // A Claude Code session is refused even when stdin looks like a terminal.
 func TestRequireHumanRefusesClaudeCodeSession(t *testing.T) {
+	t.Parallel()
 	for _, k := range claudeCodeEnv {
 		t.Run(k, func(t *testing.T) {
+			t.Parallel()
 			h := newHarness(t)
 			h.mustRun("init")
 			h.mustRun("convention", "propose", "--rule", "Keep handlers thin", "--scope", "**")

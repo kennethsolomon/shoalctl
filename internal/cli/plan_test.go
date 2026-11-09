@@ -29,6 +29,7 @@ func sqlExec(t *testing.T, p *project, q string, args ...any) {
 }
 
 func TestPlanWithoutOverlapIsReady(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.initWith(junitConfig)
 	a := newTask(t, h, "bugfix", "Display name")
@@ -53,6 +54,7 @@ func TestPlanWithoutOverlapIsReady(t *testing.T) {
 }
 
 func TestPlanOverlapNeedsAHuman(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.initWith(junitConfig)
 	a, b := newTask(t, h, "bugfix", "Bug A"), newTask(t, h, "bugfix", "Bug B")
@@ -82,6 +84,7 @@ func TestPlanOverlapNeedsAHuman(t *testing.T) {
 }
 
 func TestPlanFoldsIntoEarlierTask(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.initWith(junitConfig)
 	a := newTask(t, h, "bugfix", "Users page broken")
@@ -103,6 +106,7 @@ func TestPlanFoldsIntoEarlierTask(t *testing.T) {
 }
 
 func TestPlanIgnoresStaleClaims(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed: without it no claim is ever stale")
 	}
@@ -125,6 +129,7 @@ func TestPlanIgnoresStaleClaims(t *testing.T) {
 // directory src/pkg holds every file below it, so a wildcard plan that can
 // match one of them is an overlap, not a second ready task.
 func TestPlanSeesWildcardReachingIntoALiteralDirectory(t *testing.T) {
+	t.Parallel()
 	for _, pair := range [][2]string{{"src/pkg", "**/x.go"}, {"src/pkg", "src/*/x.go"}, {"internal/store", "**/*_test.go"},
 		{"**/x.go", "src/pkg"}} {
 		h := newHarness(t)
@@ -141,6 +146,7 @@ func TestPlanSeesWildcardReachingIntoALiteralDirectory(t *testing.T) {
 // TestPlanRefusesAFoldThatWouldDeadlock: x waits on me, y waits on x; folding
 // me into y would make x wait on y. Neither s nor m is offered, only p.
 func TestPlanRefusesAFoldThatWouldDeadlock(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.initWith(junitConfig)
 	me, x, y := newTask(t, h, "bugfix", "Me"), newTask(t, h, "bugfix", "X"), newTask(t, h, "bugfix", "Y")
@@ -165,6 +171,7 @@ func TestPlanRefusesAFoldThatWouldDeadlock(t *testing.T) {
 // stale_after but whose tmux window is still open is alive. doctor --fix must
 // not release its claim and plan must still see the overlap.
 func TestLiveWindowKeepsAnOldClaim(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	p := h.initWith(junitConfig)
 	a, b := newTask(t, h, "bugfix", "Long run"), newTask(t, h, "bugfix", "Next")
@@ -190,6 +197,7 @@ func TestLiveWindowKeepsAnOldClaim(t *testing.T) {
 // different (or no) default tmux server; it still finds the live window on
 // the socket start recorded, and keeps the claim.
 func TestStartRecordsTheTmuxSocket(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	p := h.initWith(junitConfig)
 	a, b := newTask(t, h, "bugfix", "Long run"), newTask(t, h, "bugfix", "Next")
@@ -212,6 +220,7 @@ func TestStartRecordsTheTmuxSocket(t *testing.T) {
 // tmux error is unknown, not "no windows"; only a clean "no server" on the
 // recorded socket lets an old claim go stale.
 func TestUnknownTmuxNeverExpiresClaims(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	p := h.initWith(junitConfig)
 	a, b := newTask(t, h, "bugfix", "Abandoned"), newTask(t, h, "bugfix", "Next")
@@ -269,6 +278,7 @@ func shortTempRoot() string {
 // task claims. start must notice once it records in-progress, and the task
 // is needs-rebase, so its first qa rebases it.
 func TestMergeLandingDuringStartFlagsNeedsRebase(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	testutil.Git(t, h.repo, "checkout", "-q", "-b", "landing")
 	commitIn(t, h.repo, "api.go", "changed by a merge")
@@ -308,6 +318,7 @@ func TestMergeLandingDuringStartFlagsNeedsRebase(t *testing.T) {
 // computes its needs-rebase hits is a candidate; MarkNeedsRebase moves it if
 // it reached in-progress by the merge's transaction.
 func TestClaimsHitIncludesStartingTasks(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
 	a := startedTask(t, h, "feature", "Lands first")
@@ -331,6 +342,7 @@ func TestClaimsHitIncludesStartingTasks(t *testing.T) {
 // route directory ("app/[slug]") holds the files under it, so another plan on
 // one of them, or on a wildcard reaching them, is an overlap.
 func TestPlanSeesBracketedRouteDirectories(t *testing.T) {
+	t.Parallel()
 	for _, pair := range [][2]string{{"app/[slug]", "app/[slug]/page.tsx"}, {"app/[slug]", "**/page.tsx"},
 		{"src/routes/[id]", "src/routes/[id]/+page.svelte"}, {"app/[...slug]", "app/[...slug]/page.tsx"},
 		{"app/[[...slug]]", "app/[[...slug]]/page.tsx"}, {"app/(shop)/[slug]", "app/(shop)/[slug]/page.tsx"},
@@ -349,6 +361,7 @@ func TestPlanSeesBracketedRouteDirectories(t *testing.T) {
 // TestClaimsHitMatchesFilesInBracketedDirectories: a merge changing
 // app/[slug]/page.tsx hits a task claiming the route directory app/[slug].
 func TestClaimsHitMatchesFilesInBracketedDirectories(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
 	a := startedTask(t, h, "feature", "Lands first")
@@ -374,6 +387,7 @@ func TestClaimsHitMatchesFilesInBracketedDirectories(t *testing.T) {
 // old claim goes stale; with a -S/-L override it stays unknown, and doctor
 // says exactly why.
 func TestMissingDefaultSocketMeansNoServer(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("fake tmux is a shell script")
 	}

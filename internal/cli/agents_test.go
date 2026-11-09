@@ -10,6 +10,7 @@ import (
 )
 
 func TestAgentsInstallStealthAndCommit(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	out := h.mustRun("agents", "install")
 	user := filepath.Join(h.home, ".claude", "agents")

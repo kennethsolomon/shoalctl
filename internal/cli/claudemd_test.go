@@ -12,6 +12,7 @@ import (
 const testImport = "@~/.shoal/projects/abc/context.md"
 
 func TestWithManagedBlockAppends(t *testing.T) {
+	t.Parallel()
 	block := blockBegin + "\n" + testImport + "\n" + blockEnd
 	for _, tc := range []struct{ name, in, want string }{
 		{"empty", "", block + "\n"},
@@ -38,6 +39,7 @@ func TestWithManagedBlockAppends(t *testing.T) {
 // A block whose import line differs (edited by hand) gets the right line
 // back; everything around it stays byte for byte.
 func TestWithManagedBlockRepairsInside(t *testing.T) {
+	t.Parallel()
 	in := "top\r\n" + blockBegin + "\r\n@elsewhere\r\nextra\r\n" + blockEnd + "  \r\nbottom"
 	got, changed, err := withManagedBlock("CLAUDE.md", []byte(in), testImport)
 	want := "top\r\n" + blockBegin + "\r\n" + testImport + "\r\n" + blockEnd + "  \r\nbottom"
@@ -47,6 +49,7 @@ func TestWithManagedBlockRepairsInside(t *testing.T) {
 }
 
 func TestWithManagedBlockRefusesMalformed(t *testing.T) {
+	t.Parallel()
 	for name, in := range map[string]string{
 		"two begins":    blockBegin + "\n" + blockBegin + "\n" + blockEnd + "\n",
 		"two blocks":    blockBegin + "\nx\n" + blockEnd + "\n" + blockBegin + "\nx\n" + blockEnd + "\n",
@@ -63,6 +66,7 @@ func TestWithManagedBlockRefusesMalformed(t *testing.T) {
 }
 
 func TestInstallManagedBlockFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	changed, err := installManagedBlock(dir, testImport)
 	if err != nil || !changed {
@@ -90,6 +94,7 @@ func TestInstallManagedBlockFile(t *testing.T) {
 }
 
 func TestContextImport(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	env := Env{Getenv: lookupIn(map[string]string{"HOME": home, "USERPROFILE": home})}
 	if got := env.contextImport(filepath.Join(home, ".shoal", "projects", "abc", "context.md")); got != testImport {
@@ -104,6 +109,7 @@ func TestContextImport(t *testing.T) {
 // Markers inside a code fence are an example, not the block: the fence
 // stays byte for byte and the real block goes outside it (§5.1).
 func TestWithManagedBlockIgnoresFences(t *testing.T) {
+	t.Parallel()
 	block := blockBegin + "\n" + testImport + "\n" + blockEnd
 	for name, in := range map[string]string{
 		"backticks":       "# Docs\n```\n" + blockBegin + "\n@example\n" + blockEnd + "\n```\n",
@@ -151,6 +157,7 @@ func TestWithManagedBlockIgnoresFences(t *testing.T) {
 // A UTF-8 byte order mark before a marker on line 1 is not part of it: the
 // block is found, and the BOM stays.
 func TestWithManagedBlockBOM(t *testing.T) {
+	t.Parallel()
 	const bom = "\xef\xbb\xbf"
 	block := blockBegin + "\n" + testImport + "\n" + blockEnd + "\n"
 	for name, tc := range map[string]struct{ in, want string }{
@@ -183,6 +190,7 @@ func TestWithManagedBlockBOM(t *testing.T) {
 // appended, importsContext does not count them and they hide no rules
 // (§5.1, row 75).
 func TestWithManagedBlockMarkerColumnZero(t *testing.T) {
+	t.Parallel()
 	const bom = "\xef\xbb\xbf"
 	block := blockBegin + "\n" + testImport + "\n" + blockEnd + "\n"
 	example := func(indent string) string {

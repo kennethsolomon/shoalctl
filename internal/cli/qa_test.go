@@ -9,6 +9,7 @@ import (
 )
 
 func TestQARoundsEscalateAfterCap(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	p := h.initWith(junitConfig + "flaky_retries = 0\n[stack]\nlint = \"test ! -f lint-bad.txt\"\n")
 	task := startedTask(t, h, "feature", "Hard one")

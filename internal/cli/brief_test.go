@@ -9,6 +9,7 @@ import (
 )
 
 func TestApproxTokensCountsCJKAndBlobs(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name string
 		in   string
@@ -37,6 +38,7 @@ func TestApproxTokensCountsCJKAndBlobs(t *testing.T) {
 // token per UTF-8 byte triple or more, so the estimate never drops below
 // ceil(bytes/3).
 func TestApproxTokensAtLeastBytesOverThree(t *testing.T) {
+	t.Parallel()
 	thai := string([]rune(strings.Repeat("ภาษาไทยไม่มีช่องว่างระหว่างคำ", 20))[:300])
 	for _, c := range []struct{ name, in string }{
 		{"thai", thai},
@@ -55,6 +57,7 @@ func TestApproxTokensAtLeastBytesOverThree(t *testing.T) {
 // title and the ask. The brief stays under 1k by the estimator and by
 // bytes/3, and shows the newest lessons: CJK ones.
 func TestPhase3BriefUnderBudgetCJKAndBlobs(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
 	hex := strings.Repeat("0123456789abcdef", 30)
@@ -85,6 +88,7 @@ func TestPhase3BriefUnderBudgetCJKAndBlobs(t *testing.T) {
 // stack-wide lesson (no glob, the project's stack) is among them when it is
 // one of the newest 5; one of another stack never is.
 func TestTaskLessonsNewestFirst(t *testing.T) {
+	t.Parallel()
 	var all []memo
 	for i := 1; i <= 7; i++ {
 		created := fmt.Sprintf("2026-11-0%dT00:00:00Z", i)
@@ -111,6 +115,7 @@ func TestTaskLessonsNewestFirst(t *testing.T) {
 // The brainstorm survives the budget: lessons, todo lines and project rules
 // go first, and every proposal cut is counted in a "+N more" line (§4.6).
 func TestBriefBudgetKeepsTheBrainstorm(t *testing.T) {
+	t.Parallel()
 	long := strings.Repeat("keep every payment provider behind one strategy interface; ", 6)
 	d := briefData{task: store.Task{Slug: "1-pay", Lane: "feature", Stage: "in-progress", Title: "Pay"}, maxRounds: 3}
 	for i := 0; i < 30; i++ {

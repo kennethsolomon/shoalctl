@@ -21,6 +21,7 @@ func deadPID(t *testing.T) int {
 }
 
 func TestDoctorFullChecksAndFixes(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.env.Exe = fakeBinary(t, t.TempDir())
 	p := h.initWith(junitConfig)
@@ -91,6 +92,7 @@ func TestDoctorFullChecksAndFixes(t *testing.T) {
 // A merge killed mid-rebase leaves the worktree rebasing: doctor asks before
 // aborting it, and only a human at a terminal can say yes.
 func TestDoctorAbortsAnInterruptedMergeRebaseAfterAsking(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.env.Exe = fakeBinary(t, t.TempDir())
 	p := h.initWith(junitConfig)

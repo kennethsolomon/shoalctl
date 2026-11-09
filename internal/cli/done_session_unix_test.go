@@ -26,6 +26,7 @@ func readyTask(t *testing.T, h *harness, title string) (*project, string, string
 }
 
 func TestDoneRefusesWhileSessionRuns(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	p, slug, _ := readyTask(t, h, "Live session")
 	window := h.task(slug).TmuxWindow
@@ -54,6 +55,7 @@ func TestDoneRefusesWhileSessionRuns(t *testing.T) {
 }
 
 func TestDoneProceedsWhenWindowIsGone(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	_, slug, _ := readyTask(t, h, "Window gone")
 	h.tmuxOut("kill-window", "-t", h.task(slug).TmuxWindow)
@@ -83,6 +85,7 @@ func TestDoneWaitsForIndexLock(t *testing.T) {
 }
 
 func TestDoneRefusesWhenBranchMovesDuringFinalRun(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	p, slug, _ := readyTask(t, h, "Sneaky commit")
 	writeConfig(t, p, "[tests]\ncommand = \"git commit -q --allow-empty -m sneaky\"\nformat = \"exit-code\"\n")

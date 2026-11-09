@@ -18,6 +18,7 @@ echo '</testsuite>'`, 1)
 }
 
 func TestTestCommandBlocksOnRegression(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	p := h.initWith(junitConfig + "rerun_command = \"sh ./test.sh {junit} {tests}\"\n")
 	task := startedTask(t, h, "feature", "Gate me")
@@ -47,6 +48,7 @@ func TestTestCommandBlocksOnRegression(t *testing.T) {
 }
 
 func TestFlakyBaselineIsQuarantined(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	counter := filepath.Join(t.TempDir(), "flaky-ran")
 	testutil.WriteFile(t, filepath.Join(h.repo, "test.sh"), flakyScript(counter))
@@ -81,6 +83,7 @@ func TestFlakyBaselineIsQuarantined(t *testing.T) {
 // --kind baseline runs in a clean scratch worktree at the base commit, so a
 // local-only file cannot make a test flaky there and quarantine it.
 func TestBaselineIgnoresWorktreeOnlyFiles(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	counter := filepath.Join(t.TempDir(), "flaky-ran")
 	// C::flaky is only flaky when the ignored file local.ign is present.

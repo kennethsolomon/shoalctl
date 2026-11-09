@@ -47,6 +47,7 @@ func hookLog(t *testing.T, p *project) string {
 }
 
 func TestHookHeartbeat(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	wt, p := fakeWorktree(t, h)
 	h.setenv("CLAUDE_PROJECT_DIR", wt)
@@ -73,6 +74,7 @@ func TestHookHeartbeat(t *testing.T) {
 }
 
 func TestHookUsesCwdWhenProjectDirUnset(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	wt, _ := fakeWorktree(t, h)
 	if code, _, _ := h.hook(strings.NewReader(`{"session_id": "via-cwd", "cwd": "`+filepath.ToSlash(wt)+`"}`), "session-start"); code != 0 {
@@ -84,6 +86,7 @@ func TestHookUsesCwdWhenProjectDirUnset(t *testing.T) {
 }
 
 func TestHookSilentOutsideShoalWorktrees(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	wt, p := fakeWorktree(t, h)
 	before := h.task("1")
@@ -110,6 +113,7 @@ func TestHookSilentOutsideShoalWorktrees(t *testing.T) {
 }
 
 func TestHookFailsOpen(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		setup func(t *testing.T, p *project)
@@ -145,6 +149,7 @@ func TestHookFailsOpen(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			h := newHarness(t)
 			wt, p := fakeWorktree(t, h)
 			tt.setup(t, p)
@@ -187,6 +192,7 @@ type panicReader struct{}
 func (panicReader) Read([]byte) (int, error) { panic("boom") }
 
 func TestHookRecoversPanic(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	wt, p := fakeWorktree(t, h)
 	h.setenv("CLAUDE_PROJECT_DIR", wt)
@@ -199,6 +205,7 @@ func TestHookRecoversPanic(t *testing.T) {
 }
 
 func TestHookUnwritableLogStillExitsZero(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("needs POSIX permissions and a non-root user")
 	}
@@ -217,6 +224,7 @@ func TestHookUnwritableLogStillExitsZero(t *testing.T) {
 }
 
 func TestStatusWarnsAboutNewHookFailures(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	wt, p := fakeWorktree(t, h)
 	h.setenv("CLAUDE_PROJECT_DIR", wt)

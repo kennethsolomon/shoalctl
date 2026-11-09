@@ -25,6 +25,7 @@ func queueEntry(t *testing.T, h *harness, id int64) store.QueueEntry {
 // A merge marks other open tasks whose claims cover a merged file
 // needs-rebase; their next qa rebases them onto the new base first.
 func TestMergeMarksOverlappingTasksNeedsRebase(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
 	a := startedTask(t, h, "feature", "Writes shared")
@@ -60,6 +61,7 @@ func TestMergeMarksOverlappingTasksNeedsRebase(t *testing.T) {
 }
 
 func TestQARebaseConflictStaysNeedsRebase(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
 	a := startedTask(t, h, "feature", "First")
@@ -81,6 +83,7 @@ func TestQARebaseConflictStaysNeedsRebase(t *testing.T) {
 
 // A blocked merge marks the queue row failed; done again re-queues it last.
 func TestMergeQueueFailedThenRequeued(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
 	a := startedTask(t, h, "feature", "Breaks a")

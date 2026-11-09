@@ -81,6 +81,7 @@ func exitCode(err error) int {
 // Claude Code does on macOS and Linux (bash -c), and with sh for good
 // measure. Exit 2 would block the session, so every failure must become 0.
 func TestHookCommandNeverExitsNonZero(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX shells; the PowerShell form is tested below when pwsh exists")
 	}
@@ -104,6 +105,7 @@ func TestHookCommandNeverExitsNonZero(t *testing.T) {
 }
 
 func TestHookCommandNeverExitsNonZeroPowerShell(t *testing.T) {
+	t.Parallel()
 	pwsh, err := exec.LookPath("pwsh")
 	if err != nil {
 		if pwsh, err = exec.LookPath("powershell"); err != nil {

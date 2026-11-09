@@ -28,6 +28,7 @@ import (
 // says merged, and never prints BLOCKED; a partial acceptance lists what was
 // accepted, what still blocks, and that the task went back to qa.
 func TestPhase2MergeOutputAcceptance(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig + "[stack]\nlint = \"test ! -f lintfail.txt\"\n")
 	task := startedTask(t, h, "feature", "Two blockers")
@@ -78,6 +79,7 @@ func TestPhase2MergeOutputAcceptance(t *testing.T) {
 // merged; Bug B is unblocked and starts from the new base, and the lesson
 // Bug A recorded after its failed round reaches Bug B's brief (step 5).
 func TestPhase2BugABugB(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
 	bugA := newTask(t, h, "bugfix", "Users page shows wrong display name")
@@ -161,6 +163,7 @@ func TestPhase2BugABugB(t *testing.T) {
 // the rest see the overlap (no terminal: exit 5, nothing written). Run once
 // with goroutines in one process (for -race) and once with real processes.
 func TestPhase2ConcurrentPlansOneWinner(t *testing.T) {
+	t.Parallel()
 	check := func(t *testing.T, h *harness, p *project, codes []int, stderrs []string) {
 		t.Helper()
 		sort.Ints(codes)
@@ -175,6 +178,7 @@ func TestPhase2ConcurrentPlansOneWinner(t *testing.T) {
 		}
 	}
 	t.Run("goroutines", func(t *testing.T) {
+		t.Parallel()
 		h := newHarness(t)
 		p := h.initWith(junitConfig)
 		const n = 8
@@ -198,6 +202,7 @@ func TestPhase2ConcurrentPlansOneWinner(t *testing.T) {
 		check(t, h, p, codes, stderrs)
 	})
 	t.Run("processes", func(t *testing.T) {
+		t.Parallel()
 		testutil.RequireSh(t)
 		h := newHarness(t)
 		p := h.initWith(junitConfig)
@@ -229,6 +234,7 @@ func TestPhase2ConcurrentPlansOneWinner(t *testing.T) {
 // Done when 3: doctor --fix recovers a task killed mid-start (stage
 // starting, its baseline run left running) and releases a stale claim.
 func TestPhase2DoctorRecoversKilledStartAndStaleClaim(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.env.Exe = fakeBinary(t, t.TempDir())
 	pids := t.TempDir()

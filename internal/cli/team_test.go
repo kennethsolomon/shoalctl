@@ -9,6 +9,7 @@ import (
 )
 
 func TestMsgSendAndInbox(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.initWith(junitConfig)
 	slug := strings.TrimSpace(h.mustRun("new", "feature", "Talk"))
@@ -44,6 +45,7 @@ func TestMsgSendAndInbox(t *testing.T) {
 }
 
 func TestClaimAndRelease(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.initWith(junitConfig)
 	slug := strings.TrimSpace(h.mustRun("new", "feature", "Split"))
@@ -64,6 +66,7 @@ func TestClaimAndRelease(t *testing.T) {
 }
 
 func TestContractFreeze(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
 	task := startedTask(t, h, "feature", "API")

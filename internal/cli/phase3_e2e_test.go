@@ -76,6 +76,7 @@ func inHook(t *testing.T, h *harness, wt, event, stdin string) hookOutput {
 // punctuation, so all three counts over-estimate this kind of text.
 // TestPhase3BriefUnderBudgetCJKAndBlobs covers CJK lessons and hex blobs.
 func TestPhase3BriefUnderBudget(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig + "[stack]\nname = \"laravel\"\n")
 	long := strings.Repeat("Users page shows the wrong display name when first_name is null ", 6)
@@ -141,6 +142,7 @@ func TestPhase3BriefUnderBudget(t *testing.T) {
 // per session; a different session gets it again; the staleness pre-check
 // tags it when its files changed since the record.
 func TestPhase3LessonInjectedOncePerSession(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
 	a := startedTask(t, h, "bugfix", "Users page wrong name")
@@ -201,6 +203,7 @@ func TestPhase3LessonInjectedOncePerSession(t *testing.T) {
 // injection marks: the next touch injects the lesson again, without counting
 // a second hit. Two registrations of that SessionStart still reset once.
 func TestPhase3CompactionReinjectsLessons(t *testing.T) {
+	t.Parallel()
 	testutil.RequireSh(t)
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
@@ -271,6 +274,7 @@ func TestPhase3CompactionReinjectsLessons(t *testing.T) {
 // contract edit by a non-lead). The warning is shown to the human
 // (systemMessage) and to the agent (additionalContext), once per session.
 func TestPhase3WriteOutsideClaimsWarns(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
 	task := startedTask(t, h, "feature", "Clients CRUD")
@@ -327,6 +331,7 @@ func TestPhase3WriteOutsideClaimsWarns(t *testing.T) {
 // writes a file task E planned: both are told, and X merges after E even
 // though X is done first.
 func TestPhase3LateOverlapFromEdits(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
 	e := newTask(t, h, "feature", "Dropbox integration")
@@ -369,6 +374,7 @@ func TestPhase3LateOverlapFromEdits(t *testing.T) {
 // never finishes. Plain merge skips X and names the way out; merge --task X
 // merges X ahead of E, and E, whose claim X changed, must rebase.
 func TestPhase3MergeTaskAheadOfStuckHolder(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
 	e := newTask(t, h, "feature", "Dropbox integration")
@@ -405,6 +411,7 @@ func TestPhase3MergeTaskAheadOfStuckHolder(t *testing.T) {
 // run each hook twice: every handler then still acts once. Proven by
 // running each event twice at the same time as real processes.
 func TestPhase3HooksNeverDoubleFire(t *testing.T) {
+	t.Parallel()
 	testutil.RequireSh(t)
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
@@ -572,6 +579,7 @@ func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
 // that touched the fix and deleted the regression test, and how the test
 // last ran. why <sha> and recall find the same record.
 func TestPhase3WhyBugCameBack(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
 	bug := startedTask(t, h, "bugfix", "Users page shows wrong display name")

@@ -37,6 +37,7 @@ func mustContain(t *testing.T, what, s string, wants ...string) {
 // Done when 1: a feature runs through the feature lane with backend and
 // frontend agents and a frozen contract.
 func TestPhase1FeatureLaneWithTeam(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
 	mustContain(t, "agents install", h.mustRun("agents", "install"), "shoal-lead", "shoal-backend", "shoal-frontend", "shoal-qa-scope")
@@ -92,6 +93,7 @@ func TestPhase1FeatureLaneWithTeam(t *testing.T) {
 // Done when 2: an "also test X" scope item blocks done until every row is
 // green or waived.
 func TestPhase1ScopeBlocksDone(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
 	slug := strings.TrimSpace(h.mustRun("new", "feature", "CSV export", "--scope", "also test CSV export"))
@@ -136,6 +138,7 @@ func TestPhase1ScopeBlocksDone(t *testing.T) {
 
 // Done when 3: a bugfix without a red/green proof is refused by done.
 func TestPhase1BugfixNeedsProof(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
 	task := startedTask(t, h, "bugfix", "Wrong display name")
@@ -156,6 +159,7 @@ func TestPhase1BugfixNeedsProof(t *testing.T) {
 // Done when 4: breaking a baseline-passing test blocks merge with exit 9;
 // --accept-regression lets it through with the override in the report.
 func TestPhase1MergeGateRegression(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	p := h.initWith(junitConfig)
 	task := startedTask(t, h, "feature", "Risky change")
@@ -194,6 +198,7 @@ func TestPhase1MergeGateRegression(t *testing.T) {
 
 // Done when 5: a test made flaky on purpose is quarantined and listed.
 func TestPhase1FlakyQuarantined(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	counter := filepath.Join(t.TempDir(), "flaky-ran")
 	testutil.WriteFile(t, filepath.Join(h.repo, "test.sh"), flakyScript(counter))
@@ -217,6 +222,7 @@ func TestPhase1FlakyQuarantined(t *testing.T) {
 // Done when 6: a finished hotfix merges into the production branch and
 // creates its backport task.
 func TestPhase1HotfixMergesAndBackports(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	testutil.Git(t, h.repo, "branch", "production")
 	commitIn(t, h.repo, "main-only.txt", "x") // main moves on past production

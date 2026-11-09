@@ -60,6 +60,7 @@ func (h *harness) asAgent() { h.env.Terminal, h.answers = nil, "" }
 
 // Done when 1: "use the strategy pattern from now on" end to end (§11.5).
 func TestPhase4StrategyPatternEndToEnd(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.mustRun("init")
 	p := h.project()
@@ -126,6 +127,7 @@ func TestPhase4StrategyPatternEndToEnd(t *testing.T) {
 
 // Active conventions obey the PreToolUse exclusions and budget (§4.6).
 func TestPhase4ConventionInjectionLimits(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.initWith("[privacy]\ndeny_globs = [\".env*\"]\n")
 	ts := fakeTasks(t, h, "Any")
@@ -158,6 +160,7 @@ func TestPhase4ConventionInjectionLimits(t *testing.T) {
 // promotion; the human's approval writes context.md, sets promoted and
 // stops the per-file injection; without approval nothing changes (§11.4).
 func TestPhase4LessonPromotion(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.mustRun("init")
 	p := h.project()
@@ -214,6 +217,7 @@ func TestPhase4LessonPromotion(t *testing.T) {
 // Done when 3: non-stealth writes the managed block once; a rerun changes
 // nothing; the user's bytes outside the markers stay as they were (§5.1).
 func TestPhase4ManagedBlock(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	user := "# Team rules\r\n- Run gofmt before committing\r\n- No trailing whitespace"
 	commitFile(t, h.repo, "CLAUDE.md", user)
@@ -274,6 +278,7 @@ func TestPhase4ManagedBlock(t *testing.T) {
 // byte for byte, git status stays empty, and the rules reach the session
 // through the brief (§5.2).
 func TestPhase4StealthDefault(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	user := "# Rules\n- Keep handlers small\n"
 	commitFile(t, h.repo, "CLAUDE.md", user)
@@ -304,6 +309,7 @@ func TestPhase4StealthDefault(t *testing.T) {
 // own rules is recorded as a proposal with the conflict, and the project
 // rule is never overridden (§5.3).
 func TestPhase4ConflictWithProjectRule(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	user := "# Rules\n- Never use the strategy pattern; keep plain switch statements.\n"
 	commitFile(t, h.repo, "CLAUDE.md", user)
@@ -391,6 +397,7 @@ var importLike = regexp.MustCompile(`(?m)(^|\s)@[^\s@]`)
 // Agent-written rule text never becomes an import or an HTML comment in
 // context.md, and the human sees the exact line before agreeing.
 func TestPhase4RuleTextIsInert(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.mustRun("init")
 	p := h.project()
@@ -422,6 +429,7 @@ func TestPhase4RuleTextIsInert(t *testing.T) {
 
 // promote shows the lesson's text and asks before it writes anything.
 func TestPhase4PromoteShowsRule(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.mustRun("init")
 	ts := fakeTasks(t, h, "A", "B", "C", "D")
@@ -446,6 +454,7 @@ func TestPhase4PromoteShowsRule(t *testing.T) {
 // Proposals are capped and never crowd the agreed rules out of the brief;
 // a rule the human retired is not proposed again as is (§16 row 64).
 func TestPhase4ProposalsDoNotCrowdOutRules(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.mustRun("init")
 	ts := fakeTasks(t, h, "Any")

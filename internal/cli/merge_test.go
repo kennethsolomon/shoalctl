@@ -15,6 +15,7 @@ import (
 )
 
 func TestMergeOldestFirstRebaseAndConflict(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	p := h.initWith(junitConfig)
 	a := startedTask(t, h, "feature", "First")
@@ -59,6 +60,7 @@ func TestMergeOldestFirstRebaseAndConflict(t *testing.T) {
 }
 
 func TestMergeRefusesDirtyMainCheckout(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
 	task := startedTask(t, h, "feature", "Change")
@@ -84,6 +86,7 @@ func TestMergeRefusesDirtyMainCheckout(t *testing.T) {
 // An acceptance covers exactly one task: --accept-regression needs --task,
 // and the named task is the only one merged in that run.
 func TestMergeAcceptanceIsScopedToOneTask(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	p := h.initWith(junitConfig)
 	a := startedTask(t, h, "feature", "First breaks a")
@@ -130,6 +133,7 @@ func setStage(t *testing.T, p *project, id int64, stage string) {
 // already holds the task head, back to done (and merged in this run) when it
 // does not, and left alone with exit 5 when the worktree is mid-rebase.
 func TestMergeSettlesTasksLeftAtMerging(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	p := h.initWith(junitConfig)
 	landed := startedTask(t, h, "feature", "Landed before the crash")
@@ -174,6 +178,7 @@ func TestMergeSettlesTasksLeftAtMerging(t *testing.T) {
 // not a conflict: any rebase in progress is aborted, the branch is back where
 // it was, and the error carries the interrupted exit code.
 func TestRebaseCancelledIsInterruptNotConflict(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
 	task := startedTask(t, h, "feature", "Interrupted rebase")
@@ -203,6 +208,7 @@ func TestRebaseCancelledIsInterruptNotConflict(t *testing.T) {
 // Accepting a regression is a human decision (G9, §8.5): an agent or any
 // caller without a terminal is refused before anything is merged.
 func TestMergeAcceptanceNeedsHuman(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	p := h.initWith(junitConfig)
 	task := startedTask(t, h, "feature", "Breaks a")
@@ -234,6 +240,7 @@ func envScript() string {
 // fails it. It passed in an earlier run of the task, the task then broke it,
 // and the gate must call that a regression (exit 9), not pre-existing.
 func TestGateBlocksTestThatPassedEarlierInTheTask(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	testutil.WriteFile(t, filepath.Join(h.repo, "test.sh"), envScript())
 	testutil.WriteFile(t, filepath.Join(h.repo, ".gitignore"), ".env\n")
@@ -262,6 +269,7 @@ func TestGateBlocksTestThatPassedEarlierInTheTask(t *testing.T) {
 // fresh worktree, merge's scratch worktree); a failing setup records no
 // baseline and fails closed.
 func TestSetupPreparesCleanWorktrees(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	testutil.WriteFile(t, filepath.Join(h.repo, "test.sh"), envScript())
 	testutil.WriteFile(t, filepath.Join(h.repo, ".gitignore"), ".env\n")
@@ -316,6 +324,7 @@ func envBreakInFirstCommit(t *testing.T) (*harness, store.Task) {
 // Without [tests].setup a clean-baseline failure is no proof the test was
 // failing before the task, so the gate blocks on it (exit 9).
 func TestGateBlocksUnprovenBaselineFailureWithoutSetup(t *testing.T) {
+	t.Parallel()
 	h, task := envBreakInFirstCommit(t)
 	mainBefore := testutil.Git(t, h.repo, "rev-parse", "main")
 	code, out, errOut := h.run("merge")
@@ -332,6 +341,7 @@ func TestGateBlocksUnprovenBaselineFailureWithoutSetup(t *testing.T) {
 // The human path still works: accepting each unproven failure by name for
 // this task merges it; an agent cannot.
 func TestHumanAcceptsUnprovenBaselineFailure(t *testing.T) {
+	t.Parallel()
 	h, task := envBreakInFirstCommit(t)
 	accept := []string{"merge", "--task", task.Slug,
 		"--accept-regression", "C::a", "--reason", "checked by hand",

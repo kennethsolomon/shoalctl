@@ -9,6 +9,7 @@ import (
 )
 
 func TestReproRedGreen(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig + "rerun_command = \"sh ./test.sh {junit} {tests}\"\n")
 	task := startedTask(t, h, "bugfix", "Fix bug")
@@ -46,6 +47,7 @@ func TestReproRedGreen(t *testing.T) {
 // that passes on the red commit itself (here through an ignored file) or on
 // an empty commit proves nothing about a fix (§8.3).
 func TestReproGreenNeedsALaterCommitWithChanges(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig + "rerun_command = \"sh ./test.sh {junit} {tests}\"\n")
 	task := startedTask(t, h, "bugfix", "Fake proof")

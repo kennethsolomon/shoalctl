@@ -48,6 +48,7 @@ func commitIn(t *testing.T, dir, file, content string) {
 }
 
 func TestDoneRendersReport(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	p := h.initWith(junitConfig + "[stack]\nlint = \"true\"\nbuild = \"exit 4\"\n")
 	task := startedTask(t, h, "feature", "Add export")
@@ -110,6 +111,7 @@ func TestDoneRendersReport(t *testing.T) {
 }
 
 func TestDoneRefusals(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
 	h.mustRun("new", "feature", "Not started")
@@ -156,6 +158,7 @@ func TestDoneRefusals(t *testing.T) {
 }
 
 func TestDoneFinalRunErrorIsReported(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	p := h.initWith(junitConfig)
 	task := startedTask(t, h, "feature", "Breaks suite")
@@ -170,6 +173,7 @@ func TestDoneFinalRunErrorIsReported(t *testing.T) {
 }
 
 func TestDoneNotesSink(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	notes := t.TempDir()
 	h.initWith(junitConfig + "[reports]\nsink = \"both\"\nnotes_path = " + `"` + filepath.ToSlash(notes) + `"` + "\n")
@@ -181,6 +185,7 @@ func TestDoneNotesSink(t *testing.T) {
 }
 
 func TestReportFidelityLines(t *testing.T) {
+	t.Parallel()
 	base := reportInput{task: store.Task{Slug: "1-x", Lane: "bugfix", Title: "X", Ask: "a", Branch: "bugfix/1-x", BaseRef: "main", BaseSHA: "abcdef0123"},
 		sum: summaryFile{Decision: "d", Why: "w"}, date: "2026-10-25"}
 

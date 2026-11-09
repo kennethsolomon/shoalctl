@@ -29,6 +29,7 @@ func jsonText(s string) string {
 }
 
 func TestDoctorHealthyAfterInit(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.env.Exe = fakeBinary(t, t.TempDir())
 	h.mustRun("init")
@@ -39,6 +40,7 @@ func TestDoctorHealthyAfterInit(t *testing.T) {
 }
 
 func TestDoctorFindsAndFixesMovedBinary(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	oldDir := t.TempDir()
 	h.env.Exe = fakeBinary(t, oldDir)
@@ -74,6 +76,7 @@ func TestDoctorFindsAndFixesMovedBinary(t *testing.T) {
 }
 
 func TestDoctorReportsOutdatedAndMissingEntries(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.env.Exe = fakeBinary(t, t.TempDir())
 	settings := filepath.Join(h.repo, ".claude", "settings.local.json")
@@ -99,6 +102,7 @@ func TestDoctorReportsOutdatedAndMissingEntries(t *testing.T) {
 }
 
 func TestInitRequiresAbsoluteBinaryPath(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.env.Exe = "shoalctl"
 	if errOut := h.expectCode(ExitInternal, "init"); !strings.Contains(errOut, "absolute") {

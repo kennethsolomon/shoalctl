@@ -9,6 +9,7 @@ import (
 )
 
 func TestReadProjectRules(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, filepath.Join(root, "CLAUDE.md"), "# Project\n\n- Never use the strategy pattern\n```\nnever use code blocks\n```\n"+
 		blockBegin+"\n@~/.shoal/x/context.md\n"+blockEnd+"\n1. Run gofmt\n")
@@ -34,6 +35,7 @@ func TestReadProjectRules(t *testing.T) {
 }
 
 func TestConflictWith(t *testing.T) {
+	t.Parallel()
 	rules := []projectRule{
 		{"CLAUDE.md:3", "Never use the strategy pattern; keep plain switch statements."},
 		{"CLAUDE.md:4", "Don't mock the database in integration tests"},
@@ -61,6 +63,7 @@ func TestConflictWith(t *testing.T) {
 // "No X" and "X, not Y" negate one word, which is enough against a rule
 // that names it (§5.3).
 func TestConflictWithOneWordNegation(t *testing.T) {
+	t.Parallel()
 	rules := []projectRule{{"CLAUDE.md:2", "Use tabs for indentation"}}
 	for _, tc := range []struct{ text, want string }{
 		{"Indent with spaces, not tabs", "CLAUDE.md:2"},
@@ -82,6 +85,7 @@ func TestConflictWithOneWordNegation(t *testing.T) {
 }
 
 func TestReadProjectRulesDotClaude(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	testutil.WriteFile(t, filepath.Join(root, ".claude", "CLAUDE.md"), "Use tabs for indentation\n")
 	rules, err := readProjectRules(root)
@@ -94,6 +98,7 @@ func TestReadProjectRulesDotClaude(t *testing.T) {
 // propose still read it) hides nothing: the rules after it are read, so the
 // conflict check is not blind. A paired block's lines stay unread.
 func TestRuleLinesReadPastUnpairedBegin(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		in   string
 		want []string

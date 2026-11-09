@@ -50,6 +50,7 @@ func (h *harness) tmuxOut(args ...string) string {
 }
 
 func TestStartTwoTasksShareBaseline(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	p := h.initWith(junitConfig)
 	h.mustRun("new", "feature", "Add export")
@@ -130,6 +131,7 @@ func TestStartTwoTasksShareBaseline(t *testing.T) {
 }
 
 func TestStartModelOverride(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig + "[session]\nmodel = \"config-model\"\n")
 	h.mustRun("new", "feature", "One")
@@ -154,6 +156,7 @@ func TestStartModelOverride(t *testing.T) {
 }
 
 func TestStartBaselineFailedThenResume(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	p := h.initWith("[tests]\ncommand = \"echo no junit here; exit 1\"\nformat = \"junit\"\n")
 	h.mustRun("new", "bugfix", "Crash")
@@ -181,6 +184,7 @@ func TestStartBaselineFailedThenResume(t *testing.T) {
 }
 
 func TestStartTrustPreflight(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name, claudeJSON, want string
 	}{
@@ -192,6 +196,7 @@ func TestStartTrustPreflight(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			h := newHarness(t).withSession()
 			expand := strings.NewReplacer("PARENT", filepath.Dir(h.repo), "REPO", h.repo).Replace
 			claudeJSON := filepath.Join(h.home, ".claude.json")
@@ -216,6 +221,7 @@ func TestStartTrustPreflight(t *testing.T) {
 }
 
 func TestStartHonoursClaudeConfigDir(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	os.Remove(filepath.Join(h.home, ".claude.json"))
 	dir := t.TempDir()
@@ -227,6 +233,7 @@ func TestStartHonoursClaudeConfigDir(t *testing.T) {
 }
 
 func TestStartDependencyAndConfigErrors(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	p := h.initWith(junitConfig)
 	h.mustRun("new", "feature", "One")
@@ -253,6 +260,7 @@ func TestStartDependencyAndConfigErrors(t *testing.T) {
 }
 
 func TestStartRefusesForeignBranch(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith(junitConfig)
 	h.mustRun("new", "feature", "One")
@@ -264,6 +272,7 @@ func TestStartRefusesForeignBranch(t *testing.T) {
 }
 
 func TestStartRejectsJunitPathOutsideWorktree(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	victim := testutil.Resolve(t, t.TempDir())
 	keep := filepath.Join(victim, "keep.xml")
@@ -287,6 +296,7 @@ func TestStartRejectsJunitPathOutsideWorktree(t *testing.T) {
 }
 
 func TestStartNoneFormat(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	h.initWith("[tests]\nformat = \"none\"\n")
 	h.mustRun("new", "feature", "One")
@@ -350,6 +360,7 @@ func TestResolveBase(t *testing.T) {
 // [tests].setup is part of the baseline cache key: a changed setup records a
 // new baseline instead of reusing one taken without it (§8.2).
 func TestSetupChangeInvalidatesCachedBaseline(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t).withSession()
 	p := h.initWith(junitConfig)
 	first := startedTask(t, h, "feature", "First")

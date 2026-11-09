@@ -15,6 +15,7 @@ import (
 )
 
 func TestSlugWords(t *testing.T) {
+	t.Parallel()
 	tests := []struct{ in, want string }{
 		{"Users page sort broken", "users-page-sort-broken"},
 		{"  Fix: the BUG!! (again) ", "fix-the-bug-again"},
@@ -36,6 +37,7 @@ func TestSlugWords(t *testing.T) {
 }
 
 func TestIsShoalCommand(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		cmd  string
 		want bool
@@ -60,6 +62,7 @@ func TestIsShoalCommand(t *testing.T) {
 }
 
 func TestHookCommandQuotingWindows(t *testing.T) {
+	t.Parallel()
 	tests := []struct{ exe, want string }{
 		{`C:\tools\shoalctl.exe`, `& 'C:\tools\shoalctl.exe' hook stop; exit 0`},
 		{`C:\Program Files\shoal\shoalctl.exe`, `& 'C:\Program Files\shoal\shoalctl.exe' hook stop; exit 0`},
@@ -87,6 +90,7 @@ func TestHookCommandQuotingWindows(t *testing.T) {
 }
 
 func TestHookCommandQuotingPOSIX(t *testing.T) {
+	t.Parallel()
 	tests := []struct{ exe, want string }{
 		{"/usr/local/bin/shoalctl", "/usr/local/bin/shoalctl hook stop || true"},
 		{"/my bins/shoalctl", "'/my bins/shoalctl' hook stop || true"},
@@ -134,6 +138,7 @@ func hookCommands(t *testing.T, data []byte) map[string][]string {
 }
 
 func TestMergeHooks(t *testing.T) {
+	t.Parallel()
 	exe := "/bin/shoalctl"
 	start := hookCommand(exe, "session-start") + "|10|"
 	stop := hookCommand(exe, "stop") + "|10|"
@@ -177,6 +182,7 @@ func TestMergeHooks(t *testing.T) {
 }
 
 func TestMergeHooksRejectsInvalid(t *testing.T) {
+	t.Parallel()
 	for _, in := range []string{"not json", "[1, 2]", `{"hooks": []}`, `{"hooks": {"Stop": {"x": 1}}}`, `{"hooks": {"Stop": [{"hooks": "nope"}]}}`, "null"} {
 		if _, _, err := mergeHooks([]byte(in), "/bin/shoalctl"); err == nil {
 			t.Errorf("mergeHooks(%q): want error", in)
@@ -194,6 +200,7 @@ func checksum(t *testing.T, path string) string {
 }
 
 func TestInitIsIdempotent(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	settings := filepath.Join(h.repo, ".claude", "settings.local.json")
 	testutil.WriteFile(t, settings, `{"model": "keep-me", "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "say done"}]}]}}`)
@@ -254,6 +261,7 @@ func TestInitIsIdempotent(t *testing.T) {
 }
 
 func TestInitRefusesInvalidSettings(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	settings := filepath.Join(h.repo, ".claude", "settings.local.json")
 	testutil.WriteFile(t, settings, `{"hooks": oops`)
@@ -264,6 +272,7 @@ func TestInitRefusesInvalidSettings(t *testing.T) {
 }
 
 func TestInitRefusesTrackedLocalSettings(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	settings := filepath.Join(h.repo, ".claude", "settings.local.json")
 	const body = `{"permissions": {"allow": ["Bash(ls)"]}}`
@@ -294,6 +303,7 @@ func TestInitRefusesTrackedLocalSettings(t *testing.T) {
 }
 
 func TestInitRefusesShoalHooksInCommittedSettings(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	testutil.WriteFile(t, filepath.Join(h.repo, ".claude", "settings.json"),
 		`{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "/x/shoalctl hook stop"}]}]}}`)
@@ -303,6 +313,7 @@ func TestInitRefusesShoalHooksInCommittedSettings(t *testing.T) {
 }
 
 func TestInitRejectsNonRepos(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.env.Dir = t.TempDir()
 	h.expectCode(ExitConfig, "init")
@@ -314,6 +325,7 @@ func TestInitRejectsNonRepos(t *testing.T) {
 }
 
 func TestInitRebind(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.mustRun("init")
 	p := h.project()
@@ -331,6 +343,7 @@ func TestInitRebind(t *testing.T) {
 }
 
 func TestInitGoModuleTemplateAndCommitConfig(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	testutil.WriteFile(t, filepath.Join(h.repo, "go.mod"), "module example.com/x\n")
 	h.mustRun("init", "--commit-config")
@@ -345,6 +358,7 @@ func TestInitGoModuleTemplateAndCommitConfig(t *testing.T) {
 }
 
 func TestInitWithoutRemoteUsesPath(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	testutil.Git(t, h.repo, "remote", "remove", "origin")
 	h.mustRun("init")
@@ -354,6 +368,7 @@ func TestInitWithoutRemoteUsesPath(t *testing.T) {
 }
 
 func TestNew(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.expectCode(ExitConfig, "new", "feature", "Before init")
 	h.mustRun("init")
@@ -398,6 +413,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestUsageAndNotFound(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.expectCode(ExitUsage)
 	h.expectCode(ExitUsage, "frobnicate")
@@ -412,6 +428,7 @@ func TestUsageAndNotFound(t *testing.T) {
 }
 
 func TestStatusEmptyAndJSON(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.mustRun("init")
 	if out := h.mustRun("status", "--json"); strings.TrimSpace(out) != "[]" {
@@ -439,6 +456,7 @@ func TestStatusEmptyAndJSON(t *testing.T) {
 // to a tracked file: the tracked-file check passed and hooks were written
 // into the tracked target.
 func TestInitRefusesSymlinkedLocalSettings(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	shared := filepath.Join(h.repo, "shared.json")
 	const body = `{"a": 1}`
@@ -467,6 +485,7 @@ func TestInitRefusesSymlinkedLocalSettings(t *testing.T) {
 // TestInitRefusesSymlinkedClaudeDir reproduces a .claude directory that is a
 // symlink to a tracked directory: hooks written through it would dirty git.
 func TestInitRefusesSymlinkedClaudeDir(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	shared := filepath.Join(h.repo, "cfg", "claude", "settings.local.json")
 	const body = `{"a": 1}`

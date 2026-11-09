@@ -206,6 +206,7 @@ var settingsGoldens = []struct {
 }
 
 func TestMergeHooksGolden(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("goldens use the POSIX entry; the Windows entry has its own tests")
 	}
@@ -227,6 +228,7 @@ func TestMergeHooksGolden(t *testing.T) {
 }
 
 func TestInstallHooksAtomicKeepsModeAndOneBackup(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX file modes")
 	}
@@ -266,6 +268,7 @@ func TestInstallHooksAtomicKeepsModeAndOneBackup(t *testing.T) {
 }
 
 func TestInstallHooksRefusesSymlinkedSettings(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	real := filepath.Join(t.TempDir(), "shared-settings.json")
 	testutil.WriteFile(t, real, `{"a":1}`)

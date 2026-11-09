@@ -8,6 +8,7 @@ import (
 )
 
 func TestEvalScope(t *testing.T) {
+	t.Parallel()
 	items := []store.ScopeItem{
 		{ID: 1, Source: store.ScopeUser, Text: "CSV", Cases: []store.ScopeCase{
 			{ID: 1, Category: "happy", Check: store.CheckAutomated, TestID: "C::ok", Status: "pending"},
@@ -46,6 +47,7 @@ func TestEvalScope(t *testing.T) {
 }
 
 func TestScopeCommands(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.initWith(junitConfig)
 	slug := strings.TrimSpace(h.mustRun("new", "feature", "Export", "--scope", "also test CSV export"))

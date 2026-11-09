@@ -34,6 +34,7 @@ func watched(h *harness) *int {
 // when inside tmux, else none: the default server it launched on), warns,
 // and still starts the watcher.
 func TestStartWarnsWhenTheSocketLookupFailsAfterLaunch(t *testing.T) {
+	t.Parallel()
 	realTmux, err := exec.LookPath("tmux")
 	if err != nil {
 		t.Skip("tmux not installed")
