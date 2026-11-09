@@ -4,7 +4,7 @@ Base: `eca06da` (Phase 3 shipped) plus the CI fix `c789a52`. Acceptance bar: spe
 
 ## CI fix before Phase 4 (`c789a52`)
 
-CI (ubuntu, windows) failed `internal/gitx` with "Author identity unknown". Cause: `TestChanged` called `testutil.Repo` without `testutil.Isolate`, so its commits used the host's git identity; CI runners have none, and the macOS dev machine's global identity masked it. Fix: `TestChanged` calls `Isolate`, and `testutil.Repo` now fails the test unless `Isolate` set `GIT_AUTHOR_EMAIL`, so a missing `Isolate` fails on every OS, not only on CI. Every test that calls `Repo` must call `Isolate` first.
+CI (ubuntu, windows) failed `internal/gitx` with "Author identity unknown". Cause: `TestChanged` called `testutil.Repo` without `testutil.Isolate`, so its commits used the host's git identity; CI runners have none, and the macOS dev machine's global identity masked it. Fix: `TestChanged` calls `Isolate`, and `testutil.Repo` now fails the test unless `Isolate` set `GIT_AUTHOR_EMAIL`, so a missing `Isolate` fails on every OS, not only on CI. Every test that calls `Repo` must call `Isolate` first, or run in a package whose `TestMain` calls `testutil.IsolateProcess` (`internal/cli`, see Test speed).
 
 ## Where I am
 
@@ -93,11 +93,54 @@ Vex returned HOLD on `dc7103a`, the third round on CLAUDE.md marker parsing. Ins
 
 Hook latency (TestPhase3HookLatency, now seeded with 20 lessons, 20 active and 5 proposed conventions; 15 runs, process start included, macOS): p50/p95 stop 5.2/5.6 ms, session-start 6.0/6.9 ms, pre-tool-use 17.8/20.4 ms, no-match 5.1/5.6 ms, post-tool-use 5.0/5.3 ms. Phase 3 p95: 5.1, 5.7, 19.3, 5.2, 5.3 ms.
 
-`go test -race -count=1 ./internal/cli`: 404.8 s at `c789a52` (run alone), 451.1 s at `6781ccc` (inside the full `./...` run of the fresh-clone gate, packages in parallel). The Phase 4 tests add about 13 s without `-race`. RISK: above 450 s, about 75% of Go's default 10-minute `go test` timeout; CI config was not touched. After Vex round 2 (`a98f1b6`, fresh clone, full `./...` run): 384.5 s.
+`go test -race -count=1 ./internal/cli`: 404.8 s at `c789a52` (run alone), 451.1 s at `6781ccc` (inside the full `./...` run of the fresh-clone gate, packages in parallel). The Phase 4 tests add about 13 s without `-race`. RISK: above 450 s, about 75% of Go's default 10-minute `go test` timeout; CI config was not touched. After Vex round 2 (`a98f1b6`, fresh clone, full `./...` run): 384.5 s. Superseded by "Test speed" below: about 148 s.
+
+## Test speed (2026-11-09)
+
+Goal: `go test -race -count=1 ./internal/cli` at most 240 s on an idle Mac, with test-code changes only (CI workflows untouched). Every timing here was taken alone on the machine under `caffeinate -i`.
+
+**Cause.** At `1af5516`, run alone with `-timeout 30m`, the package passed in 410.5 s: no test hangs or polls to a long timeout, and no single test dominates (172 tests; the slowest, `TestPhase3HookLatency`, 27.1 s; 86 tests take 2-10 s each). Round 4 added nothing slow. The 10-minute timeouts came from runs sharing the machine (the full `./...` gate runs packages in parallel, about 451 s even alone) or a Mac sleeping mid-run: 410 s leaves little headroom. The time goes to subprocesses, not the race detector: the same tests take about 75% as long without `-race`, and the test process is busy only 28-44% of the wall time. One e2e test runs about 250 git commands, and on macOS `/usr/bin/git` is an xcrun trampoline: 10.5 ms a call against 3.4 ms for the real binary. Every test ran serially because `testutil.Isolate` uses `t.Setenv`.
+
+**Changes** (`e2d23ff`, `455a2cd`, `b2e623d`):
+
+1. `TestMain` puts a symlink to the real git (`xcrun -f git`) first on PATH when `git` resolves to `/usr/bin/git` (macOS only; no other tool from the developer directory goes on PATH). 410.5 s -> 264.0 s.
+2. Per-test environment instead of `t.Setenv`: `Env.Getenv` (nil = `os.Getenv`/`os.UserHomeDir`, so production is unchanged) is the one place shoalctl reads HOME/USERPROFILE, SHOAL_HOME, CLAUDE_CONFIG_DIR, CLAUDE_PROJECT_DIR, CLAUDECODE, CLAUDE_CODE_ENTRYPOINT and TMUX. The harness keeps `testutil.IsolatedEnv(home)` per test (`harness.vars`, `h.setenv`), hands a copy to every in-process run and appends it to subprocess env. `TestMain` isolates the process environment once (`testutil.IsolateProcess`: fake home, isolated git identity, idle SHELL for tmux), so git, tmux and `testutil.Git` never see the real home. `testutil.Repo`'s guard is unchanged: it still fails unless the isolated identity is in the environment, so no test can commit with the host identity. Serial: 262.0 s.
+3. `t.Parallel` on 144 top-level tests and on the per-case subtests of `TestStartTrustPreflight`, `TestHookFailsOpen`, `TestRequireHumanRefusesClaudeCodeSession` and `TestPhase2ConcurrentPlansOneWinner`. 28 tests stay serial (Go runs them before the parallel batch), for one of two reasons. They change process state: `t.Setenv` of PATH wrappers or the watcher's spawn env, `testutil.Isolate`, or the package vars `logHook` and `indexLockWait`. Or they assert on timing or a short window: `TestPhase3HookLatency`, the hook deadline tests, the concurrent-start tests, all of `interrupt_unix_test.go` and `watch_test.go`. 154.4 s: a 77.6 s serial phase, then the parallel batch.
+
+No fixed sleep, poll interval or fixture size changed. The remaining sleeps hold a process inside a window (the 2 s concurrent-start suite, the doctor test's 2 s suite) or check that nothing happens within one (300 ms), and they run serially. No assertion changed.
+
+| Test(s) | Change | Why the intent is kept | Before -> after (s, -race) |
+|---|---|---|---|
+| All `internal/cli` tests | Real git on PATH in `TestMain` (macOS) | Same git version and behaviour, minus the xcrun lookup; no test checks which git binary runs | package 410.5 -> 264.0 |
+| 144 harness and unit tests | `t.Parallel()` | Each owns its temp dirs, repo, tmux server (unique `-L` name; the unused one now hashes the temp path) and env map; none touches package vars, cwd, umask or signal handlers | package 262.0 -> 154.4 |
+| `TestHookHeartbeat`, `TestHookSilentOutsideShoalWorktrees`, `TestHookFailsOpen`, `TestHookDeadline`, `TestHookRecoversPanic`, `TestHookUnwritableLogStillExitsZero`, `TestStatusWarnsAboutNewHookFailures`, `TestPhase3*` via `inHook`, `TestPhase3CompactionReinjectsLessons`, `TestPhase3HooksNeverDoubleFire`, `TestPhase3HookLatency` | `t.Setenv("CLAUDE_PROJECT_DIR")` -> `h.setenv` | Main reads the same value through `Env.Getenv`; `h.command` subprocesses get it in `cmd.Env` | see the package rows |
+| `TestRequireHumanRefusesClaudeCodeSession` | `t.Setenv(CLAUDECODE/…)` -> `h.setenv` | `requireHuman` and `interactive` read the variable through `Env.Getenv` | as above |
+| `TestStartHonoursClaudeConfigDir`, `TestStartWarnsWhenTheSocketLookupFailsAfterLaunch` | `CLAUDE_CONFIG_DIR`, `TMUX` via `h.setenv` | Same lookups, through `Env.Getenv` | as above |
+| `TestContextImport` | HOME through `Env{Getenv: …}` instead of `t.Setenv`; parallel | Same home and both assertions | as above |
+| `TestHookDeadlineBoundedWithBlockedLogWriter`, `TestHookErrorBoundedWithBlockedLogWriter` | `logHook` stub takes the new `Env` argument | Still blocks every log write; still serial | as above |
+
+Top 10 at `1af5516` (run 1), after the git change (run 2) and after `t.Parallel` (run 3). In run 3 a parallel test's elapsed time includes waiting for the CPU behind 11 others, so only the package total compares. `TestStartTrustPreflight` reports 0.0 because its subtests run after the parent returns.
+
+| Test | 1af5516 | git | parallel |
+|---|---|---|---|
+| `TestPhase3HookLatency` | 27.1 | 21.0 | 21.5 (serial) |
+| `TestPhase3HooksNeverDoubleFire` | 10.3 | 9.0 | 16.5 |
+| `TestPhase2DoctorRecoversKilledStartAndStaleClaim` | 9.7 | 8.3 | 16.9 |
+| `TestPlanSeesBracketedRouteDirectories` | 8.9 | 5.0 | 34.3 |
+| `TestStartTrustPreflight` | 7.5 | 5.3 | 0.0 (subtests parallel) |
+| `TestStartRefusesUnparseableStartTime` | 5.8 | 4.2 | 4.6 (serial) |
+| `TestPhase2AttentionFlag` | 5.8 | 5.2 | 5.2 (serial) |
+| `TestRebaseKilledBySignalIsInterrupt` | 5.7 | 3.9 | 4.4 (serial) |
+| `TestPhase3CompactionReinjectsLessons` | 5.5 | 3.2 | 11.3 |
+| `TestPlanSeesWildcardReachingIntoALiteralDirectory` | 5.5 | 3.2 | 19.4 |
+
+Flakiness check at `b2e623d` (default timeout): 148.4 s, 148.2 s, 145.1 s back to back; `-shuffle=on`: 145.2 s with seed 1794212192046239000 (an earlier shuffled run, seed not captured, 142.6 s). All passed. `go test -count=1 ./...` without race: every package ok, `internal/cli` 82.4 s.
+
+Not changed (production behaviour, out of scope): on a fresh `memory.db`, `store.migrate` runs a `VACUUM INTO` backup before every migration after the first, which is about 60% of `init`'s 0.38 s under `-race`; skipping backups when the starting version was 0 would save about 0.2 s per test. CI runners have 2-4 cores, so the parallel batch gains less there than on this 12-core Mac.
 
 ## Open risks
 
-- `internal/cli` under `-race` is about 451 s, near the 600 s default timeout (see Measurements).
+- `internal/cli` under `-race` was about 410-451 s, near the 600 s default timeout; now about 148 s alone on a 12-core Mac (see Test speed). On a 2-4 core CI runner the parallel batch gains less; not measured there.
 - The conflict heuristic misses paraphrases, synonyms, "prefer A over B", "X not Y" without a comma and nested CLAUDE.md files, and can flag unrelated lines that share two words with opposite polarity (spec §5.3). A false positive costs a brainstorm and `agree --force`.
 - `context.md` is rendered by each command from the DB it read; two humans agreeing at the same instant could leave the older render last. The brief reads the DB directly, so only the non-stealth import can lag, until the next agree, retire, promote or `init`.
 - Non-stealth: if a new task worktree shows Claude Code's external-import dialog, an unattended session waits on it; the brief carries the rules, but the dialog itself needs an answer in the tmux window. Whether a worktree reuses the main checkout's approval is unconfirmed.
