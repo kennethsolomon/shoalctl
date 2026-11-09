@@ -16,7 +16,8 @@ CI (ubuntu, windows) failed `internal/gitx` with "Author identity unknown". Caus
 - Vex BLOCK round 1 on `d26c7ba`: four FAILs and five RISKs fixed test-first, one commit each (table below).
 - Vex HOLD round 2 on `3ccca1e`: two FAILs and three RISKs fixed test-first (table below); spec §16 rows 71-74.
 - Vex HOLD round 3 on `4af9714` and round 4 on `dc7103a`: fixed test-first (tables below); round 4 replaced the marker indent rule with column 0 (row 75).
-- Next: Vex re-review. Phase 5 not started.
+- Vex round 5 on `bf0b735`: SHIP (section below).
+- Next: Phase 5 not started.
 
 ## Vex BLOCK round 1
 
@@ -31,8 +32,8 @@ Vex returned BLOCK on `d26c7ba` with four FAILs and five RISKs; each fixed test-
 | 5 Proposals crowded out agreed rules; unbounded proposals; retired rules silently reopened | Drop order keeps one proposal of each kind and then the agreed rules (conventions before promoted lessons, which have no per-file path); `maxOpenProposals` = 10, propose past it exits 5; an identical retired rule and scope exits 5 naming it and why (`store.ErrProposalRefused`) | `TestBriefBudgetKeepsTheBrainstorm`, `TestPhase4ProposalsDoNotCrowdOutRules`, `TestProposeConventionLimits` |
 | 6 "No tabs" / "spaces, not tabs" missed; `.claude/CLAUDE.md` unread | A negated one-word clause conflicts with any opposite clause naming the word; `.claude/CLAUDE.md` read. Limits in §5.3 (synonyms, "prefer A over B", "X not Y" without a comma, nested CLAUDE.md) | `TestConflictWithOneWordNegation`, `TestReadProjectRulesDotClaude`, `TestConflictWith` unchanged |
 | 7 `promote` accepted a lesson whose convention the human retired | `promote` refuses any non-candidate before the prompt, with the reason; `PromoteLesson` refuses a lesson carried by any convention in its transaction | `TestPhase4ConflictWithProjectRule`, `TestPromoteLessonRefusesRetiredConvention` |
-| 8 A BOM before the marker on line 1 gave "unpaired, lines []" | `lineText` drops a leading BOM for matching; the bytes are kept | `TestWithManagedBlockBOM` |
-| 9 `internal/cli` -race near the 600 s timeout | Hook latency check runs fewer times per event under `-race` (build tag `race`), 15 otherwise. The 1.5 s bound stays asserted, but by statistic (round 2 item 5, row 74): under -race the blocking Linux and macOS jobs assert the median of 5; the p95 of 15 is asserted only in local non-race runs (the test needs sh via `testutil.RequireSh` and skips on Windows, so the non-blocking Windows job does not run it). `t.Parallel` not used: every e2e test goes through `Isolate`'s `t.Setenv` | `TestPhase3HookLatency`: 87.6 s -> 30.8 s under -race; package time in Measurements |
+| 8 A BOM before the marker on line 1 gave "unpaired, lines []" | A leading BOM is dropped for matching, on line 1 only (now in `markerText`, round 4); the bytes are kept | `TestWithManagedBlockBOM` |
+| 9 `internal/cli` -race near the 600 s timeout | Hook latency check runs fewer times per event under `-race` (build tag `race`), 15 otherwise. The 1.5 s bound stays asserted, but by statistic (round 2 item 5, row 74): under -race the blocking Linux and macOS jobs assert the median of 5; the p95 of 15 is asserted only in local non-race runs (the test needs sh via `testutil.RequireSh` and skips on Windows, so the non-blocking Windows job does not run it). At the time `t.Parallel` was not used (every e2e test went through `Isolate`'s `t.Setenv`); superseded by "Test speed" below (`b2e623d`) | `TestPhase3HookLatency`: 87.6 s -> 30.8 s under -race; package time in Measurements |
 
 ## Vex HOLD round 2
 
@@ -70,6 +71,10 @@ Vex returned HOLD on `dc7103a`, the third round on CLAUDE.md marker parsing. Ins
 | 2 An unpaired column-0 begin marker hid every later rule from ruleLines, so agree, promote and propose's conflict check was blind | `ruleLines` holds the lines after a begin until its end; with no end it reads them as rules (init still refuses the file, exit 3) (row 76) | `TestRuleLinesReadPastUnpairedBegin` (unpaired begin, stray end, paired then unpaired, CRLF, a fenced end, readProjectRules plus conflictWith) |
 | 3 Docs: progress round 1 item 9 said the p95 of 15 runs in the non-blocking Windows job | `TestPhase3HookLatency` calls `testutil.RequireSh` and skips on Windows: the p95 of 15 is asserted only in local non-race runs (here and row 74). README and §5.1, §5.3, rows 71, 75, 76 for the column-0 rule and list-item fences; RuleKey keeps fullwidth `！` `？` and `…` as a documented limit, no code change (row 72) | Docs only |
 
+## Vex round 5: SHIP on `bf0b735`
+
+0 failures. Three doc fixes in this file: round 1 item 9 (`t.Parallel` note superseded by Test speed, `b2e623d`), round 1 item 8 (the BOM is dropped by `markerText`, on line 1 only), and the Test speed counts (172 top-level tests in `internal/cli`, 145 parallel, 27 serial). One ACCEPT-WITH-DOCS: a marker inside a blockquote or nested-list fence followed by a column-0 marker is handled correctly per CommonMark (a column-0 line ends the container), but the code lines may be read as rules and raise a false conflict, which `--force` covers; documented at spec §5.3 "Not tracked", rows 71 and 75.
+
 ## Decisions (spec §16)
 
 | Row | Decision |
@@ -105,7 +110,7 @@ Goal: `go test -race -count=1 ./internal/cli` at most 240 s on an idle Mac, with
 
 1. `TestMain` puts a symlink to the real git (`xcrun -f git`) first on PATH when `git` resolves to `/usr/bin/git` (macOS only; no other tool from the developer directory goes on PATH). 410.5 s -> 264.0 s.
 2. Per-test environment instead of `t.Setenv`: `Env.Getenv` (nil = `os.Getenv`/`os.UserHomeDir`, so production is unchanged) is the one place shoalctl reads HOME/USERPROFILE, SHOAL_HOME, CLAUDE_CONFIG_DIR, CLAUDE_PROJECT_DIR, CLAUDECODE, CLAUDE_CODE_ENTRYPOINT and TMUX. The harness keeps `testutil.IsolatedEnv(home)` per test (`harness.vars`, `h.setenv`), hands a copy to every in-process run and appends it to subprocess env. `TestMain` isolates the process environment once (`testutil.IsolateProcess`: fake home, isolated git identity, idle SHELL for tmux), so git, tmux and `testutil.Git` never see the real home. `testutil.Repo`'s guard is unchanged: it still fails unless the isolated identity is in the environment, so no test can commit with the host identity. Serial: 262.0 s.
-3. `t.Parallel` on 144 top-level tests and on the per-case subtests of `TestStartTrustPreflight`, `TestHookFailsOpen`, `TestRequireHumanRefusesClaudeCodeSession` and `TestPhase2ConcurrentPlansOneWinner`. 28 tests stay serial (Go runs them before the parallel batch), for one of two reasons. They change process state: `t.Setenv` of PATH wrappers or the watcher's spawn env, `testutil.Isolate`, or the package vars `logHook` and `indexLockWait`. Or they assert on timing or a short window: `TestPhase3HookLatency`, the hook deadline tests, the concurrent-start tests, all of `interrupt_unix_test.go` and `watch_test.go`. 154.4 s: a 77.6 s serial phase, then the parallel batch.
+3. `t.Parallel` on 145 of the 172 top-level tests and on the per-case subtests of `TestStartTrustPreflight`, `TestHookFailsOpen`, `TestRequireHumanRefusesClaudeCodeSession` and `TestPhase2ConcurrentPlansOneWinner`. 27 tests stay serial (Go runs them before the parallel batch), for one of two reasons. They change process state: `t.Setenv` of PATH wrappers or the watcher's spawn env, `testutil.Isolate`, or the package vars `logHook` and `indexLockWait`. Or they assert on timing or a short window: `TestPhase3HookLatency`, the hook deadline tests, the concurrent-start tests, all of `interrupt_unix_test.go` and `watch_test.go`. 154.4 s: a 77.6 s serial phase, then the parallel batch.
 
 No fixed sleep, poll interval or fixture size changed. The remaining sleeps hold a process inside a window (the 2 s concurrent-start suite, the doctor test's 2 s suite) or check that nothing happens within one (300 ms), and they run serially. No assertion changed.
 
