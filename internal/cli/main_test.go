@@ -3,6 +3,8 @@ package cli
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -28,7 +30,48 @@ func TestMain(m *testing.M) {
 		env.SpawnWatcher = func(*project, store.Task) error { return nil }
 		os.Exit(Main(os.Args[1:], env, "test"))
 	}
-	os.Exit(m.Run())
+	dir, err := directGit()
+	if err != nil {
+		os.Stderr.WriteString("cli tests: " + err.Error() + "\n")
+		os.Exit(2)
+	}
+	code := m.Run()
+	if dir != "" {
+		os.RemoveAll(dir)
+	}
+	os.Exit(code)
+}
+
+// directGit puts the real git ahead of macOS's /usr/bin/git, an xcrun
+// trampoline that adds about 7 ms to every call: the tests run thousands of
+// git commands, in-process and from shoalctl. Only a symlink named git goes
+// on PATH, so nothing else in the developer directory shadows the host's
+// tools. Elsewhere it does nothing and returns "".
+func directGit() (string, error) {
+	if runtime.GOOS != "darwin" {
+		return "", nil
+	}
+	if p, err := exec.LookPath("git"); err != nil || p != "/usr/bin/git" {
+		return "", nil
+	}
+	out, err := exec.Command("xcrun", "-f", "git").Output()
+	if err != nil {
+		return "", &exec.Error{Name: "xcrun -f git", Err: err}
+	}
+	real := strings.TrimSpace(string(out))
+	dir, err := os.MkdirTemp("", "shoal-cli-git-")
+	if err != nil {
+		return "", err
+	}
+	if err := os.Symlink(real, filepath.Join(dir, "git")); err != nil {
+		os.RemoveAll(dir)
+		return "", err
+	}
+	if err := os.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH")); err != nil {
+		os.RemoveAll(dir)
+		return "", err
+	}
+	return dir, nil
 }
 
 // command builds a shoalctl subprocess with the harness's env, running in the
