@@ -10,11 +10,11 @@ import (
 
 // claudeConfigPath is the file where Claude Code records workspace trust:
 // $CLAUDE_CONFIG_DIR/.claude.json when that is set, otherwise ~/.claude.json.
-func claudeConfigPath() (string, error) {
-	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+func (env Env) claudeConfigPath() (string, error) {
+	if dir := env.getenv("CLAUDE_CONFIG_DIR"); dir != "" {
 		return filepath.Join(dir, ".claude.json"), nil
 	}
-	home, err := os.UserHomeDir()
+	home, err := env.userHomeDir()
 	if err != nil {
 		return "", fail(ExitUntrusted, "find home directory for ~/.claude.json: %v", err)
 	}
@@ -25,8 +25,8 @@ func claudeConfigPath() (string, error) {
 // for the main checkout. Task worktrees inherit that trust; without it the
 // dialog would block the session, defaulting to "No, exit". shoal only reads
 // the file: it never records trust and never answers the dialog.
-func checkTrust(root string) error {
-	path, err := claudeConfigPath()
+func (env Env) checkTrust(root string) error {
+	path, err := env.claudeConfigPath()
 	if err != nil {
 		return err
 	}

@@ -52,7 +52,7 @@ func answer(t *testing.T, out string) hookOutput {
 // nothing on stderr and nothing new in hooks.log.
 func inHook(t *testing.T, h *harness, wt, event, stdin string) hookOutput {
 	t.Helper()
-	t.Setenv("CLAUDE_PROJECT_DIR", wt)
+	h.setenv("CLAUDE_PROJECT_DIR", wt)
 	before := hookLog(t, h.project())
 	code, out, errOut := h.hook(strings.NewReader(stdin), event)
 	if code != 0 || errOut != "" {
@@ -223,7 +223,7 @@ func TestPhase3CompactionReinjectsLessons(t *testing.T) {
 		t.Fatalf("before the compaction: injected again %q, %d hits", again, hits())
 	}
 
-	t.Setenv("CLAUDE_PROJECT_DIR", b.Worktree)
+	h.setenv("CLAUDE_PROJECT_DIR", b.Worktree)
 	var outs []string
 	var cmds []*exec.Cmd
 	var bufs []*bytes.Buffer
@@ -416,7 +416,7 @@ func TestPhase3HooksNeverDoubleFire(t *testing.T) {
 	h.mustRun("claim", task.Slug, "--as", "shoal-backend", "api/**")
 	// The second registration, in the worktree's own settings.
 	testutil.WriteFile(t, filepath.Join(task.Worktree, ".claude", "settings.local.json"), readFile(t, filepath.Join(h.repo, ".claude", "settings.local.json")))
-	t.Setenv("CLAUDE_PROJECT_DIR", task.Worktree)
+	h.setenv("CLAUDE_PROJECT_DIR", task.Worktree)
 
 	twice := func(event, stdin string) []string {
 		t.Helper()
@@ -469,7 +469,7 @@ func TestPhase3HooksNeverDoubleFire(t *testing.T) {
 
 	// The main checkout's own sessions (no shoal task) get nothing, from
 	// every event, and nothing is written.
-	t.Setenv("CLAUDE_PROJECT_DIR", h.repo)
+	h.setenv("CLAUDE_PROJECT_DIR", h.repo)
 	before := countRows(t, p, `SELECT count(*) FROM hook_marks`)
 	for _, ev := range hookArgs {
 		cmd := h.command("hook", ev)
@@ -509,7 +509,7 @@ func TestPhase3HookLatency(t *testing.T) {
 		}
 	}
 	task := startedTask(t, h, "feature", "Timed")
-	t.Setenv("CLAUDE_PROJECT_DIR", task.Worktree)
+	h.setenv("CLAUDE_PROJECT_DIR", task.Worktree)
 	// The bound is 1.5s, under the 2s hook deadline. The plain run asserts
 	// it on the p95 of 15 runs. Under -race every hook process is a
 	// race-instrumented binary taking about a second, so one busy-runner

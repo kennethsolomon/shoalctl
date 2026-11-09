@@ -98,7 +98,7 @@ func (env Env) cmdInit(ctx context.Context, args []string) error {
 	}
 	block := "not used (stealth: CLAUDE.md untouched; the session-start brief carries the rules)"
 	if !p.cfg.Install.Stealth {
-		changed, err := installManagedBlock(p.root, contextImport(p.contextPath()))
+		changed, err := installManagedBlock(p.root, env.contextImport(p.contextPath()))
 		if err != nil {
 			return err
 		}

@@ -49,7 +49,7 @@ func hookLog(t *testing.T, p *project) string {
 func TestHookHeartbeat(t *testing.T) {
 	h := newHarness(t)
 	wt, p := fakeWorktree(t, h)
-	t.Setenv("CLAUDE_PROJECT_DIR", wt)
+	h.setenv("CLAUDE_PROJECT_DIR", wt)
 
 	code, out, errOut := h.hook(strings.NewReader(`{"session_id": "sess-42", "cwd": "/elsewhere", "hook_event_name": "SessionStart"}`), "session-start")
 	var answer hookOutput
@@ -93,7 +93,7 @@ func TestHookSilentOutsideShoalWorktrees(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, dir := range []string{h.repo, notTask, t.TempDir(), filepath.Join(wt, ".shoal")} {
-		t.Setenv("CLAUDE_PROJECT_DIR", dir)
+		h.setenv("CLAUDE_PROJECT_DIR", dir)
 		for _, ev := range []string{"session-start", "stop", "bogus"} {
 			code, out, errOut := h.hook(strings.NewReader(`not even json`), ev)
 			if code != 0 || out != "" || errOut != "" {
@@ -148,7 +148,7 @@ func TestHookFailsOpen(t *testing.T) {
 			h := newHarness(t)
 			wt, p := fakeWorktree(t, h)
 			tt.setup(t, p)
-			t.Setenv("CLAUDE_PROJECT_DIR", wt)
+			h.setenv("CLAUDE_PROJECT_DIR", wt)
 			code, out, errOut := h.hook(strings.NewReader(tt.stdin), tt.event)
 			if code != 0 || out != "" || errOut != "" {
 				t.Fatalf("code %d stdout %q stderr %q", code, out, errOut)
@@ -167,7 +167,7 @@ func TestHookFailsOpen(t *testing.T) {
 func TestHookDeadline(t *testing.T) {
 	h := newHarness(t)
 	wt, p := fakeWorktree(t, h)
-	t.Setenv("CLAUDE_PROJECT_DIR", wt)
+	h.setenv("CLAUDE_PROJECT_DIR", wt)
 	r, w := io.Pipe()
 	defer w.Close()
 	start := time.Now()
@@ -189,7 +189,7 @@ func (panicReader) Read([]byte) (int, error) { panic("boom") }
 func TestHookRecoversPanic(t *testing.T) {
 	h := newHarness(t)
 	wt, p := fakeWorktree(t, h)
-	t.Setenv("CLAUDE_PROJECT_DIR", wt)
+	h.setenv("CLAUDE_PROJECT_DIR", wt)
 	if code, out, errOut := h.hook(panicReader{}, "stop"); code != 0 || out != "" || errOut != "" {
 		t.Fatalf("code %d stdout %q stderr %q", code, out, errOut)
 	}
@@ -210,7 +210,7 @@ func TestHookUnwritableLogStillExitsZero(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(logs, 0o700) })
-	t.Setenv("CLAUDE_PROJECT_DIR", wt)
+	h.setenv("CLAUDE_PROJECT_DIR", wt)
 	if code, out, errOut := h.hook(strings.NewReader(`{}`), "session-start"); code != 0 || out != "" || errOut != "" {
 		t.Fatalf("code %d stdout %q stderr %q", code, out, errOut)
 	}
@@ -219,7 +219,7 @@ func TestHookUnwritableLogStillExitsZero(t *testing.T) {
 func TestStatusWarnsAboutNewHookFailures(t *testing.T) {
 	h := newHarness(t)
 	wt, p := fakeWorktree(t, h)
-	t.Setenv("CLAUDE_PROJECT_DIR", wt)
+	h.setenv("CLAUDE_PROJECT_DIR", wt)
 	h.hook(strings.NewReader(`{`), "stop")
 
 	if _, _, errOut := h.run("status"); !strings.Contains(errOut, "1 new hook failure") {
@@ -241,7 +241,7 @@ func blockLogWriter(t *testing.T) {
 	t.Helper()
 	release := make(chan struct{})
 	orig := logHook
-	logHook = func(string, string, error) { <-release }
+	logHook = func(Env, string, string, error) { <-release }
 	t.Cleanup(func() {
 		close(release)
 		logHook = orig
@@ -277,7 +277,7 @@ func hookWithin(t *testing.T, h *harness, limit time.Duration, stdin io.Reader, 
 func TestHookDeadlineBoundedWithBlockedLogWriter(t *testing.T) {
 	h := newHarness(t)
 	wt, _ := fakeWorktree(t, h)
-	t.Setenv("CLAUDE_PROJECT_DIR", wt)
+	h.setenv("CLAUDE_PROJECT_DIR", wt)
 	blockLogWriter(t)
 	r, w := io.Pipe()
 	defer w.Close()
@@ -287,7 +287,7 @@ func TestHookDeadlineBoundedWithBlockedLogWriter(t *testing.T) {
 func TestHookErrorBoundedWithBlockedLogWriter(t *testing.T) {
 	h := newHarness(t)
 	wt, _ := fakeWorktree(t, h)
-	t.Setenv("CLAUDE_PROJECT_DIR", wt)
+	h.setenv("CLAUDE_PROJECT_DIR", wt)
 	blockLogWriter(t)
 	hookWithin(t, h, hookDeadline+200*time.Millisecond, strings.NewReader(`{"session_id": `), "stop")
 }

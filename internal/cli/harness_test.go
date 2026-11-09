@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -56,27 +57,53 @@ type harness struct {
 	argsLog string
 	env     Env
 	answers string // stdin of each run when env.Stdin is nil
+	// vars is the test's environment (testutil.IsolatedEnv plus setenv):
+	// shoalctl reads it through Env.Getenv and subprocesses get it on top of
+	// the process environment, which TestMain isolated once. No t.Setenv, so
+	// a harness test can call t.Parallel.
+	vars map[string]string
 }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	home := testutil.Isolate(t)
+	home := testutil.Resolve(t, t.TempDir())
 	repo := testutil.Repo(t)
 	testutil.WriteFile(t, filepath.Join(repo, "test.sh"), testScript)
 	testutil.Git(t, repo, "add", "test.sh")
 	testutil.Git(t, repo, "commit", "-q", "-m", "add test script")
-	h := &harness{t: t, home: home, repo: repo, argsLog: filepath.Join(t.TempDir(), "claude-args.log")}
+	h := &harness{t: t, home: home, repo: repo, argsLog: filepath.Join(t.TempDir(), "claude-args.log"), vars: testutil.IsolatedEnv(home)}
 	h.env = Env{Dir: repo, Exe: fakeExe, Claude: "claude-not-installed-for-this-test", Tmux: "tmux",
-		TmuxArgs:     []string{"-L", "shoal-test-unused-" + filepath.Base(t.TempDir())},
-		SpawnWatcher: func(*project, store.Task) error { return nil }}
+		TmuxArgs:     []string{"-L", "shoal-test-unused-" + pathHash(t.TempDir())},
+		SpawnWatcher: func(*project, store.Task) error { return nil }, Getenv: lookupIn(h.vars)}
 	return h
+}
+
+// pathHash names a per-test resource after a unique path; the path's base
+// alone ("001") repeats across tests running in parallel.
+func pathHash(p string) string {
+	f := fnv.New64a()
+	f.Write([]byte(p))
+	return strconv.FormatUint(f.Sum64(), 36)
+}
+
+// setenv sets a variable for the shoalctl runs and subprocesses that follow.
+func (h *harness) setenv(key, value string) { h.vars[key] = value }
+
+// lookupIn reads vars, then the process environment.
+func lookupIn(vars map[string]string) func(string) string {
+	return func(k string) string {
+		if v, ok := vars[k]; ok {
+			return v
+		}
+		return os.Getenv(k)
+	}
 }
 
 // withSession wires a fake claude, a private tmux server and workspace trust.
 func (h *harness) withSession() *harness {
 	h.t.Helper()
 	h.env.Claude = testutil.FakeClaude(h.t, h.argsLog)
-	h.env.TmuxArgs = testutil.Tmux(h.t)
+	h.env.TmuxArgs = testutil.TmuxServer(h.t)
 	testutil.TrustProject(h.t, h.home, h.repo)
 	return h
 }
@@ -89,6 +116,12 @@ func (h *harness) run(args ...string) (int, string, string) {
 	if env.Stdin == nil {
 		env.Stdin = strings.NewReader(h.answers)
 	}
+	// A copy: a hook's logging goroutine may outlive the run.
+	vars := make(map[string]string, len(h.vars))
+	for k, v := range h.vars {
+		vars[k] = v
+	}
+	env.Getenv = lookupIn(vars)
 	code := Main(args, env, "test")
 	return code, out.String(), errb.String()
 }

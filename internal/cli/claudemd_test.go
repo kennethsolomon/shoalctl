@@ -91,13 +91,12 @@ func TestInstallManagedBlockFile(t *testing.T) {
 
 func TestContextImport(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	if got := contextImport(filepath.Join(home, ".shoal", "projects", "abc", "context.md")); got != testImport {
+	env := Env{Getenv: lookupIn(map[string]string{"HOME": home, "USERPROFILE": home})}
+	if got := env.contextImport(filepath.Join(home, ".shoal", "projects", "abc", "context.md")); got != testImport {
 		t.Errorf("under home: %q", got)
 	}
 	other := filepath.Join(t.TempDir(), "context.md")
-	if got := contextImport(other); got != "@"+filepath.ToSlash(other) {
+	if got := env.contextImport(other); got != "@"+filepath.ToSlash(other) {
 		t.Errorf("outside home: %q", got)
 	}
 }

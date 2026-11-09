@@ -23,21 +23,65 @@ const isolatedEmail = "test@example.invalid"
 func Isolate(t *testing.T) string {
 	t.Helper()
 	home := Resolve(t, t.TempDir())
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	for _, k := range []string{"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"} {
-		t.Setenv(k, filepath.Join(home, "xdg", strings.ToLower(k)))
-	}
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, ".gitconfig"))
-	t.Setenv("GIT_AUTHOR_NAME", "shoal test")
-	t.Setenv("GIT_AUTHOR_EMAIL", isolatedEmail)
-	t.Setenv("GIT_COMMITTER_NAME", "shoal test")
-	t.Setenv("GIT_COMMITTER_EMAIL", isolatedEmail)
-	for _, k := range []string{"SHOAL_HOME", "TMUX", "TMUX_PANE", "CLAUDE_PROJECT_DIR", "CLAUDE_CONFIG_DIR", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"} {
-		t.Setenv(k, "")
+	for k, v := range IsolatedEnv(home) {
+		t.Setenv(k, v)
 	}
 	return home
+}
+
+// IsolatedEnv is the environment Isolate sets for the fake home: give it to
+// code under test (Env.Getenv) and subprocesses (exec.Cmd.Env) instead of
+// t.Setenv, and the test can run in parallel.
+func IsolatedEnv(home string) map[string]string {
+	env := map[string]string{
+		"HOME":                home,
+		"USERPROFILE":         home,
+		"GIT_CONFIG_NOSYSTEM": "1",
+		"GIT_CONFIG_GLOBAL":   filepath.Join(home, ".gitconfig"),
+		"GIT_AUTHOR_NAME":     "shoal test",
+		"GIT_AUTHOR_EMAIL":    isolatedEmail,
+		"GIT_COMMITTER_NAME":  "shoal test",
+		"GIT_COMMITTER_EMAIL": isolatedEmail,
+	}
+	for _, k := range []string{"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"} {
+		env[k] = filepath.Join(home, "xdg", strings.ToLower(k))
+	}
+	for _, k := range []string{"SHOAL_HOME", "TMUX", "TMUX_PANE", "CLAUDE_PROJECT_DIR", "CLAUDE_CONFIG_DIR", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"} {
+		env[k] = ""
+	}
+	return env
+}
+
+// IsolateProcess applies IsolatedEnv to this whole process for a fresh fake
+// home, and sets SHELL to an idle shell for the tmux servers TmuxServer
+// starts. It is for a TestMain whose parallel tests each pass their own
+// IsolatedEnv, so that what those tests do not override (git and tmux
+// subprocesses, testutil.Git, the identity Repo checks) never sees the real
+// home. It returns the fake home's parent dir, for the caller to remove.
+func IsolateProcess() (string, error) {
+	dir, err := os.MkdirTemp("", "shoal-test-home-")
+	if err != nil {
+		return "", err
+	}
+	if dir, err = filepath.EvalSymlinks(dir); err != nil {
+		return "", err
+	}
+	home := filepath.Join(dir, "home")
+	shell := filepath.Join(dir, "idle-shell")
+	if err := os.Mkdir(home, 0o755); err != nil {
+		return dir, err
+	}
+	if err := os.WriteFile(shell, []byte("#!/bin/sh\nexec sleep 300\n"), 0o755); err != nil {
+		return dir, err
+	}
+	env := IsolatedEnv(home)
+	env["SHELL"] = shell
+	for k, v := range env {
+		if err := os.Setenv(k, v); err != nil {
+			return dir, err
+		}
+	}
+	return dir, nil
 }
 
 // Resolve returns p with symlinks resolved (macOS temp dirs live under /private).
@@ -63,8 +107,8 @@ func Git(t *testing.T, dir string, args ...string) string {
 }
 
 // Repo creates a git repo on branch main with one commit and a local bare repo
-// as origin, and returns the repo path. It fails the test unless Isolate ran
-// first, so a test never commits with the host's git identity (CI runners have
+// as origin, and returns the repo path. It fails the test unless Isolate (or
+// IsolateProcess) ran first, so a test never commits with the host's git identity (CI runners have
 // none, which would otherwise fail only there).
 func Repo(t *testing.T) string {
 	t.Helper()
@@ -129,6 +173,21 @@ exec sleep 60
 // It skips the test when tmux is not installed.
 func Tmux(t *testing.T) []string {
 	t.Helper()
+	args := TmuxServer(t)
+	shell := filepath.Join(t.TempDir(), "idle-shell")
+	if err := os.WriteFile(shell, []byte("#!/bin/sh\nexec sleep 300\n"), 0o755); err != nil {
+		t.Fatalf("write idle shell: %v", err)
+	}
+	// The server's default shell would otherwise be the user's real shell,
+	// which writes history and rc files into the fake HOME.
+	t.Setenv("SHELL", shell)
+	return args
+}
+
+// TmuxServer is Tmux without setting SHELL, for parallel tests in a process
+// that IsolateProcess set up.
+func TmuxServer(t *testing.T) []string {
+	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
@@ -143,13 +202,6 @@ func Tmux(t *testing.T) []string {
 		tmpDir = "/tmp"
 	}
 	socket := filepath.Join(tmpDir, "tmux-"+strconv.Itoa(os.Getuid()), name)
-	shell := filepath.Join(t.TempDir(), "idle-shell")
-	if err := os.WriteFile(shell, []byte("#!/bin/sh\nexec sleep 300\n"), 0o755); err != nil {
-		t.Fatalf("write idle shell: %v", err)
-	}
-	// The server's default shell would otherwise be the user's real shell,
-	// which writes history and rc files into the fake HOME.
-	t.Setenv("SHELL", shell)
 	t.Cleanup(func() {
 		_ = exec.Command("tmux", append(args, "kill-server")...).Run()
 		if err := os.Remove(socket); err != nil && !os.IsNotExist(err) {

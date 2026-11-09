@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/kennethsolomon/shoalctl/internal/store"
+	"github.com/kennethsolomon/shoalctl/internal/testutil"
 )
 
 // asBinaryEnv makes the test binary behave as shoalctl, so tests can run real
@@ -35,10 +36,18 @@ func TestMain(m *testing.M) {
 		os.Stderr.WriteString("cli tests: " + err.Error() + "\n")
 		os.Exit(2)
 	}
+	// Harness tests run in parallel and keep their own environment
+	// (harness.vars); everything else sees one isolated fake home.
+	home, err := testutil.IsolateProcess()
+	if err != nil {
+		os.Stderr.WriteString("cli tests: isolate the environment: " + err.Error() + "\n")
+		os.Exit(2)
+	}
 	code := m.Run()
 	if dir != "" {
 		os.RemoveAll(dir)
 	}
+	os.RemoveAll(home)
 	os.Exit(code)
 }
 
@@ -82,5 +91,8 @@ func (h *harness) command(args ...string) *exec.Cmd {
 	cmd.Dir = h.env.Dir
 	cmd.Env = append(os.Environ(), asBinaryEnv+"=1", "SHOALCTL_TEST_EXE="+h.env.Exe, "SHOALCTL_TEST_CLAUDE="+h.env.Claude,
 		"SHOALCTL_TEST_TMUX_ARGS="+strings.Join(h.env.TmuxArgs, " "))
+	for k, v := range h.vars {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
 	return cmd
 }

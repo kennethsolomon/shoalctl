@@ -74,7 +74,7 @@ func (env Env) cmdStart(ctx context.Context, args []string) error {
 	if p.cfg.Tests.Format != "none" && strings.TrimSpace(p.cfg.Tests.Command) == "" {
 		return fail(ExitConfig, "[tests].command is empty in %s; set it, or set format = \"none\" if the project has no tests", p.cfgPath)
 	}
-	if err := checkTrust(p.root); err != nil {
+	if err := env.checkTrust(p.root); err != nil {
 		return err
 	}
 	if *model == "" {
@@ -195,7 +195,7 @@ func (env Env) envSocket() string {
 	if len(env.TmuxArgs) > 0 {
 		return ""
 	}
-	socket, _, _ := strings.Cut(os.Getenv("TMUX"), ",")
+	socket, _, _ := strings.Cut(env.getenv("TMUX"), ",")
 	return socket
 }
 
@@ -572,7 +572,7 @@ func (env Env) reapAbandoned(ctx context.Context, p *project, t store.Task) erro
 
 // launch opens a detached tmux window running claude in the worktree.
 func (env Env) launch(ctx context.Context, p *project, t store.Task, wt, claude, model string) (session, window string, created bool, err error) {
-	if os.Getenv("TMUX") != "" {
+	if env.getenv("TMUX") != "" {
 		session, err = env.tmux(ctx, "display-message", "-p", "#{session_name}")
 		if err != nil {
 			return "", "", false, err

@@ -45,7 +45,7 @@ func TestStartWarnsWhenTheSocketLookupFailsAfterLaunch(t *testing.T) {
 	h.env.Tmux = wrapper
 	n := watched(h)
 	slug := newTask(t, h, "bugfix", "Socket lookup fails")
-	t.Setenv("TMUX", "")
+	h.setenv("TMUX", "")
 	code, out, errOut := h.run("start", slug)
 	if code != 0 {
 		t.Fatalf("start exited %d\n%s\n%s", code, out, errOut)

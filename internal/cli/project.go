@@ -47,14 +47,14 @@ func (p *project) close() {
 }
 
 // shoalHome is $SHOAL_HOME, default ~/.shoal. It must be absolute.
-func shoalHome() (string, error) {
-	if h := os.Getenv("SHOAL_HOME"); h != "" {
+func (env Env) shoalHome() (string, error) {
+	if h := env.getenv("SHOAL_HOME"); h != "" {
 		if !filepath.IsAbs(h) {
 			return "", fail(ExitConfig, "SHOAL_HOME %q must be an absolute path", h)
 		}
 		return filepath.Clean(h), nil
 	}
-	home, err := os.UserHomeDir()
+	home, err := env.userHomeDir()
 	if err != nil {
 		return "", fail(ExitConfig, "find home directory for ~/.shoal: %v", err)
 	}
@@ -78,7 +78,7 @@ func (env Env) identify(ctx context.Context) (*project, error) {
 	if remote != "" {
 		canon = gitx.Canonical(remote)
 	}
-	home, err := shoalHome()
+	home, err := env.shoalHome()
 	if err != nil {
 		return nil, err
 	}

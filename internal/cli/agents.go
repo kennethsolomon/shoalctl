@@ -12,14 +12,14 @@ import (
 )
 
 // userAgentsDir is Claude Code's user-level agents directory.
-func userAgentsDir() (string, error) {
-	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
+func (env Env) userAgentsDir() (string, error) {
+	if d := env.getenv("CLAUDE_CONFIG_DIR"); d != "" {
 		if !filepath.IsAbs(d) {
 			return "", fail(ExitConfig, "CLAUDE_CONFIG_DIR %q must be an absolute path", d)
 		}
 		return filepath.Join(d, "agents"), nil
 	}
-	home, err := os.UserHomeDir()
+	home, err := env.userHomeDir()
 	if err != nil {
 		return "", fail(ExitConfig, "find home directory for ~/.claude/agents: %v", err)
 	}
@@ -30,12 +30,12 @@ func (env Env) cmdAgents(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return fail(ExitUsage, "usage: agents install [--commit] | agents list")
 	}
-	home, err := shoalHome()
+	home, err := env.shoalHome()
 	if err != nil {
 		return err
 	}
 	manifest := filepath.Join(home, "agents-manifest.json")
-	userDir, err := userAgentsDir()
+	userDir, err := env.userAgentsDir()
 	if err != nil {
 		return err
 	}

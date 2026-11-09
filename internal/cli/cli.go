@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -57,6 +58,34 @@ type Env struct {
 	// SpawnWatcher starts the attention watcher of a started task; nil runs
 	// `<Exe> watch <task>` detached.
 	SpawnWatcher func(p *project, t store.Task) error
+	// Getenv reads the environment variables shoalctl itself consults
+	// (HOME, SHOAL_HOME, CLAUDE_*, TMUX); nil means os.Getenv. Subprocesses
+	// still inherit the process environment. Tests set it so they can run in
+	// parallel without changing the process environment.
+	Getenv func(key string) string
+}
+
+func (env Env) getenv(key string) string {
+	if env.Getenv != nil {
+		return env.Getenv(key)
+	}
+	return os.Getenv(key)
+}
+
+// userHomeDir is os.UserHomeDir, reading the variable through Getenv when
+// that is set.
+func (env Env) userHomeDir() (string, error) {
+	if env.Getenv == nil {
+		return os.UserHomeDir()
+	}
+	key := "HOME"
+	if runtime.GOOS == "windows" {
+		key = "USERPROFILE"
+	}
+	if v := env.Getenv(key); v != "" {
+		return v, nil
+	}
+	return "", fmt.Errorf("$%s is not defined", key)
 }
 
 // claudeCodeEnv are the variables Claude Code sets in the shells it runs
@@ -65,9 +94,9 @@ var claudeCodeEnv = []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"}
 
 // claudeCodeSession returns the Claude Code variable set in this process's
 // environment, or "".
-func claudeCodeSession() string {
+func (env Env) claudeCodeSession() string {
 	for _, k := range claudeCodeEnv {
-		if os.Getenv(k) != "" {
+		if env.getenv(k) != "" {
 			return k
 		}
 	}
@@ -79,7 +108,7 @@ func claudeCodeSession() string {
 // as /dev/null is not one). A pty wrapper such as script(1) still passes;
 // see §16 row 69.
 func (env Env) interactive() bool {
-	if claudeCodeSession() != "" {
+	if env.claudeCodeSession() != "" {
 		return false
 	}
 	if env.Terminal != nil {

@@ -219,7 +219,7 @@ func TestStartHonoursClaudeConfigDir(t *testing.T) {
 	h := newHarness(t).withSession()
 	os.Remove(filepath.Join(h.home, ".claude.json"))
 	dir := t.TempDir()
-	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	h.setenv("CLAUDE_CONFIG_DIR", dir)
 	testutil.TrustProject(t, dir, h.repo)
 	h.initWith(junitConfig)
 	h.mustRun("new", "feature", "One")

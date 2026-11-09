@@ -21,7 +21,7 @@ const (
 	logBudget    = 300 * time.Millisecond
 )
 
-// logHook writes one hooks.log line; tests replace it.
+// logHook writes one hooks.log line under env's SHOAL_HOME; tests replace it.
 var logHook = logHookFailure
 
 // runHook is the entry point Claude Code calls. It always returns 0 within
@@ -63,10 +63,10 @@ func runHook(args []string, env Env) int {
 		defer close(logged)
 		defer func() { _ = recover() }()
 		if res.unresolved {
-			res = resolveFailure(res.err)
+			res = env.resolveFailure(res.err)
 		}
 		if res.shoal {
-			logLine(event, res.dir, res.err)
+			logLine(env, event, res.dir, res.err)
 		}
 	}()
 	select {
@@ -78,12 +78,12 @@ func runHook(args []string, env Env) int {
 
 // resolveFailure finds where a failure that happened before or outside the
 // guard belongs, logging it only when CLAUDE_PROJECT_DIR is a shoal worktree.
-func resolveFailure(err error) hookResult {
-	home, herr := shoalHome()
+func (env Env) resolveFailure(err error) hookResult {
+	home, herr := env.shoalHome()
 	if herr != nil {
 		return hookResult{}
 	}
-	wt, ok := shoalWorktree(os.Getenv("CLAUDE_PROJECT_DIR"), home)
+	wt, ok := shoalWorktree(env.getenv("CLAUDE_PROJECT_DIR"), home)
 	return hookResult{err: err, dir: wt, shoal: ok}
 }
 
@@ -131,11 +131,11 @@ func (env Env) hook(args []string, deadline time.Time) hookResult {
 		jsonErr = json.Unmarshal(raw, &in)
 	}
 
-	dir := os.Getenv("CLAUDE_PROJECT_DIR")
+	dir := env.getenv("CLAUDE_PROJECT_DIR")
 	if dir == "" {
 		dir = in.Cwd
 	}
-	home, err := shoalHome()
+	home, err := env.shoalHome()
 	if err != nil || dir == "" {
 		return hookResult{}
 	}
@@ -258,8 +258,8 @@ func readAllContext(ctx context.Context, r io.Reader) ([]byte, error) {
 
 // logHookFailure appends one line to hooks.log. If that fails too there is
 // nowhere left to report, and the hook still exits 0.
-func logHookFailure(event, dir string, err error) {
-	home, herr := shoalHome()
+func logHookFailure(env Env, event, dir string, err error) {
+	home, herr := env.shoalHome()
 	if herr != nil {
 		return
 	}

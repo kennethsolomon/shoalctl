@@ -318,7 +318,7 @@ func (env Env) cmdBrief(ctx context.Context, args []string) error {
 	if len(pos) == 1 {
 		ref = pos[0]
 	} else {
-		home, err := shoalHome()
+		home, err := env.shoalHome()
 		if err != nil {
 			return err
 		}

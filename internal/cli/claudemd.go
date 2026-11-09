@@ -19,9 +19,9 @@ const (
 
 // contextImport is the CLAUDE.md import line of context.md: a home-relative
 // path when context.md is under the home directory, as §5.1 shows it.
-func contextImport(contextPath string) string {
+func (env Env) contextImport(contextPath string) string {
 	p := filepath.ToSlash(contextPath)
-	if home, err := os.UserHomeDir(); err == nil {
+	if home, err := env.userHomeDir(); err == nil {
 		if rel, err := filepath.Rel(home, contextPath); err == nil && rel != "." && !strings.HasPrefix(filepath.ToSlash(rel), "../") && !filepath.IsAbs(rel) {
 			p = "~/" + filepath.ToSlash(rel)
 		}

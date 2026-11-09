@@ -72,11 +72,11 @@ func TestRequireHumanRefusesClaudeCodeSession(t *testing.T) {
 			h.mustRun("init")
 			h.mustRun("convention", "propose", "--rule", "Keep handlers thin", "--scope", "**")
 			h.asHuman()
-			t.Setenv(k, "1")
+			h.setenv(k, "1")
 			mustContain(t, "agree in Claude Code", h.expectCode(ExitState, "convention", "agree", "1"),
 				"inside a Claude Code session ("+k+" is set)", "your own terminal")
 			mustContain(t, "promote in Claude Code", h.expectCode(ExitState, "promote", "lesson:1"), "inside a Claude Code session")
-			t.Setenv(k, "")
+			h.setenv(k, "")
 			h.mustRun("convention", "agree", "1")
 		})
 	}
