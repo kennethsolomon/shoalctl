@@ -184,7 +184,7 @@ usage: shoalctl <command> [args]
 
 commands:
   init [--commit-config] [--rebind]
-  new <feature|bugfix|hotfix> "<title>" [--ask "<text>" | --ask-file <path>] [--scope "<text>"]...
+  new <feature|bugfix|hotfix> "<title>" [--details "<text>" | --details-file <path>] [--scope "<text>"]...   --ask, --ask-file: old names, still work
   plan <task> [--todo <file>] <glob>...    expected file claims; asks on overlap (s/m/p/?)
   start <task> [--model <model>]
   status [--json] [--all]                  --all: every task, abandoned and long-closed ones too

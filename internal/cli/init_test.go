@@ -388,6 +388,10 @@ func TestNew(t *testing.T) {
 	h.mustRun("new", "hotfix", "Prod down", "--ask", "Restore login")
 	testutil.WriteFile(t, filepath.Join(h.repo, "notes", "ask.md"), "Relative ask\n")
 	h.mustRun("new", "feature", "Relative", "--ask-file", filepath.Join("notes", "ask.md"))
+	h.mustRun("new", "bugfix", "Cents lost", "--details", "Paid 150.50, saved 150")
+	h.mustRun("new", "--details-file", askFile, "bugfix", "Crash again")
+	h.mustRun("new", "feature", "Twice", "--details", "first", "--details", "second")
+	h.mustRun("new", "feature", "Twice old", "--ask", "first", "--ask", "second")
 
 	tests := []struct {
 		slug, lane, ask string
@@ -396,6 +400,10 @@ func TestNew(t *testing.T) {
 		{"2-crash", "bugfix", "Fix the crash\nwhen sorting."},
 		{"3-prod-down", "hotfix", "Restore login"},
 		{"4-relative", "feature", "Relative ask"},
+		{"5-cents-lost", "bugfix", "Paid 150.50, saved 150"},
+		{"6-crash-again", "bugfix", "Fix the crash\nwhen sorting."},
+		{"7-twice", "feature", "second"},
+		{"8-twice-old", "feature", "second"},
 	}
 	for _, tt := range tests {
 		got := h.task(tt.slug)
@@ -410,11 +418,53 @@ func TestNew(t *testing.T) {
 		{"new", "feature", ""},
 		{"new", "feature", strings.Repeat("x", 121)},
 		{"new", "feature", "two\nlines"},
-		{"new", "feature", "x", "--ask", "a", "--ask-file", askFile},
 		{"new", "feature", "x", "--nope"},
 		{"new", "feature", "x", "--ask-file", filepath.Join(t.TempDir(), "missing")},
 	} {
 		h.expectCode(ExitUsage, args...)
+	}
+	if errOut := h.expectCode(ExitUsage, "new", "feature", "x", "--details-file", filepath.Join(t.TempDir(), "missing")); !strings.Contains(errOut, "read --details-file") {
+		t.Errorf("a missing --details-file is not named: %s", errOut)
+	}
+
+	for _, tt := range []struct{ a, b string }{
+		{"--ask", "--details"},
+		{"--ask", "--ask-file"},
+		{"--ask", "--details-file"},
+		{"--details", "--ask-file"},
+		{"--details", "--details-file"},
+		{"--ask-file", "--details-file"},
+	} {
+		value := func(flag string) string {
+			if strings.HasSuffix(flag, "-file") {
+				return askFile
+			}
+			return "text"
+		}
+		errOut := h.expectCode(ExitUsage, "new", "feature", "x", tt.a, value(tt.a), tt.b, value(tt.b))
+		if !strings.Contains(errOut, tt.a) || !strings.Contains(errOut, tt.b) {
+			t.Errorf("%s with %s: the error does not name both flags: %s", tt.a, tt.b, errOut)
+		}
+	}
+	if out := h.mustRun("new", "feature", "After"); out != "9-after\n" {
+		t.Errorf("a refused new created a task: the next slug is %q", out)
+	}
+}
+
+func TestUsageShowsDetailsAndTheOldAskNames(t *testing.T) {
+	t.Parallel()
+	line := ""
+	for _, l := range strings.Split(newHarness(t).mustRun("help"), "\n") {
+		if strings.HasPrefix(l, "  new ") {
+			line = l
+		}
+	}
+	synopsis, desc, _ := strings.Cut(line, "]...   ")
+	if !strings.Contains(synopsis, `[--details "<text>" | --details-file <path>]`) || strings.Contains(synopsis, "--ask") {
+		t.Errorf("usage of new does not show --details and --details-file as the flags: %q", line)
+	}
+	if !strings.Contains(desc, "--ask") || !strings.Contains(desc, "--ask-file") || !strings.Contains(desc, "still work") {
+		t.Errorf("usage of new does not say --ask and --ask-file still work: %q", line)
 	}
 }
 

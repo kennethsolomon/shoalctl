@@ -60,8 +60,10 @@ func validTitle(title string) error {
 
 func (env Env) cmdNew(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("new", flag.ContinueOnError)
-	ask := fs.String("ask", "", "what the task should achieve (default: the title)")
-	askFile := fs.String("ask-file", "", "read the ask from a file")
+	details := fs.String("details", "", "what the task should achieve (default: the title)")
+	detailsFile := fs.String("details-file", "", "read the details from a file")
+	ask := fs.String("ask", "", "old name of --details")
+	askFile := fs.String("ask-file", "", "old name of --details-file")
 	var scope multiFlag
 	fs.Var(&scope, "scope", "a required scope item (\"also test X\"); repeatable")
 	pos, err := parseArgs(fs, args, 2)
@@ -75,8 +77,19 @@ func (env Env) cmdNew(ctx context.Context, args []string) error {
 	if err := validTitle(title); err != nil {
 		return err
 	}
-	if *ask != "" && *askFile != "" {
-		return fail(ExitUsage, "use --ask or --ask-file, not both")
+	type textFlag struct{ name, value string }
+	var given []textFlag
+	for _, f := range []textFlag{{"--details", *details}, {"--details-file", *detailsFile}, {"--ask", *ask}, {"--ask-file", *askFile}} {
+		if f.value != "" {
+			given = append(given, f)
+		}
+	}
+	if len(given) > 1 {
+		names := make([]string, len(given))
+		for i, f := range given {
+			names[i] = f.name
+		}
+		return fail(ExitUsage, "use one of --details or --details-file (old names: --ask, --ask-file), not %s", strings.Join(names, " and "))
 	}
 	for _, item := range scope {
 		if err := validScopeText(item); err != nil {
@@ -85,19 +98,20 @@ func (env Env) cmdNew(ctx context.Context, args []string) error {
 	}
 	text := title
 	switch {
-	case *ask != "":
-		text = *ask
-	case *askFile != "":
-		path := *askFile
+	case len(given) == 0:
+	case !strings.HasSuffix(given[0].name, "-file"):
+		text = given[0].value
+	default:
+		path := given[0].value
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(env.Dir, path)
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return fail(ExitUsage, "read --ask-file: %v", err)
+			return fail(ExitUsage, "read %s: %v", given[0].name, err)
 		}
 		if strings.TrimSpace(string(data)) == "" {
-			return fail(ExitUsage, "--ask-file %s is empty", *askFile)
+			return fail(ExitUsage, "%s %s is empty", given[0].name, given[0].value)
 		}
 		text = string(data)
 	}
