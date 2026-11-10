@@ -122,6 +122,7 @@ type blockRemoval struct {
 	found   bool
 	remove  bool   // nothing is left and git does not track the file
 	skipped string // why the file was not read
+	absent  bool
 }
 
 func planBlockRemoval(ctx context.Context, root string) (blockRemoval, error) {
@@ -129,6 +130,7 @@ func planBlockRemoval(ctx context.Context, root string) (blockRemoval, error) {
 	info, err := os.Lstat(b.path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
+		b.absent = true
 		return b, nil
 	case err != nil:
 		return b, fmt.Errorf("stat %s: %w", b.path, err)
@@ -169,6 +171,8 @@ func (b blockRemoval) apply() error {
 
 func (b blockRemoval) summary() string {
 	switch {
+	case b.absent:
+		return "no " + b.path
 	case b.skipped != "":
 		return fmt.Sprintf("%s not read: %s", b.path, b.skipped)
 	case !b.found:

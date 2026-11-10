@@ -155,7 +155,7 @@ func TestUninstallRestoresAStealthRepo(t *testing.T) {
 	}
 	out := h.mustRun("uninstall")
 	mustContain(t, "uninstall", out, "removed 4 shoal entries and "+filepath.Join(h.repo, ".claude", "settings.local.json")+", which shoal created",
-		"no shoal block in", "kept     "+h.project().dir, "shoalctl purge "+h.project().id)
+		"block    no "+filepath.Join(h.repo, "CLAUDE.md")+"\n", "kept     "+h.project().dir, "shoalctl purge "+h.project().id)
 	if got := footprint(t, h.repo); got != before {
 		t.Fatalf("repo after uninstall:\n%s\nbefore init:\n%s", got, before)
 	}
@@ -165,7 +165,7 @@ func TestUninstallRestoresAStealthRepo(t *testing.T) {
 	mustContain(t, "second uninstall", h.mustRun("uninstall"), "no shoal entries in")
 }
 
-func TestUninstallKeepsTheUsersSettingsAndBlockless(t *testing.T) {
+func TestUninstallKeepsTheUsersSettings(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	settings := filepath.Join(h.repo, ".claude", "settings.local.json")
@@ -176,7 +176,9 @@ func TestUninstallKeepsTheUsersSettingsAndBlockless(t *testing.T) {
 	if readFile(t, settings) == user {
 		t.Fatal("init did not register hooks")
 	}
-	mustContain(t, "uninstall", h.mustRun("uninstall"), "removed 4 shoal entries from "+settings+"; your own settings stay")
+	commitFile(t, h.repo, "CLAUDE.md", "# Rules\n")
+	mustContain(t, "uninstall", h.mustRun("uninstall"), "removed 4 shoal entries from "+settings+"; your own settings stay",
+		"no shoal block in "+filepath.Join(h.repo, "CLAUDE.md"))
 	if got := readFile(t, settings); got != user {
 		t.Fatalf("settings after uninstall:\n%q\nwant:\n%q", got, user)
 	}
