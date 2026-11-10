@@ -66,6 +66,9 @@ func (env Env) cmdAbandon(ctx context.Context, args []string) error {
 		fmt.Fprint(env.Stdout, "  ")
 	}
 	fmt.Fprintln(env.Stdout, "the summary and every record stay")
+	if err := env.printRelatedTasks(ctx, p, t); err != nil {
+		return err
+	}
 	// The prompt runs without the task lock, so a merge or another command
 	// is never held up while the human decides; the lock is taken after the
 	// answer and every check is redone under it.
@@ -160,4 +163,29 @@ func abandonChecks(ctx context.Context, t store.Task, force bool) (bool, error) 
 			"Commit or remove them, or pass --force to delete them with the worktree", t.Slug, t.Worktree)
 	}
 	return dirty, nil
+}
+
+// printRelatedTasks names what abandon leaves as it is but the human may
+// want to know: an open backport task of a hotfix, and the tasks folded
+// into this one, whose asks it carried.
+func (env Env) printRelatedTasks(ctx context.Context, p *project, t store.Task) error {
+	all, err := p.db.ListTasks(ctx, "")
+	if err != nil {
+		return err
+	}
+	var folded []string
+	for i := len(all) - 1; i >= 0; i-- {
+		o := all[i]
+		if o.ParentTaskID == t.ID && o.ClosedAt == "" {
+			fmt.Fprintf(env.Stdout, "  its backport task %s (%s) stays open; abandon it too if the fix should not reach %s: shoalctl abandon %s\n",
+				o.Slug, o.Stage, p.cfg.Merge.Base, o.Slug)
+		}
+		if o.FoldedInto == t.ID {
+			folded = append(folded, o.Slug)
+		}
+	}
+	if len(folded) > 0 {
+		fmt.Fprintf(env.Stdout, "  folded into it, so given up with it: %s\n", strings.Join(folded, ", "))
+	}
+	return nil
 }

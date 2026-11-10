@@ -421,3 +421,36 @@ func TestMergeSkipsATaskAbandonedDuringTheRun(t *testing.T) {
 		t.Fatalf("abandoned task changed: %+v", got)
 	}
 }
+
+// Abandoning a done hotfix names its still-open backport task, and
+// abandoning a task names the tasks folded into it; both stay as they are.
+func TestAbandonNamesTheBackportAndFoldedTasks(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t).withSession()
+	testutil.Git(t, h.repo, "branch", "production")
+	h.initWith(junitConfig + "[hotfix]\nproduction_ref = \"production\"\n")
+	hot := startedTask(t, h, "hotfix", "Checkout crashes")
+	commitIn(t, hot.Worktree, "tests/bug.t", "x")
+	h.mustRun("repro", "red", hot.Slug, "--test", "C::bug", "--file", "tests/bug.t")
+	commitIn(t, hot.Worktree, "fix.txt", "x")
+	h.mustRun("repro", "green", hot.Slug, "--test", "C::bug")
+	mustContain(t, "done", finish(t, h, hot.Slug, hot.Worktree), "backport task 2-backport-checkout-crashes created")
+	out, _ := h.abandonAs("y\n", ExitOK, hot.Slug)
+	mustContain(t, "hotfix", out, "  its backport task 2-backport-checkout-crashes (new) stays open; abandon it too if the fix should not reach main: shoalctl abandon 2-backport-checkout-crashes\n")
+	if got := h.task("2-backport-checkout-crashes"); got.Stage != "new" {
+		t.Fatalf("the backport changed: %+v", got)
+	}
+
+	a := newTask(t, h, "bugfix", "Users page broken")
+	b := newTask(t, h, "bugfix", "Users page sort")
+	h.mustRun("plan", a, "resources/js/users/**")
+	h.env.Terminal = func() bool { return true }
+	h.env.Stdin = strings.NewReader("m\n")
+	mustContain(t, "fold", h.mustRun("plan", b, "resources/js/users/**"), b+" folded into "+a)
+	h.env.Terminal, h.env.Stdin = nil, nil
+	out, _ = h.abandonAs("y\n", ExitOK, a)
+	mustContain(t, "folded", out, "  folded into it, so given up with it: "+b+"\n")
+	if strings.Contains(out, "backport") {
+		t.Errorf("a bugfix with no backport names one:\n%s", out)
+	}
+}
