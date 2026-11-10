@@ -86,6 +86,10 @@ release:
   # dist/checksums.txt, and only then publishes the draft. One build: the
   # guarded bytes are the published bytes.
   draft: true
+  # Re-running a failed release job would otherwise leave a second draft for
+  # the tag: 2.20.0 looks up an existing release by tag but skips drafts.
+  # This deletes the stale draft (same name) before creating the new one.
+  replace_existing_draft: true
 
 # brews writes a formula, as spec §2 names it (kennethsolomon/tap/shoalctl).
 # GoReleaser 2.10+ marks brews deprecated in favour of homebrew_casks, so
