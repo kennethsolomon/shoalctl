@@ -30,7 +30,7 @@ Base: `6bc02ca` (Phase 4 shipped, Vex round 5 SHIP). Approved by Kenneth 2026-11
 | 79 | export/purge take the project id and work without the checkout; purge: human types the id, refused with worktrees left or locks held |
 | 80 | release.yml: FTS5 on six native runners; one build to a draft release (a re-run replaces a stale draft), guard, draft assets checked against the guarded checksums, draft published; actions pinned by SHA, GoReleaser v2.20.0 |
 | 81 | version: ldflags, then `debug.ReadBuildInfo`, then `dev` |
-| 82 | Homebrew formula via `brews` (deprecated in GoReleaser 2.10+); GoReleaser never pushes it; release.yml pushes it after publishing, for stable tags with a non-empty tap token only |
+| 82 | Homebrew formula via `brews` (deprecated in GoReleaser 2.10+); GoReleaser never pushes it; release.yml's own `formula` job pushes it after publishing (re-runnable alone, `concurrency: homebrew-tap`, never over a newer version), for stable tags with a non-empty tap token only; manual push command in spec row 82 |
 
 ## Snapshot release (local, `goreleaser 2.20.0`, `--snapshot --clean`, no token)
 
@@ -98,7 +98,7 @@ It found one wording bug, fixed in `02db19c` (uninstall named a missing CLAUDE.m
 1. Create the public repo `kennethsolomon/homebrew-tap` (may be empty; release.yml pushes `Formula/shoalctl.rb` to `main`).
 2. Create a fine-grained personal access token: resource owner kennethsolomon, repository access only `homebrew-tap`, permission Contents read and write (Metadata read is implied). Add it to `kennethsolomon/shoalctl` as the Actions secret `HOMEBREW_TAP_GITHUB_TOKEN`. The release itself uses the workflow's `GITHUB_TOKEN` (`contents: write`, also used by `gh` to check and publish the draft); nothing else is needed.
 3. Push main, then tag: `git tag -a v0.1.0 -m "shoalctl v0.1.0" && git push origin v0.1.0` (a tag with a suffix such as `-rc.1` is marked prerelease and gets no formula).
-4. Check the run: all six test jobs green, then `brew install kennethsolomon/tap/shoalctl && shoalctl version`.
+4. Check the run: all six test jobs green, then `brew install kennethsolomon/tap/shoalctl && shoalctl version`. If only the `formula` job failed (token, tap), fix it and use "Re-run failed jobs", never "Re-run all jobs"; after the 7-day artifact expiry use the manual push in spec row 82.
 
 ## Open risks
 
