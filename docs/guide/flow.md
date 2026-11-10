@@ -1,8 +1,10 @@
 Task lifecycle, worked through one bug. <task> is the number or the slug.
 
-1. shoalctl new bugfix "POST /api/orders saves 150 instead of 150.50"
+1. shoalctl new bugfix "POST /api/orders saves 150 instead of 150.50" \
+     --details "Paid 150.50, the order shows 150. Keep the cents."
    prints 1-post-api-orders-saves-150-instead-of-150, so the task is 1.
-   Lanes: feature, bugfix, hotfix.
+   Lanes: feature, bugfix, hotfix. --details-file <path> reads the details
+   from a file; the old names --ask and --ask-file still work.
 2. Optional: shoalctl plan 1 'app/Orders/**'   expected files; asks on
    overlap with another task (s/m/p/?)
 3. shoalctl start 1   branch, worktree, baseline test run, tmux window,

@@ -540,3 +540,15 @@ Accuracy check against the code (no behaviour changed):
 | Optional `plan`/`qa`/`gc` kept in a compact group; `new feature` moved to `guide flow` | `docs/guide/index.md`, `docs/guide/flow.md` | `TestGuideNamesOnlyCommandsSubcommandsAndFlagsInUsage` |
 | `guide flow`: one worked bugfix, slug `1-post-api-orders-saves-150-instead-of-150` (from `slugWords`, cut at 40 characters) | `docs/guide/flow.md` | guide tests |
 | Docs | README Quick start line, spec §4.4 row and §16 row 85 | - |
+
+## `--details` for `shoalctl new` (spec §16 row 86)
+
+Base: `37d5fea`. Kenneth asked for a clearer flag name: `--details` and `--details-file` are now the main names, `--ask` and `--ask-file` still work the same. Nothing pushed; the local `v0.1.0` tag was not touched.
+
+| Item | Where | Proof |
+|------|-------|-------|
+| Four names, one value; the file flag resolves relative to the current directory | `cmdNew`, `internal/cli/new.go` | `TestNew` (each name creates a task with the right details) |
+| Two of the four (non-empty) is exit 2 naming the flags given; nothing is created | `cmdNew` | `TestNew` (all six pairs, next slug unchanged) |
+| One flag twice keeps the last value, as before (stdlib `flag`) | `cmdNew` | `TestNew` (`--details` twice, `--ask` twice) |
+| Usage shows `--details`/`--details-file`, says `--ask`/`--ask-file` still work | `usage`, `internal/cli/cli.go` | `TestUsageShowsDetailsAndTheOldAskNames`, `TestGuideNamesOnlyCommandsSubcommandsAndFlagsInUsage` |
+| Docs | guide `quick` step 1 and `flow` worked example, README Use block, full flow, Commands table; spec §4.4, §15, §16 row 86 | guide tests, `TestREADMEQuotesQuickSetupAndTestsVerbatimBetweenMarkers` |

@@ -157,7 +157,7 @@ Fix a bug in five commands. This block is the top of `shoalctl guide` (`docs/gui
 ```text
 shoalctl guide: fix a bug in 5 commands. <n> is the task number.
 
-1. shoalctl new bugfix "<title>"   prints the slug, e.g. 1-<title-words>
+1. shoalctl new bugfix "<title>" --details "<text>"   prints 1-<title-words>
 2. shoalctl start <n>   a tmux window opens with claude. Its first line,
    "Read .shoal/brief.md first...", is shoal giving claude its task: leave it.
 3. Wait. The agent commits a failing test, runs shoalctl repro red, fixes
@@ -173,7 +173,7 @@ Everything else is optional.
 The full flow, with the optional steps (these commands are built):
 
 ```sh
-shoalctl new bugfix "Users page shows wrong display name"   # prints the slug, e.g. 1-users-page-shows-wrong-display-name
+shoalctl new bugfix "Users page shows wrong display name" --details "Shows the email, not the name"   # prints the slug, e.g. 1-users-page-shows-wrong-display-name; --details-file <path> reads it from a file (--ask, --ask-file still work)
 shoalctl plan 1 app/Models/User.php 'resources/js/users/**'  # optional: expected files; asks on overlap with another task
 shoalctl start 1        # branch + worktree + baseline test run + tmux window + claude + attention watcher
 shoalctl status         # board of tasks
@@ -369,7 +369,7 @@ The baseline runs in a clean worktree that does not have them.
 | Command | What it does | Status |
 |---------|--------------|--------|
 | `shoalctl init` | Register the project and wire hooks (stealth by default) | Built |
-| `shoalctl new <feature\|bugfix\|hotfix> "<title>"` | Create a task | Built |
+| `shoalctl new <feature\|bugfix\|hotfix> "<title>" [--details "<text>" \| --details-file <path>] [--scope "<text>"]...` | Create a task; the details default to the title. `--ask` and `--ask-file` are the old names and still work | Built |
 | `shoalctl plan <task> [--todo <file>] <glob>...` | Expected file claims and `todo.md` before start; one-keypress overlap prompt (`s`/`m`/`p`/`?`) | Built |
 | `shoalctl start <task> [--model <m>]` | Branch + worktree + baseline test run + tmux window + `claude` + attention watcher; refuses a `blocked` task | Built |
 | `shoalctl status [--json] [--all]` | Board of tasks; NOTE shows needs-attention, blocked-by, queue position, claims. Abandoned tasks and ones closed over 14 days ago show only with `--all` | Built |
