@@ -136,7 +136,7 @@ func TestGuideCheatSheetListsEveryTopicFile(t *testing.T) {
 	}
 	var files []string
 	for _, e := range entries {
-		if name, ok := strings.CutSuffix(e.Name(), ".md"); ok && name != "index" {
+		if name, ok := strings.CutSuffix(e.Name(), ".md"); ok && name != "index" && name != "quick" {
 			files = append(files, name)
 		}
 	}
@@ -224,5 +224,17 @@ func TestHelpPointsNewcomersAtTheGuide(t *testing.T) {
 	}
 	if !strings.Contains(out, "\n  guide [<topic>]") {
 		t.Errorf("help does not list guide:\n%s", out)
+	}
+}
+
+func TestGuideQuickFlowQuotesTheOpeningWordsStartSendsClaude(t *testing.T) {
+	t.Parallel()
+	quick, err := guide.Quick()
+	if err != nil {
+		t.Fatal(err)
+	}
+	opening, _, _ := strings.Cut(sessionPrompt, ". ")
+	if !strings.Contains(quick, "\""+opening+"...\"") {
+		t.Errorf("quick.md does not quote the opening words %q of the prompt start sends claude:\n%s", opening, quick)
 	}
 }

@@ -1,5 +1,6 @@
 // Package guide holds the text of shoalctl guide. The .md files beside this
-// one are plain text; the README quotes setup.md and tests.md verbatim.
+// one are plain text; the README quotes quick.md, setup.md and tests.md
+// verbatim.
 package guide
 
 import (
@@ -21,9 +22,23 @@ const ConfigPlaceholder = "{config}"
 // ErrUnknownTopic is returned for a topic not in Topics.
 var ErrUnknownTopic = errors.New("unknown guide topic")
 
-// Index is the cheat sheet that shoalctl guide prints with no topic.
+// Index is the cheat sheet that shoalctl guide prints with no topic: the
+// five-command quick flow (quick.md), then the rest (index.md).
 func Index() (string, error) {
-	return read("index.md")
+	quick, err := Quick()
+	if err != nil {
+		return "", err
+	}
+	rest, err := read("index.md")
+	if err != nil {
+		return "", err
+	}
+	return quick + rest, nil
+}
+
+// Quick is the five-command bugfix flow that opens the cheat sheet.
+func Quick() (string, error) {
+	return read("quick.md")
 }
 
 // Topic is the text of one topic.
