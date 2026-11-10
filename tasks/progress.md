@@ -477,3 +477,18 @@ Vex returned SHIP on `1548f0b` with two residual risks; each closed in its own c
 |------|-----|------|
 | `approxTokens` undercounted Thai (and other no-space scripts outside the CJK ranges) and emoji runs | The estimate is the largest of ceil(UTF-8 bytes / 3), the character count and the piece count, inside `approxTokens`, so the brief budget and the per-file injection budget both use it. Spec §4.6 token measurement updated. No existing budget test changed its expected content | `TestApproxTokensAtLeastBytesOverThree` |
 | `340b6be` removed the only assertion that a stack-wide lesson reaches the brief | Unit coverage restored: a recent stack-wide lesson is shown in date order, an old one is cut by the 5-lesson limit, one of another stack is never shown | `TestTaskLessonsNewestFirst` |
+
+## Vex round 3
+
+Vex returned SHIP on `a237f4b` with three fail-safe LOWs, accepted with docs (spec §16 rows 78, 82); no code change.
+
+| Item | Outcome |
+|------|---------|
+| The window tag compares `SHOAL_HOME` after `filepath.Clean` only (`internal/cli/project.go:51`, `internal/cli/start.go:773`) and tmux output is trimmed (`start.go:616`), so a home spelled differently (`/tmp/h` vs `/private/tmp/h`, a symlinked path) or ending in whitespace never matches: gc leaves the window open and forgets the record, `qa` only warns | Fails safe. Documented in row 78: spell the home the same way across commands |
+| A `SHOAL_HOME` ending in `;` makes `start` fail (tmux reads a trailing `;` argument as a command separator: `unknown command: -P`) | No injection, the arguments after it are fixed. Documented in row 78 |
+| The `homebrew-tap` concurrency group keeps only one pending job; with three or more tags close together a pending job can be cancelled, and if it was the newest the tap stays behind | Documented in row 82: re-run that job ("Re-run failed jobs" covers cancelled jobs) |
+
+INFO notes, no action:
+
+- `refuseRepeatedKeys` also refuses repeated group `hooks` keys in events shoal never edits. Safe but strict.
+- No test pins `qa`'s escalation to the task's recorded tmux socket, since the harness uses one socket.
