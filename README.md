@@ -19,7 +19,7 @@
 
 ## Status
 
-> **Pre-alpha, not yet released.** Phases 0 to 4 are built: `init`, `new`, `plan` (cross-task claims and the overlap prompt), `start` (with an attention watcher), `status`, `done`, the full `doctor`, the `shoal-*` agent team (`agents`, `msg`, `contract`, `claim`/`release`), the QA loop (`qa`), the scope matrix (`scope`), red/green proofs (`repro`), the `test` command, the zero-regression `merge` gate with its merge queue, and the memory: `record`, `why`, `recall`, `brief`, `flag-stale` and the injecting `SessionStart`, `PreToolUse` and `PostToolUse` hooks, conventions (`convention`), lesson promotion (`promote`) and the opt-in managed CLAUDE.md block. Everything else (`gc`, `export`, `uninstall`, releases) is **planned**; each feature and command below is marked, and the [Roadmap](#roadmap) gives the phase. [`docs/spec.md`](docs/spec.md) is the full design. Screenshots are mockups.
+> **Pre-alpha, not yet released.** Phases 0 to 4 are built: `init`, `new`, `plan` (cross-task claims and the overlap prompt), `start` (with an attention watcher), `status`, `done`, the full `doctor`, the `shoal-*` agent team (`agents`, `msg`, `contract`, `claim`/`release`), the QA loop (`qa`), the scope matrix (`scope`), red/green proofs (`repro`), the `test` command, the zero-regression `merge` gate with its merge queue, and the memory: `record`, `why`, `recall`, `brief`, `flag-stale` and the injecting `SessionStart`, `PreToolUse` and `PostToolUse` hooks, conventions (`convention`), lesson promotion (`promote`) and the opt-in managed CLAUDE.md block. Phase 5 is built too: `gc`, `export`, `purge`, `uninstall`, `version`, and the release pipeline (cross-compiled archives, checksums, a Homebrew formula), but no version has been tagged or published yet, so install from source for now. Each feature and command below is marked, and the [Roadmap](#roadmap) gives the phase. [`docs/spec.md`](docs/spec.md) is the full design. Screenshots are mockups.
 
 ## What is shoal
 
@@ -62,7 +62,7 @@ Each item says whether it is built or planned. See [Roadmap](#roadmap) for the p
 
 ## Screenshots
 
-> Mockups of the intended design. `status`, the task report and the overlap prompt exist with plainer output; `shoalctl why` is planned.
+> Mockups of the intended design. `status`, the task report, the overlap prompt and `shoalctl why` exist with plainer output.
 
 | | |
 |---|---|
@@ -73,12 +73,29 @@ Each item says whether it is built or planned. See [Roadmap](#roadmap) for the p
 
 ## Quick start
 
-Install from source (there are no releases yet):
+### Install
+
+No version is published yet: until the first tag, only `go install` works. The other two are how releases will install.
 
 ```sh
-go install github.com/kennethsolomon/shoalctl/cmd/shoalctl@latest   # needs Go 1.27+
-# Homebrew tap and release binaries: planned (Phase 5)
+# From source (works today; needs Go 1.27+)
+go install github.com/kennethsolomon/shoalctl/cmd/shoalctl@latest
+
+# Homebrew (macOS, Linux), once a release is published
+brew install kennethsolomon/tap/shoalctl
+
+# Release archive: darwin, linux or windows; amd64 or arm64
+VERSION=0.1.0 OS=darwin ARCH=arm64
+curl -LO https://github.com/kennethsolomon/shoalctl/releases/download/v$VERSION/shoalctl_${VERSION}_${OS}_${ARCH}.tar.gz
+curl -LO https://github.com/kennethsolomon/shoalctl/releases/download/v$VERSION/checksums.txt
+shasum -a 256 --check --ignore-missing checksums.txt    # Linux: sha256sum --check --ignore-missing checksums.txt
+tar -xzf shoalctl_${VERSION}_${OS}_${ARCH}.tar.gz shoalctl && sudo mv shoalctl /usr/local/bin/
+shoalctl version
 ```
+
+Windows archives are `.zip` (`Get-FileHash shoalctl_<version>_windows_amd64.zip -Algorithm SHA256`, then compare with `checksums.txt`). Each archive holds only the `shoalctl` binary, `LICENSE` and `README.md`; the release fails if any `.db` file or `reports/` path would ship. Hooks call the binary by the absolute path `init` saw, so after moving or upgrading it run `shoalctl init` again (or `shoalctl doctor --fix`).
+
+### Use
 
 The flow (these commands are built):
 
@@ -95,6 +112,15 @@ shoalctl qa 1           # one QA round: contract, suite vs baseline, lint, build
 shoalctl done 1         # final run; refuses without a red/green proof, with open scope rows, or over the hotfix budget
 shoalctl merge          # gate + fast-forward of every queued task, in order; never pushes
 shoalctl doctor         # check hooks, DB, stuck tasks and runs, worktrees, windows, claims; --fix repairs what is safe
+shoalctl gc             # close merged tasks' windows, remove their worktrees and working rows (summaries and records stay)
+```
+
+Leaving a project (offboarding):
+
+```sh
+shoalctl uninstall                         # removes shoal's hook entries, the CLAUDE.md block, unedited shoal-* agents; nothing else
+shoalctl export <project-id> --out shoal-export.json   # every record and report as JSON (the id is what init printed)
+shoalctl purge <project-id>                # human only: asks you to type the id, then deletes ~/.shoal/projects/<id>/
 ```
 
 Once per machine, `shoalctl agents install` puts the `shoal-*` agent definitions in `~/.claude/agents/` (or the repo's `.claude/agents/` with `--commit`). Planning is optional: `start` also runs a task straight from `new`.
@@ -152,7 +178,7 @@ shoal never rewrites your `CLAUDE.md`.
 
 - **Rule text is inert.** Agents write rule and lesson text, and `context.md` is loaded as instructions, so each rule is written inside a code span with any word-initial `@` (an import) and `<!--`/`-->` (an HTML comment) broken up: a rule can never import a file or hide the rules after it.
 - **Your rules win.** When a proposed convention or a lesson promotion contradicts a line of `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` or `.claude/rules/`, shoal records it as a proposal with the conflict for discussion instead of overriding the rule; `init` re-checks what is already agreed. The check is a cheap word-overlap and negation heuristic, not an LLM: it catches "No tabs" and "spaces, not tabs" against "Use tabs", but misses paraphrases, synonyms, "prefer A over B" and nested `CLAUDE.md` files in subdirectories, and can flag unrelated lines that share words, including a one-word negation such as "No globals" against "Read globals from config" (an accepted false positive: `convention agree --force` then overrides the flag). A fence opened right after a list marker (`` - ``` ``, `` 1. ```md ``) is tracked; code fences inside a blockquote (`` > ``` ``), after a nested list marker (`` - - ``` ``), or nested in a list item by 4+ spaces are not, so a quoted or nested code line can be read as a rule and give a false conflict; `--force` covers it too. A `<!-- shoal:begin -->` with no matching end hides nothing: the rules after it are still read. Rules compare case-insensitively with whitespace and trailing sentence punctuation (`. ! ? , ; :` and `。`) ignored, so a retired rule cannot come back with a period added; `Use C#` and `Use C` stay different rules. Fullwidth `！ ？` and `…` are kept, so `Rule！` and `Rule` are different rules (a documented limit). `promote` checks for a conflict before it asks, and with one asks only whether to record it as a proposal. Details in spec section 5.3.
-- **Hooks are merged.** shoal adds its four entries to `.claude/settings.local.json` and leaves every other byte of the file as it was; your own hooks stay. `shoalctl uninstall` (planned) removes only shoal's entries and block.
+- **Hooks are merged.** shoal adds its four entries to `.claude/settings.local.json` and leaves every other byte of the file as it was; your own hooks stay. `shoalctl uninstall` removes only shoal's entries (any command whose program is `shoalctl` and whose first argument is `hook`), the block's markers and the lines between them, and the `shoal-*` agent definitions nobody edited (the user-level ones only once no other shoal project is registered). A settings file or `CLAUDE.md` that shoal created and that holds nothing else is deleted; one you had comes back byte for byte. Nothing else changes: the project's data stays in `~/.shoal/` for `export` and `purge`, the lines in `.git/info/exclude` stay, and so do task branches.
 - **init refuses before changing anything** when `.claude/settings.local.json` is tracked by git, when it or the `.claude` directory is a symlink (the target may be tracked), or when the committed `.claude/settings.json` already registers shoalctl hooks. The error says how to fix it.
 - **Hooks fail open.** A shoal hook never blocks or breaks a Claude session. The whole hook process, logging included, finishes within 2 seconds, prints nothing but its JSON answer (and nothing at all on a failure), and logs failures to `~/.shoal/logs/hooks.log`; `shoalctl status` warns when that log has new lines. The binary path is quoted for the shell that runs it (bash on macOS/Linux, PowerShell on Windows), and the command maps any exit status to 0 (`|| true`, `; exit 0`), so a crash or a moved binary cannot block a session. A hook registered twice (say, also in a worktree's own settings) still acts once: injections, claims, messages and the brief are recorded per session. Because failures are silent, run `shoalctl doctor` after moving the binary, and `shoalctl doctor --fix` to re-point stale hook paths.
 
@@ -251,9 +277,11 @@ deny_globs = [".env*"]
 | `shoalctl convention propose [<task>] --rule "<r>" --scope <glob>` | Propose a rule from now on; the next session opens with a brainstorm about its scope and exceptions | Built |
 | `shoalctl convention agree\|retire <id> ...` / `convention list [--all]` | The human agrees (rule injected for files in scope, written to `context.md`) or retires it, keeping why | Built |
 | `shoalctl promote lesson:<id>` | The human approves a lesson that recurred in 3 tasks as a project rule; its per-file injection stops | Built |
-| `shoalctl gc` | Clean up merged worktrees and windows | Planned (Phase 5) |
-| `shoalctl export` / `shoalctl purge` | Offboard a project's data | Planned (Phase 5) |
-| `shoalctl uninstall` | Remove shoal's hooks and CLAUDE.md block only | Planned (Phase 5) |
+| `shoalctl gc` | For merged and folded tasks: close the tmux window, remove the worktree (one with changes is kept, exit 5), drop the working rows (messages, claims, hook marks, queue row) keeping the summary and records; flag stale every record whose files are all gone from the base branch. Branches are kept | Built |
+| `shoalctl export <project-id> [--out <file>]` | Every table of `memory.db` and every report as one JSON document; `--out` writes a new 0600 file, never overwrites | Built |
+| `shoalctl purge <project-id>` | Human only: type the id to delete `~/.shoal/projects/<id>/`; refused while task worktrees exist or another shoalctl holds the project's locks. Does not touch the repo | Built |
+| `shoalctl uninstall` | Remove shoal's hook entries, the managed CLAUDE.md block and unedited `shoal-*` agent definitions; nothing else | Built |
+| `shoalctl version` | Version, commit and build date (release builds inject them; `go install` shows the module version) | Built |
 
 ## Exit codes
 
@@ -263,8 +291,8 @@ deny_globs = [".env*"]
 | 1 | Internal error |
 | 2 | Usage error |
 | 3 | Config error (not a git repo, invalid config, unsafe settings file, DB newer than the binary) |
-| 4 | Not found (unknown task) |
-| 5 | Invalid state (wrong stage, a `blocked` task at `start`, an overlap at `plan` with no human at a terminal, uncommitted changes, no commits) |
+| 4 | Not found (unknown task, unknown project id at `export`/`purge`) |
+| 5 | Invalid state (wrong stage, a `blocked` task at `start`, an overlap at `plan` with no human at a terminal, uncommitted changes, no commits, a worktree `gc` kept, an unconfirmed `purge`) |
 | 6 | Baseline could not be recorded |
 | 7 | Missing dependency (`git`, `tmux`, `claude`) |
 | 8 | Busy (lock held, or an earlier run may still be alive) |
@@ -292,7 +320,7 @@ deny_globs = [".env*"]
 | 2: Claims + queue | Cross-task file claims, overlap prompt, merge queue, full `doctor`, attention watcher | **Built** (not yet released) |
 | 3: Memory + hooks | Lessons, decisions, bugs, FTS5, injecting hooks, `why`, `recall` | **Built** (not yet released) |
 | 4: Conventions | Convention lifecycle, lesson promotion, managed CLAUDE.md block, conflict check | **Built** (not yet released) |
-| 5: Publish | `export`/`purge`/`uninstall`, releases, Homebrew tap | Planned |
+| 5: Publish | `export`/`purge`/`uninstall`, `gc`, `version`, release pipeline (GoReleaser, release guard, FTS5 on every target), Homebrew formula | **Built** (no version tagged or published yet) |
 
 ## Contributing
 
