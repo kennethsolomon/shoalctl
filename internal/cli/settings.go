@@ -576,9 +576,19 @@ func removeHooks(data []byte, keepHooks bool) ([]byte, int, error) {
 	if !ok {
 		return data, 0, nil
 	}
+	// A JSON parser keeps only the last of repeated keys, and removing by
+	// name would drop them all, the user's entries included.
+	if countKey(data, topValue(data), "hooks") > 1 {
+		return nil, 0, fmt.Errorf(`the top-level key "hooks" appears more than once`)
+	}
 	var events map[string]json.RawMessage
 	if json.Unmarshal(rawHooks, &events) != nil || events == nil {
 		return data, 0, nil
+	}
+	for event := range events {
+		if countKey(data, hooksObject(data), event) > 1 {
+			return nil, 0, fmt.Errorf(`the key "hooks.%s" appears more than once`, event)
+		}
 	}
 	doc, removed := data, 0
 	for event, raw := range events {

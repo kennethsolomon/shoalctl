@@ -94,6 +94,17 @@ func arrayElements(b []byte, arr span) []span {
 }
 
 // member finds key in an object. Like encoding/json, the last duplicate wins.
+// countKey counts the members of the object obj named key.
+func countKey(b []byte, obj span, key string) int {
+	n := 0
+	for _, m := range objectMembers(b, obj) {
+		if m.key == key {
+			n++
+		}
+	}
+	return n
+}
+
 func member(b []byte, obj span, key string) (jsonMember, bool) {
 	var found jsonMember
 	ok := false
