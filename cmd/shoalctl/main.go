@@ -5,10 +5,18 @@ import (
 	"io"
 	"os"
 
+	"github.com/kennethsolomon/shoalctl/internal/buildinfo"
 	"github.com/kennethsolomon/shoalctl/internal/cli"
 )
 
-var version = "0.0.0-dev"
+// Set by release builds: -ldflags "-X main.version=... -X main.commit=...
+// -X main.date=...". A go install or go build leaves them "dev", and
+// buildinfo fills in what the toolchain recorded.
+var (
+	version = buildinfo.Unknown
+	commit  = buildinfo.Unknown
+	date    = buildinfo.Unknown
+)
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "hook" {
@@ -22,5 +30,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "shoalctl: %v\n", err)
 		os.Exit(cli.ExitInternal)
 	}
-	os.Exit(cli.Main(os.Args[1:], env, version))
+	os.Exit(cli.Main(os.Args[1:], env, buildinfo.Current(version, commit, date).String()))
 }
