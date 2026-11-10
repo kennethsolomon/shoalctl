@@ -355,8 +355,14 @@ func TestRunCancelStopsProcessGroup(t *testing.T) {
 				t.Fatal("OnStart was not called with the suite pid")
 			}
 			pidsGone(t, 2*time.Second, filepath.Join(dir, "sh.pid"), filepath.Join(dir, "child.pid"))
-			if GroupAlive(started) {
-				t.Fatalf("process group %d still alive", started)
+			// Run SIGKILLs the whole group once the suite exits, but members such
+			// as the inner sleep can take a moment to die and be reaped.
+			deadline := time.Now().Add(2 * time.Second)
+			for GroupAlive(started) {
+				if time.Now().After(deadline) {
+					t.Fatalf("process group %d still alive", started)
+				}
+				time.Sleep(50 * time.Millisecond)
 			}
 		})
 	}
