@@ -380,7 +380,7 @@ The baseline runs in a clean worktree that does not have them.
 | `shoalctl merge [--task <task> [--accept-regression <t> --reason "<r>"]...]` | Merge done tasks oldest first through the gate, under `merge.lock` (only `<task>` with `--task`, which `--accept-regression` requires); never pushes | Built |
 | `shoalctl test <task> [--kind gate\|qa\|baseline]` | Run the suite in the worktree (a baseline: in a clean scratch worktree at the base commit) and compare with the baseline | Built |
 | `shoalctl test quarantine list\|release <test>` | Show or release quarantined flaky tests | Built |
-| `shoalctl repro red\|green <task> --test <id>` | Record the red, then green, run of a regression test (bugfix, hotfix) | Built |
+| `shoalctl repro red <task> --test <id> --file <path>` / `repro green <task> --test <id>` | Record the red, then green, run of a regression test (bugfix, hotfix). `<id>` is the id the report gives the test: `package::Test` (go-json), `classname::name` (junit); `--file` is the committed test file, red only | Built |
 | `shoalctl scope add\|case\|show\|review\|check <task> ...` | Scope items, the case matrix, human waivers and manual checks | Built |
 | `shoalctl agents install [--commit]` / `agents list` | Install the `shoal-*` agent definitions | Built |
 | `shoalctl contract freeze <task>` | Freeze `contract.md`; later changes need a new version and a note | Built |
