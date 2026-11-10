@@ -164,6 +164,7 @@ shoalctl done 1         # final run; refuses without a red/green proof, with ope
 shoalctl merge          # gate + fast-forward of every queued task, in order; never pushes
 shoalctl doctor         # check hooks, DB, stuck tasks and runs, worktrees, windows, claims; --fix repairs what is safe
 shoalctl gc             # close merged tasks' windows, remove their worktrees and working rows (summaries and records stay)
+shoalctl abandon 1 --reason "made by mistake"   # human only, asks y/N: give up on a task that has not merged
 ```
 
 Leaving a project (offboarding):
@@ -235,7 +236,7 @@ Details in [spec section 5](docs/spec.md#5-installing-into-a-project-that-alread
 
 ### Human-only commands
 
-`scope review`, `scope check`, `merge --accept-regression`, overlap answers in `plan`, `convention agree`/`retire` and `promote` refuse unless stdin and stdout are both real terminals (`/dev/null` or a pipe is refused) and the process is not inside a Claude Code session (`CLAUDECODE` or `CLAUDE_CODE_ENTRYPOINT` set): run them yourself in your own terminal. This stops an agent that runs them as they are; it is not a sandbox. A pty wrapper such as `script(1)` can fake a terminal, and an agent can unset the variables, so treat it as a guard rail against honest mistakes (an accepted residual, spec §16 row 69).
+`scope review`, `scope check`, `merge --accept-regression`, overlap answers in `plan`, `convention agree`/`retire`, `promote`, `purge` and `abandon` refuse unless stdin and stdout are both real terminals (`/dev/null` or a pipe is refused) and the process is not inside a Claude Code session (`CLAUDECODE` or `CLAUDE_CODE_ENTRYPOINT` set): run them yourself in your own terminal. This stops an agent that runs them as they are; it is not a sandbox. A pty wrapper such as `script(1)` can fake a terminal, and an agent can unset the variables, so treat it as a guard rail against honest mistakes (an accepted residual, spec §16 row 69).
 
 ## Running tasks safely
 
@@ -352,7 +353,7 @@ The baseline runs in a clean worktree that does not have them.
 | `shoalctl new <feature\|bugfix\|hotfix> "<title>"` | Create a task | Built |
 | `shoalctl plan <task> [--todo <file>] <glob>...` | Expected file claims and `todo.md` before start; one-keypress overlap prompt (`s`/`m`/`p`/`?`) | Built |
 | `shoalctl start <task> [--model <m>]` | Branch + worktree + baseline test run + tmux window + `claude` + attention watcher; refuses a `blocked` task | Built |
-| `shoalctl status [--json]` | Board of all tasks; NOTE shows needs-attention, blocked-by, queue position, claims | Built |
+| `shoalctl status [--json] [--all]` | Board of tasks; NOTE shows needs-attention, blocked-by, queue position, claims. Abandoned tasks and ones closed over 14 days ago show only with `--all` | Built |
 | `shoalctl done <task> [--force] [--accept-large-diff --reason "<r>"]` | Final test run, proof/scope/contract/budget checks, summary and report; a hotfix creates its backport task | Built |
 | `shoalctl qa <task>` | One QA round: contract hash, suite vs baseline, lint, build. 3 rounds, then escalated | Built |
 | `shoalctl merge [--task <task> [--accept-regression <t> --reason "<r>"]...]` | Merge done tasks oldest first through the gate, under `merge.lock` (only `<task>` with `--task`, which `--accept-regression` requires); never pushes | Built |
@@ -374,7 +375,8 @@ The baseline runs in a clean worktree that does not have them.
 | `shoalctl convention propose [<task>] --rule "<r>" --scope <glob>` | Propose a rule from now on; the next session opens with a brainstorm about its scope and exceptions | Built |
 | `shoalctl convention agree\|retire <id> ...` / `convention list [--all]` | The human agrees (rule injected for files in scope, written to `context.md`) or retires it, keeping why | Built |
 | `shoalctl promote lesson:<id>` | The human approves a lesson that recurred in 3 tasks as a project rule; its per-file injection stops | Built |
-| `shoalctl gc` | For merged and folded tasks: close the tmux window (only one tagged as the task's), remove the worktree (one with changes is kept, exit 5; git-ignored files such as `.env` go with it), drop the working rows (messages, claims, hook marks, queue row) keeping the summary and records; flag stale every record whose files are all gone from the base branch. Branches are kept | Built |
+| `shoalctl abandon <task> [--reason "<r>"] [--force]` | Human only, asks y/N naming the task: give up on a task that has not merged. Releases its claims, queue place and waiting tasks, closes its window, removes its worktree (one with changes is refused, exit 5, unless `--force`); the branch, summary and records stay | Built |
+| `shoalctl gc` | For merged, folded and abandoned tasks: close the tmux window (only one tagged as the task's), remove the worktree (one with changes is kept, exit 5; git-ignored files such as `.env` go with it), drop the working rows (messages, claims, hook marks, queue row) keeping the summary and records; flag stale every record whose files are all gone from the base branch. Branches are kept | Built |
 | `shoalctl export <project-id> [--out <file>]` | Every table of `memory.db` and every report as one JSON document; `--out` writes a new 0600 file, never overwrites | Built |
 | `shoalctl purge <project-id>` | Human only: type the id to delete `~/.shoal/projects/<id>/`; refused while task worktrees exist or another shoalctl holds the project's locks. Does not touch the repo | Built |
 | `shoalctl uninstall` | Remove shoal's hook entries, the managed CLAUDE.md block and unedited `shoal-*` agent definitions; nothing else | Built |
@@ -390,7 +392,7 @@ The baseline runs in a clean worktree that does not have them.
 | 2 | Usage error |
 | 3 | Config error (not a git repo, invalid config, unsafe settings file, DB newer than the binary) |
 | 4 | Not found (unknown task, unknown project id at `export`/`purge`) |
-| 5 | Invalid state (wrong stage, a `blocked` task at `start`, an overlap at `plan` with no human at a terminal, uncommitted changes, no commits, a worktree `gc` kept, an unconfirmed `purge`) |
+| 5 | Invalid state (wrong stage, a `blocked` task at `start`, an overlap at `plan` with no human at a terminal, uncommitted changes, no commits, a worktree `gc` kept, an unconfirmed `purge` or `abandon`, a merged task at `abandon`) |
 | 6 | Baseline could not be recorded |
 | 7 | Missing dependency (`git`, `tmux`, `claude`) |
 | 8 | Busy (lock held, or an earlier run may still be alive) |

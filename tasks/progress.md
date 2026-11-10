@@ -505,3 +505,18 @@ Base: `816a52b`. A manual beside the flat `--help` for a reader who wants the ne
 | Drift: commands, subcommands and flags the guide names exist in the usage; every topic file listed and resolving | `internal/cli/guide_test.go` | `TestGuideNamesOnlyCommandsSubcommandsAndFlagsInUsage`, `TestGuideCheatSheetListsEveryTopicFile`; a planted unknown command, subcommand, flag, topic and an 85-column line each failed |
 | Drift: README setup and tests sections are the guide files | README between `<!-- guide:setup -->` / `<!-- guide:tests -->` markers | `TestREADMEQuotesSetupAndTestsVerbatimBetweenMarkers` |
 | Docs | README Quick start line and Commands row, spec §4.4 row and §16 row 83 | - |
+
+## shoalctl abandon (spec §16 row 84)
+
+Base: `8dc1e63`. A task made by mistake (`shoalctl new bugfix "sample task"`) could not be closed: there was no command to abandon a task. Nothing pushed; the local `v0.1.0` tag was not touched.
+
+| Item | Where | Proof |
+|------|-------|-------|
+| Stage `abandoned` with `abandoned_by`, `abandoned_at`, `abandon_reason` (migration 0008; `stage` has no CHECK) | `internal/store/migrations/0008_abandon.sql`, `internal/store/tasks.go` | store migration tests (count, checksums, `user_version`) |
+| One transaction: mark, release claims, drop queue row and own waits, refresh waiting tasks | `Store.AbandonTask`, `internal/store/phase2.go` | `TestAbandonReleasesWaitingTasks`, `TestAbandonQAAndQueuedTasks` |
+| Human only, y/N naming number, slug, title; default No | `internal/cli/abandon.go` (`requireHuman`, `confirm`) | `TestAbandonRefusals` |
+| Checks before changes: merged / already abandoned refused (exit 5); gc's dirty check refuses (exit 5) unless `--force` | `cmdAbandon`, `dirtyWorktree` shared with gc | `TestAbandonMergedRefused`, `TestAbandonNeverStartedTask`, `TestAbandonDirtyWorktree` |
+| gc's cleanup reused under the held lock: window, worktree (`--force`), working rows; waits for the watcher's lock | `collector.collect` split out of `collector.task`, `watcherStopped` | `TestAbandonStartedTask`, `TestAbandonWaitsForTheWatcher` |
+| Abandoned counts as closed: claim conflicts, folding, msg/claim/scope, gc, doctor windows | `closedStages`, `closedOwnerStages`, `unfoldable`, `DropWorkingRows` | `TestAbandonStartedTask` (gc nothing to collect, doctor ok) |
+| `status` hides abandoned; `--all` shows every task with who and why | `internal/cli/status.go` | `TestAbandonNeverStartedTask` |
+| Docs | guide index and flow, README Use, Commands, human-only list, exit 5; spec §4.4, §4.5, §6, §10.4, §16 row 84 | guide tests |
