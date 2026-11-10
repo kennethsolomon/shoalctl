@@ -217,6 +217,8 @@ commands:
   promote lesson:<id>      human only: a lesson shown in 3 tasks becomes a project rule (context.md)
   doctor [--fix]      check shoal's state; --fix repairs what is safe (exit 11 while a problem remains)
   watch <task>        internal: the attention watcher start launches
+  export <project-id> [--out <file>]   every record and report of a project, as JSON
+  purge <project-id>  human only: delete the project's data under $SHOAL_HOME (asks for the id)
   uninstall           remove shoal's hook entries, the CLAUDE.md block and unedited shoal-* agents; nothing else
   version
 `
@@ -295,6 +297,10 @@ func Main(args []string, env Env, version string) int {
 		err = env.cmdPromote(ctx, args[1:])
 	case "uninstall":
 		err = env.cmdUninstall(ctx, args[1:])
+	case "export":
+		err = env.cmdExport(ctx, args[1:])
+	case "purge":
+		err = env.cmdPurge(ctx, args[1:])
 	case "help", "-h", "--help":
 		fmt.Fprint(env.Stdout, usage)
 	default:
