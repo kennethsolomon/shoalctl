@@ -116,20 +116,16 @@ func (g *collector) window(ctx context.Context, t store.Task) error {
 		g.left = append(g.left, fmt.Sprintf("the window %s of %s%s cannot be checked: %s", t.TmuxWindow, t.Slug, socketNote(t.TmuxSocket), g.wins.why(t)))
 		return nil
 	}
-	e := g.env
-	if t.TmuxSocket != "" {
-		e.TmuxArgs = []string{"-S", t.TmuxSocket}
-	}
+	e := g.env.taskTmux(t)
 	ours := false
 	if alive {
 		// tmux reuses window ids after a restart: close the window only
 		// when it carries this task's tag.
-		tag, err := e.tmux(ctx, "show-options", "-w", "-q", "-v", "-t", t.TmuxWindow, "@shoal_task")
-		if err != nil {
+		var err error
+		if ours, err = e.isTaskWindow(ctx, g.p, t); err != nil {
 			g.left = append(g.left, fmt.Sprintf("the window %s of %s%s cannot be checked: %v", t.TmuxWindow, t.Slug, socketNote(t.TmuxSocket), err))
 			return nil
 		}
-		ours = tag == windowTag(g.p.id, t.Slug)
 	}
 	if ours {
 		if _, err := e.tmux(ctx, "kill-window", "-t", t.TmuxWindow); err != nil {

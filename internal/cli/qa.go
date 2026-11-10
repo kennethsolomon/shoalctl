@@ -204,10 +204,21 @@ func (env Env) rebaseForQA(ctx context.Context, p *project, t store.Task) (store
 }
 
 // escalate marks the tmux window and writes the escalation report (§6.4).
+// tmux reuses window ids after a server restart, so the window is renamed
+// only when it carries the task's tag; otherwise it is left as it was.
 func (env Env) escalate(ctx context.Context, p *project, t store.Task, failures []string) error {
 	if t.TmuxWindow != "" {
-		if _, err := env.tmux(ctx, "rename-window", "-t", t.TmuxWindow, "!"+t.Slug); err != nil {
-			fmt.Fprintf(env.Stderr, "warning: could not rename tmux window %s: %v\n", t.TmuxWindow, err)
+		e := env.taskTmux(t)
+		ours, err := e.isTaskWindow(ctx, p, t)
+		switch {
+		case err != nil:
+			fmt.Fprintf(env.Stderr, "warning: left tmux window %s as it was: could not read its tag: %v\n", t.TmuxWindow, err)
+		case !ours:
+			fmt.Fprintf(env.Stderr, "warning: left tmux window %s as it was: it is not tagged as %s's window (tmux reuses window ids, or the task predates tags)\n", t.TmuxWindow, t.Slug)
+		default:
+			if _, err := e.tmux(ctx, "rename-window", "-t", t.TmuxWindow, "!"+t.Slug); err != nil {
+				fmt.Fprintf(env.Stderr, "warning: could not rename tmux window %s: %v\n", t.TmuxWindow, err)
+			}
 		}
 	}
 	rounds, err := p.db.QARounds(ctx, t.ID)

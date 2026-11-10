@@ -768,3 +768,21 @@ summary.json:
 // task's window. tmux reuses window ids after a server restart, so gc closes
 // a recorded window only when it still carries this tag.
 func windowTag(projectID, slug string) string { return projectID + "/" + slug }
+
+// taskTmux is env talking to the tmux server start recorded for t.
+func (env Env) taskTmux(t store.Task) Env {
+	if t.TmuxSocket != "" {
+		env.TmuxArgs = []string{"-S", t.TmuxSocket}
+	}
+	return env
+}
+
+// isTaskWindow reports whether t's recorded window carries t's tag. env must
+// talk to t's server (taskTmux); an error means the window could not be read.
+func (env Env) isTaskWindow(ctx context.Context, p *project, t store.Task) (bool, error) {
+	tag, err := env.tmux(ctx, "show-options", "-w", "-q", "-v", "-t", t.TmuxWindow, "@shoal_task")
+	if err != nil {
+		return false, err
+	}
+	return tag == windowTag(p.id, t.Slug), nil
+}
