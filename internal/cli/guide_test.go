@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -236,5 +237,140 @@ func TestGuideQuickFlowQuotesTheOpeningWordsStartSendsClaude(t *testing.T) {
 	opening, _, _ := strings.Cut(sessionPrompt, ". ")
 	if !strings.Contains(quick, "\""+opening+"...\"") {
 		t.Errorf("quick.md does not quote the opening words %q of the prompt start sends claude:\n%s", opening, quick)
+	}
+}
+
+// guideCommandLines are the shoalctl command lines of a guide text, joined
+// over trailing-backslash continuations: the words after "shoalctl" up to
+// the two-space gap of a description or the end of the line, split as a
+// shell would. A prose mention ("runs shoalctl repro red, fixes") is a word
+// ending in punctuation outside quotes, and is left out.
+func guideCommandLines(text string) [][]string {
+	var cmds [][]string
+	lines := strings.Split(text, "\n")
+	for i := 0; i < len(lines); i++ {
+		_, rest, ok := strings.Cut(lines[i], "shoalctl ")
+		for ok && strings.HasSuffix(rest, " \\") && i+1 < len(lines) {
+			i++
+			rest = strings.TrimSuffix(rest, "\\") + strings.TrimSpace(lines[i])
+		}
+		for ok {
+			words, mention, tail := shellWords(rest)
+			if !mention && len(words) > 0 {
+				cmds = append(cmds, words)
+			}
+			_, rest, ok = strings.Cut(tail, "shoalctl ")
+		}
+	}
+	return cmds
+}
+
+// shellWords splits s into words until two spaces outside quotes or the
+// end, and returns the rest. mention is true, and the split stops, at an
+// unquoted word ending in punctuation. [ and ] around optional flags and a trailing "..." of a
+// repeatable argument are dropped.
+func shellWords(s string) (words []string, mention bool, rest string) {
+	var word strings.Builder
+	inWord, quote, closedQuote := false, rune(0), false
+	end := func() {
+		w := strings.Trim(word.String(), "[]")
+		if !closedQuote {
+			if trimmed, ok := strings.CutSuffix(w, "..."); ok {
+				w = trimmed
+			} else if w != "" && strings.ContainsRune(",.;:)", rune(w[len(w)-1])) {
+				mention = true
+			}
+		}
+		if inWord && w != "" {
+			words = append(words, w)
+		}
+		word.Reset()
+		inWord, closedQuote = false, false
+	}
+	for i, r := range s {
+		switch {
+		case quote != 0 && r == quote:
+			quote, closedQuote = 0, true
+		case quote != 0:
+			word.WriteRune(r)
+		case r == '"' || r == '\'':
+			quote, inWord = r, true
+		case r == ' ':
+			if strings.HasPrefix(s[i:], "  ") {
+				end()
+				return words, mention, s[i:]
+			}
+			if end(); mention {
+				return words, true, s[i:]
+			}
+		default:
+			word.WriteRune(r)
+			inWord, closedQuote = true, false
+		}
+	}
+	end()
+	return words, mention, ""
+}
+
+// guidePlaceholder fills a <placeholder>: task, number and id refs name a
+// task or record that does not exist, the rest a plain word.
+var guidePlaceholder = regexp.MustCompile(`<[^>]*>`)
+
+func fillGuideWord(w string) string {
+	if regexp.MustCompile(`^[0-9]+$`).MatchString(w) {
+		return "999"
+	}
+	return guidePlaceholder.ReplaceAllStringFunc(w, func(p string) string {
+		switch p {
+		case "<task>", "<n>", "<id>":
+			return "999"
+		case "<sha>":
+			return "0123abc"
+		}
+		return "x"
+	})
+}
+
+// TestGuideCommandLinesPassTheirCommandsArgumentParsing runs every command
+// line of the guide through the real command, in an initialized repo where
+// the tasks and records the lines name do not exist: a missing required
+// flag or a bad combination is a usage error (exit 2) before any lookup.
+func TestGuideCommandLinesPassTheirCommandsArgumentParsing(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.mustRun("init")
+	h.asHuman()
+	h.answers = "n\n"
+	n := 0
+	for file, text := range guideTexts(t) {
+		for _, words := range guideCommandLines(text) {
+			args := make([]string, len(words))
+			for i, w := range words {
+				args[i] = fillGuideWord(w)
+			}
+			if args[0] == "guide" {
+				continue
+			}
+			n++
+			code, _, errOut := h.run(args...)
+			if code == ExitUsage {
+				t.Errorf("%s.md: shoalctl %s is a usage error: %s", file, strings.Join(words, " "), errOut)
+			}
+		}
+	}
+	if n < 30 {
+		t.Errorf("checked only %d guide command lines; the extraction broke", n)
+	}
+}
+
+func TestGuideCommandLinesJoinContinuationsAndSkipProseMentions(t *testing.T) {
+	t.Parallel()
+	text := "1. shoalctl new bugfix \"a b.\" \\\n     --details 'c'   prints\n" +
+		"runs shoalctl repro red, then (shoalctl status: x) shoalctl gc\n" +
+		"  shoalctl plan <task> <glob>...   files [shoalctl record qa 1 [--file <p>]]\n"
+	got := fmt.Sprint(guideCommandLines(text))
+	want := "[[new bugfix a b. --details c] [gc] [plan <task> <glob>] [record qa 1 --file <p>]]"
+	if got != want {
+		t.Errorf("guideCommandLines = %s, want %s", got, want)
 	}
 }
