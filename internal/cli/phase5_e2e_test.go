@@ -10,6 +10,72 @@ import (
 	"github.com/kennethsolomon/shoalctl/internal/testutil"
 )
 
+// Phase 5 acceptance (spec §15, "Done when"): installed on a project with
+// zero repo footprint. shoal is installed into a temp git repo in stealth
+// mode, a task runs its whole life (start in tmux with a fake claude, done,
+// merge, gc), and at every step git sees nothing of shoal: no tracked
+// change, no untracked or ignored file. The only change to tracked files is
+// the task's own merged commit. uninstall then leaves git's view of the repo
+// exactly as it was before init.
+func TestPhase5ZeroRepoFootprint(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t).withSession()
+	headBefore := testutil.Git(t, h.repo, "rev-parse", "HEAD")
+	before := testutil.Git(t, h.repo, "status", "--porcelain=v1", "--ignored", "--untracked-files=all")
+	clean := func(step string) {
+		t.Helper()
+		if st := testutil.Git(t, h.repo, "status", "--porcelain=v1", "--untracked-files=all"); st != "" {
+			t.Fatalf("after %s, git status --porcelain shows shoal: %q", step, st)
+		}
+	}
+	tracked := func(step, want string) {
+		t.Helper()
+		if got := testutil.Git(t, h.repo, "diff", "--name-only", headBefore, "HEAD"); got != want {
+			t.Fatalf("after %s, tracked files changed: %q, want %q", step, got, want)
+		}
+	}
+
+	h.initWith(junitConfig)
+	clean("init")
+	h.mustRun("agents", "install")
+	clean("agents install")
+	slug := strings.TrimSpace(h.mustRun("new", "feature", "Clients export"))
+	h.mustRun("plan", slug, "feature.txt")
+	h.mustRun("start", slug)
+	task := h.task(slug)
+	clean("start")
+	h.mustRun("msg", "send", task.Slug, "--from", "shoal-backend", "--to", "shoal-lead", "--kind", "handoff", "feature.txt done")
+	h.mustRun("record", "decision", task.Slug, "--topic", "export", "--choice", "stream", "--why", "memory", "--file", "feature.txt")
+	commitIn(t, task.Worktree, "feature.txt", "x")
+	clean("work in the task worktree")
+	tracked("work in the task worktree", "")
+	finish(t, h, task.Slug, task.Worktree)
+	clean("done")
+	tracked("done", "")
+	mustContain(t, "merge", h.mustRun("merge"), "merged "+task.Slug+" into main")
+	clean("merge")
+	tracked("merge", "feature.txt")
+	mustContain(t, "gc", h.mustRun("gc"), "removed "+task.Worktree)
+	clean("gc")
+	h.mustRun("status")
+	// The harness's shoalctl path does not exist, so doctor reports the hook
+	// entries (exit 11); it must still see the repo as shoal left it.
+	h.expectCode(ExitDoctor, "doctor")
+	clean("status and doctor")
+
+	h.mustRun("uninstall")
+	if got := testutil.Git(t, h.repo, "status", "--porcelain=v1", "--ignored", "--untracked-files=all"); got != before {
+		t.Fatalf("after uninstall git sees:\n%q\nbefore init it saw:\n%q", got, before)
+	}
+	tracked("uninstall", "feature.txt")
+	if fileExists(filepath.Join(h.repo, ".claude")) || fileExists(filepath.Join(h.repo, ".shoal")) || fileExists(filepath.Join(h.repo, ".shoal.toml")) {
+		t.Fatal("uninstall left shoal files in the repo")
+	}
+	if wts := testutil.Git(t, h.repo, "worktree", "list", "--porcelain"); strings.Count(wts, "worktree ") != 1 {
+		t.Fatalf("git still records task worktrees:\n%s", wts)
+	}
+}
+
 // gc after a merge: closes the window, removes the worktree (kept while it
 // holds an untracked file), drops the working rows but keeps the summary,
 // and flags a record whose files are gone.
