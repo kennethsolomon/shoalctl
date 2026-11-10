@@ -76,43 +76,19 @@ func markerText(l []byte, n int) string {
 // order is refused: shoal does not guess which lines it owns.
 func withManagedBlock(name string, data []byte, importLine string) ([]byte, bool, error) {
 	lines := splitLines(data)
-	var begins, ends []int
-	var fence fences
-	for i, l := range lines {
-		if fence.skip(l, i+1) {
-			continue
-		}
-		switch markerText(l, i+1) {
-		case blockBegin:
-			begins = append(begins, i)
-		case blockEnd:
-			ends = append(ends, i)
-		}
+	b, e, fence, err := findBlock(name, lines, "init")
+	if err != nil {
+		return nil, false, err
 	}
-	lineNums := func(idx []int) string {
-		var s []string
-		for _, i := range idx {
-			s = append(s, fmt.Sprint(i+1))
-		}
-		return strings.Join(s, ", ")
-	}
-	switch {
-	case len(begins) > 1 || len(ends) > 1:
-		return nil, false, fail(ExitConfig, "%s has more than one shoal block (%s on lines %s, %s on lines %s); keep exactly one and rerun shoalctl init",
-			name, blockBegin, lineNums(begins), blockEnd, lineNums(ends))
-	case len(begins) != len(ends):
-		return nil, false, fail(ExitConfig, "%s has an unpaired shoal marker (%s on lines [%s], %s on lines [%s]); fix or remove it and rerun shoalctl init",
-			name, blockBegin, lineNums(begins), blockEnd, lineNums(ends))
-	case len(begins) == 1 && ends[0] < begins[0]:
-		return nil, false, fail(ExitConfig, "%s has %s on line %d before %s on line %d; fix the markers and rerun shoalctl init",
-			name, blockEnd, ends[0]+1, blockBegin, begins[0]+1)
+	begins := []int{}
+	if b >= 0 {
+		begins = append(begins, b)
 	}
 	eol := "\n"
 	if bytes.Contains(data, []byte("\r\n")) {
 		eol = "\r\n"
 	}
 	if len(begins) == 1 {
-		b, e := begins[0], ends[0]
 		if e == b+2 && lineText(lines[b+1]) == importLine {
 			return data, false, nil
 		}
@@ -141,6 +117,75 @@ func withManagedBlock(name string, data []byte, importLine string) ([]byte, bool
 	out = append(out, blockBegin+eol+importLine+eol+blockEnd...)
 	if trailing {
 		out = append(out, eol...)
+	}
+	return out, true, nil
+}
+
+// findBlock locates the managed block in lines: the line indexes of its
+// column-0 begin and end markers outside code fences, or -1, -1 when there
+// is none, and the fence state at the end of the file. Duplicated, unpaired
+// or out-of-order markers are refused (exit 3); command names what to rerun.
+func findBlock(name string, lines [][]byte, command string) (int, int, fences, error) {
+	var begins, ends []int
+	var fence fences
+	for i, l := range lines {
+		if fence.skip(l, i+1) {
+			continue
+		}
+		switch markerText(l, i+1) {
+		case blockBegin:
+			begins = append(begins, i)
+		case blockEnd:
+			ends = append(ends, i)
+		}
+	}
+	lineNums := func(idx []int) string {
+		var s []string
+		for _, i := range idx {
+			s = append(s, fmt.Sprint(i+1))
+		}
+		return strings.Join(s, ", ")
+	}
+	switch {
+	case len(begins) > 1 || len(ends) > 1:
+		return 0, 0, fence, fail(ExitConfig, "%s has more than one shoal block (%s on lines %s, %s on lines %s); keep exactly one and rerun shoalctl %s",
+			name, blockBegin, lineNums(begins), blockEnd, lineNums(ends), command)
+	case len(begins) != len(ends):
+		return 0, 0, fence, fail(ExitConfig, "%s has an unpaired shoal marker (%s on lines [%s], %s on lines [%s]); fix or remove it and rerun shoalctl %s",
+			name, blockBegin, lineNums(begins), blockEnd, lineNums(ends), command)
+	case len(begins) == 1 && ends[0] < begins[0]:
+		return 0, 0, fence, fail(ExitConfig, "%s has %s on line %d before %s on line %d; fix the markers and rerun shoalctl %s",
+			name, blockEnd, ends[0]+1, blockBegin, begins[0]+1, command)
+	case len(begins) == 0:
+		return -1, -1, fence, nil
+	}
+	return begins[0], ends[0], fence, nil
+}
+
+// withoutManagedBlock returns data without the managed block: its markers
+// and the lines between them (§5.1), and whether there was one. When the
+// end marker is the last line with no newline after it, the line ending
+// before the begin marker goes too, since init added it to a file that did
+// not end with one; so data init changed comes back byte for byte. The
+// markers are found as withManagedBlock finds them, and malformed ones are
+// refused the same way (exit 3), with nothing changed.
+func withoutManagedBlock(name string, data []byte) ([]byte, bool, error) {
+	lines := splitLines(data)
+	b, e, _, err := findBlock(name, lines, "uninstall")
+	if err != nil || b < 0 {
+		return data, false, err
+	}
+	var out []byte
+	for _, l := range lines[:b] {
+		out = append(out, l...)
+	}
+	last := lines[e]
+	if e == len(lines)-1 && !bytes.HasSuffix(last, []byte("\n")) {
+		out = bytes.TrimSuffix(out, []byte("\n"))
+		out = bytes.TrimSuffix(out, []byte("\r"))
+	}
+	for _, l := range lines[e+1:] {
+		out = append(out, l...)
 	}
 	return out, true, nil
 }

@@ -170,6 +170,59 @@ func walk(dir, manifestPath string, write bool) ([]Entry, error) {
 	return out, nil
 }
 
+// Remove deletes the shipped definitions in dir that nobody changed: a file
+// whose SHA-256 is the one shoal recorded when it wrote it, or the shipped
+// file's own. An edited file, or one shoal did not write, is left alone and
+// reported. The manifest forgets every file it removes and any already gone.
+func Remove(dir, manifestPath string) ([]Entry, error) {
+	defs, err := Defs()
+	if err != nil {
+		return nil, err
+	}
+	m, err := readManifest(manifestPath)
+	if err != nil {
+		return nil, err
+	}
+	var out []Entry
+	changed := false
+	for _, d := range defs {
+		path := filepath.Join(dir, d.Name+".md")
+		cur, err := os.ReadFile(path)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			if _, ok := m.Files[path]; ok {
+				delete(m.Files, path)
+				changed = true
+			}
+			continue
+		case err != nil:
+			return nil, fmt.Errorf("read %s: %w", path, err)
+		}
+		e := Entry{Name: d.Name, Path: path, Status: StatusModified, Action: "left alone (edited since shoal wrote it, or not written by shoal)"}
+		if h := hash(cur); h == m.Files[path] || h == hash(d.Body) {
+			if err := os.Remove(path); err != nil {
+				return nil, fmt.Errorf("remove %s: %w", path, err)
+			}
+			e.Status, e.Action = StatusMissing, "removed"
+			if _, ok := m.Files[path]; ok {
+				delete(m.Files, path)
+				changed = true
+			}
+		}
+		out = append(out, e)
+	}
+	if changed {
+		body, err := json.MarshalIndent(m, "", "  ")
+		if err != nil {
+			return nil, err
+		}
+		if err := writeFile(manifestPath, append(body, '\n')); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
 func writeFile(path string, data []byte) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
 	if err != nil {

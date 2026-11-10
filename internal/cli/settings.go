@@ -555,3 +555,105 @@ func ensureExclude(commonDir string, lines []string) (bool, error) {
 	}
 	return true, f.Close()
 }
+
+// removeHooks deletes every shoal entry (§4.6: program basename shoalctl,
+// first argument hook) from settings data, under any event, and reports how
+// many it removed. A group left without entries goes, an event array that
+// held shoal entries and is left empty goes, and so does a "hooks" object
+// emptied that way unless keepHooks (the file had a "hooks" object before
+// shoal first changed it); every other byte stays, so a file init merged
+// into comes back as it was. An event whose value is not an array of hook
+// groups cannot hold an entry init wrote and is left alone.
+func removeHooks(data []byte, keepHooks bool) ([]byte, int, error) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return data, 0, nil
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil || top == nil {
+		return nil, 0, fmt.Errorf("not a JSON object: %v", err)
+	}
+	rawHooks, ok := top["hooks"]
+	if !ok {
+		return data, 0, nil
+	}
+	var events map[string]json.RawMessage
+	if json.Unmarshal(rawHooks, &events) != nil || events == nil {
+		return data, 0, nil
+	}
+	doc, removed := data, 0
+	for event, raw := range events {
+		var groups []hookGroup
+		if json.Unmarshal(raw, &groups) != nil || !bytes.HasPrefix(bytes.TrimSpace(raw), []byte("[")) {
+			continue
+		}
+		n := 0
+		for _, g := range groups {
+			entries, err := groupEntries(g)
+			if err != nil {
+				n = 0
+				break
+			}
+			for _, e := range entries {
+				if isShoalCommand(entryCommand(e)) {
+					n++
+				}
+			}
+		}
+		if n == 0 {
+			continue
+		}
+		doc = removeShoalEntries(doc, event)
+		removed += n
+		if arr, ok := eventArray(doc, event); ok && len(arrayElements(doc, arr)) == 0 {
+			doc = removeMember(doc, hooksObject(doc), event)
+		}
+	}
+	if removed > 0 && !keepHooks && len(objectMembers(doc, hooksObject(doc))) == 0 {
+		doc = removeMember(doc, topValue(doc), "hooks")
+	}
+	return doc, removed, nil
+}
+
+// hooksObject is the span of the top-level "hooks" object; the caller knows
+// it exists.
+func hooksObject(doc []byte) span {
+	m, _ := member(doc, topValue(doc), "hooks")
+	return m.val
+}
+
+// removeMember deletes every member named key from the object obj.
+func removeMember(doc []byte, obj span, key string) []byte {
+	for {
+		ms := objectMembers(doc, obj)
+		items := make([]span, len(ms))
+		at := -1
+		for i, m := range ms {
+			items[i] = m.whole
+			if m.key == key {
+				at = i
+			}
+		}
+		if at < 0 {
+			return doc
+		}
+		before := len(doc)
+		doc = removeItem(doc, obj, items, at)
+		obj.end -= before - len(doc)
+	}
+}
+
+// hasMember reports whether data is a JSON object with a top-level key.
+func hasMember(data []byte, key string) bool {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(data, &top) != nil {
+		return false
+	}
+	_, ok := top[key]
+	return ok
+}
+
+// isEmptyObject reports whether data is a JSON object with no members.
+func isEmptyObject(data []byte) bool {
+	var top map[string]json.RawMessage
+	return json.Unmarshal(data, &top) == nil && top != nil && len(top) == 0
+}

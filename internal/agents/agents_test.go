@@ -58,3 +58,46 @@ func TestInstallKeepsEditedFiles(t *testing.T) {
 		t.Fatal("outdated shoal file not updated")
 	}
 }
+
+func TestRemoveKeepsEditedFiles(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "agents")
+	man := filepath.Join(t.TempDir(), "m.json")
+	if _, err := Install(dir, man); err != nil {
+		t.Fatal(err)
+	}
+	lead := filepath.Join(dir, "shoal-lead.md")
+	os.WriteFile(lead, []byte("my own lead\n"), 0o644)
+	os.Remove(filepath.Join(dir, "shoal-docs.md")) // already gone: not reported
+	mine := filepath.Join(dir, "my-agent.md")
+	os.WriteFile(mine, []byte("not shoal's\n"), 0o644)
+
+	got, err := Remove(dir, man)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions := map[string]string{}
+	for _, e := range got {
+		actions[e.Name] = e.Action
+	}
+	if len(got) != 7 || actions["shoal-backend"] != "removed" || !strings.HasPrefix(actions["shoal-lead"], "left alone") {
+		t.Fatalf("Remove: %+v", got)
+	}
+	if _, ok := actions["shoal-docs"]; ok {
+		t.Fatalf("a missing file was reported: %+v", got)
+	}
+	left, _ := os.ReadDir(dir)
+	if len(left) != 2 {
+		t.Fatalf("left in %s: %v (want shoal-lead.md and my-agent.md)", dir, left)
+	}
+	if b, _ := os.ReadFile(lead); string(b) != "my own lead\n" {
+		t.Fatal("edited file changed")
+	}
+	m, _ := readManifest(man)
+	if len(m.Files) != 1 || m.Files[lead] == "" {
+		t.Fatalf("manifest after Remove: %+v (want only the edited lead, still recorded)", m.Files)
+	}
+	// A second run removes nothing more.
+	if again, err := Remove(dir, man); err != nil || len(again) != 1 || again[0].Name != "shoal-lead" {
+		t.Fatalf("second Remove: %+v %v", again, err)
+	}
+}
