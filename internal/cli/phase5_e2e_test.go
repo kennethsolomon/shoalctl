@@ -227,13 +227,38 @@ func TestPhase5GCLeavesAnUntaggedWindowOpen(t *testing.T) {
 	}
 }
 
+// Two SHOAL_HOMEs for one repo give the same project id and can give the
+// same slug, and each runs its own tasks on the default tmux server: the tag
+// names the home too, so gc in one never closes the other's window. A tag
+// from before the home was part of it (<id>/<slug>) is not this task's
+// either: left open, like an untagged window.
+func TestPhase5GCLeavesAnotherHomesWindowOpen(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t).withSession()
+	p := h.initWith(junitConfig)
+	task := mergedTask(t, h, "Clients export", "feature.txt")
+	other := &project{id: p.id, home: filepath.Join(t.TempDir(), "other-home")}
+	for _, tag := range []string{windowTag(other, task.Slug), p.id + "/" + task.Slug} {
+		if tag == windowTag(p, task.Slug) {
+			t.Fatalf("tag %q does not name the home", tag)
+		}
+	}
+	h.tmuxOut("set-option", "-w", "-t", task.TmuxWindow, "@shoal_task", windowTag(other, task.Slug))
+
+	out := h.mustRun("gc")
+	mustContain(t, "gc", out, "window   "+task.Slug+": left tmux window "+task.TmuxWindow+" open")
+	if wins := h.tmuxOut("list-windows", "-a", "-F", "#{window_id}"); !strings.Contains(wins, task.TmuxWindow) {
+		t.Fatalf("gc closed another home's window: %q", wins)
+	}
+}
+
 // start tags the window it opens with the task, which gc checks.
 func TestStartTagsItsWindow(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t).withSession()
 	p := h.initWith(junitConfig)
 	task := startedTask(t, h, "feature", "Tagged")
-	if got, want := h.tmuxOut("show-options", "-w", "-v", "-t", task.TmuxWindow, "@shoal_task"), windowTag(p.id, task.Slug); got != want {
+	if got, want := h.tmuxOut("show-options", "-w", "-v", "-t", task.TmuxWindow, "@shoal_task"), windowTag(p, task.Slug); got != want {
 		t.Fatalf("window tag %q, want %q", got, want)
 	}
 }
