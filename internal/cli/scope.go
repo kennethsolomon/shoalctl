@@ -343,7 +343,7 @@ func (env Env) requireHuman(what string) error {
 			"Run it yourself in your own terminal, outside Claude Code", what, k)
 	}
 	if !env.interactive() {
-		return fail(ExitState, "%s needs a human at a terminal; agents can't waive scope rows, record manual checks, accept regressions, agree or retire conventions, promote lessons or purge a project", what)
+		return fail(ExitState, "%s needs a human at a terminal; agents can't waive scope rows, record manual checks, accept regressions, agree or retire conventions, promote lessons, purge a project or abandon a task", what)
 	}
 	return nil
 }
