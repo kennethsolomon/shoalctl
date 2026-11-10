@@ -14,6 +14,7 @@ is how shoal reads the result. Pick the first answer that applies:
 
 Prefer junit (or go-json) whenever the runner supports it, because the
 zero-regression gate compares results test by test.
+bugfix and hotfix need format junit or go-json.
 
 format     stack: command
 junit      Laravel (PHPUnit): php artisan test --log-junit {junit}

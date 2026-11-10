@@ -9,8 +9,7 @@ Setup, once per repo (more: shoalctl guide setup)
    tmux                        run shoal from a terminal inside tmux
 
 When something is wrong
-   shoalctl doctor                  find problems (exit 11 while one stays)
-   shoalctl doctor --fix            repair what is safe
+   shoalctl doctor [--fix]          find problems; --fix repairs the safe ones
    shoalctl status                  see which task is stuck or blocked
    shoalctl abandon <task>          give up on a task that has not merged
    shoalctl why <file>              stored reasons plus git log for a file

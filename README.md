@@ -166,6 +166,7 @@ shoalctl guide: fix a bug in 5 commands. <n> is the task number.
 4. When it says it is finished: /exit in its window, then shoalctl done <n>
    (no shoalctl qa needed; done refuses if the red/green proof is missing)
 5. shoalctl merge   merges done tasks locally; never pushes
+bugfix and hotfix need format junit or go-json.
 Everything else is optional.
 ```
 <!-- /guide:quick -->
@@ -338,6 +339,7 @@ is how shoal reads the result. Pick the first answer that applies:
 
 Prefer junit (or go-json) whenever the runner supports it, because the
 zero-regression gate compares results test by test.
+bugfix and hotfix need format junit or go-json.
 
 format     stack: command
 junit      Laravel (PHPUnit): php artisan test --log-junit {junit}
@@ -369,7 +371,7 @@ The baseline runs in a clean worktree that does not have them.
 | Command | What it does | Status |
 |---------|--------------|--------|
 | `shoalctl init` | Register the project and wire hooks (stealth by default) | Built |
-| `shoalctl new <feature\|bugfix\|hotfix> "<title>" [--details "<text>" \| --details-file <path>] [--scope "<text>"]...` | Create a task; the details default to the title. `--ask` and `--ask-file` are the old names and still work | Built |
+| `shoalctl new <feature\|bugfix\|hotfix> "<title>" [--details "<text>" \| --details-file <path>] [--scope "<text>"]...` | Create a task; the details default to the title. `--ask` and `--ask-file` are the old names and still work. A bugfix or hotfix warns on stderr when `[tests].format` is `exit-code` or `none`: its red/green proof needs junit or go-json | Built |
 | `shoalctl plan <task> [--todo <file>] <glob>...` | Expected file claims and `todo.md` before start; one-keypress overlap prompt (`s`/`m`/`p`/`?`) | Built |
 | `shoalctl start <task> [--model <m>]` | Branch + worktree + baseline test run + tmux window + `claude` + attention watcher; refuses a `blocked` task | Built |
 | `shoalctl status [--json] [--all]` | Board of tasks; NOTE shows needs-attention, blocked-by, queue position, claims. Abandoned tasks and ones closed over 14 days ago show only with `--all` | Built |

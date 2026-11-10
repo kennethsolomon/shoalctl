@@ -132,5 +132,8 @@ func (env Env) cmdNew(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Fprintln(env.Stdout, t.Slug)
+	if f := p.cfg.Tests.Format; lane != "feature" && (f == "exit-code" || f == "none") {
+		fmt.Fprintf(env.Stderr, "warning: [tests].format is %q, so this %s cannot finish: repro red/green and done need format junit or go-json (shoalctl guide tests)\n", f, lane)
+	}
 	return nil
 }

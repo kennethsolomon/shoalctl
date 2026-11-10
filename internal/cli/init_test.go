@@ -563,3 +563,24 @@ func TestInitRefusesSymlinkedClaudeDir(t *testing.T) {
 		t.Errorf("tracked file modified:\n%s", status)
 	}
 }
+
+// A bugfix or hotfix needs per-test results to record its red/green proof,
+// so new warns when [tests].format cannot give them; the slug on stdout is
+// unchanged for scripts.
+func TestNewWarnsWhenTheFormatCannotProveABugfix(t *testing.T) {
+	t.Parallel()
+	for _, format := range []string{"exit-code", "none", "junit"} {
+		h := newHarness(t)
+		h.initWith("[tests]\ncommand = \"true\"\nformat = \"" + format + "\"\n")
+		for _, lane := range []string{"bugfix", "hotfix", "feature"} {
+			code, out, errOut := h.run("new", lane, "a "+lane)
+			if code != ExitOK || !strings.HasSuffix(out, "-a-"+lane+"\n") || strings.Count(out, "\n") != 1 {
+				t.Fatalf("new %s (format %s): exit %d, stdout %q", lane, format, code, out)
+			}
+			warned := strings.Contains(errOut, "warning: [tests].format is \""+format+"\", so this "+lane+" cannot finish: repro red/green and done need format junit or go-json")
+			if want := lane != "feature" && format != "junit"; warned != want {
+				t.Errorf("new %s (format %s): warned %v, want %v: %q", lane, format, warned, want, errOut)
+			}
+		}
+	}
+}

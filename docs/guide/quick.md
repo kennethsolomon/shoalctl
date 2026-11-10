@@ -9,4 +9,5 @@ shoalctl guide: fix a bug in 5 commands. <n> is the task number.
 4. When it says it is finished: /exit in its window, then shoalctl done <n>
    (no shoalctl qa needed; done refuses if the red/green proof is missing)
 5. shoalctl merge   merges done tasks locally; never pushes
+bugfix and hotfix need format junit or go-json.
 Everything else is optional.
