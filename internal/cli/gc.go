@@ -13,7 +13,7 @@ import (
 	"github.com/kennethsolomon/shoalctl/internal/store"
 )
 
-// cmdGC cleans up after closed (merged or folded) tasks (§4.4): it closes
+// cmdGC cleans up after closed (merged, folded or abandoned) tasks (§4.4): it closes
 // their tmux windows (only ones tagged as the task's), removes their
 // worktrees with git worktree remove, and drops their working rows, keeping
 // the summary and every record (§7.4). A task whose worktree holds changes
@@ -35,7 +35,7 @@ func (env Env) cmdGC(ctx context.Context, args []string) error {
 	}
 	var closed []store.Task
 	for _, t := range tasks {
-		if t.Stage == store.StageMerged || t.Stage == store.StageFolded {
+		if contains(closedStages, t.Stage) {
 			closed = append(closed, t)
 		}
 	}
@@ -64,6 +64,9 @@ type collector struct {
 	wins tmuxServers
 	did  int      // actions taken
 	left []string // what needs a human
+	// force removes a worktree holding changes or untracked files
+	// (abandon --force); gc never sets it.
+	force bool
 }
 
 func (g *collector) say(format string, a ...any) {
@@ -81,7 +84,14 @@ func (g *collector) task(ctx context.Context, t store.Task) error {
 		return err
 	}
 	defer lock.Release()
-	if g.dirty(ctx, t) {
+	return g.collect(ctx, t)
+}
+
+// collect cleans up after one closed task whose lock the caller holds:
+// unless its worktree is dirty (and not forced), it closes the window,
+// removes the worktree and drops the working rows.
+func (g *collector) collect(ctx context.Context, t store.Task) error {
+	if !g.force && g.dirty(ctx, t) {
 		return nil
 	}
 	if err := g.window(ctx, t); err != nil {
@@ -151,24 +161,32 @@ func (g *collector) window(ctx context.Context, t store.Task) error {
 // files. Such a task is left alone, window and rows included, and reported:
 // someone may still be working in it.
 func (g *collector) dirty(ctx context.Context, t store.Task) bool {
-	if t.Worktree == "" || !fileExists(t.Worktree) {
-		return false
-	}
-	st, err := gitx.Run(ctx, t.Worktree, "status", "--porcelain")
+	dirty, err := dirtyWorktree(ctx, t)
 	if err != nil {
 		g.left = append(g.left, fmt.Sprintf("kept %s's worktree %s and its window: git status failed there: %v", t.Slug, t.Worktree, err))
 		return true
 	}
-	if st == "" {
+	if !dirty {
 		return false
 	}
 	g.left = append(g.left, fmt.Sprintf("kept %s's worktree %s and its window: it holds changes or untracked files. Commit or remove what is in it, then run gc again", t.Slug, t.Worktree))
 	return true
 }
 
+// dirtyWorktree reports whether the task's worktree exists and holds
+// changes or untracked files.
+func dirtyWorktree(ctx context.Context, t store.Task) (bool, error) {
+	if t.Worktree == "" || !fileExists(t.Worktree) {
+		return false, nil
+	}
+	st, err := gitx.Run(ctx, t.Worktree, "status", "--porcelain")
+	return st != "", err
+}
+
 // worktree removes a closed task's worktree with git worktree remove, which
-// refuses one holding changes or untracked files: that one is kept. Like git,
-// it deletes git-ignored files (.env, logs) with the worktree.
+// refuses one holding changes or untracked files: that one is kept, unless
+// forced. Like git, it deletes git-ignored files (.env, logs) with the
+// worktree.
 func (g *collector) worktree(ctx context.Context, t store.Task) error {
 	if t.Worktree == "" || !fileExists(t.Worktree) {
 		return nil
@@ -177,9 +195,13 @@ func (g *collector) worktree(ctx context.Context, t store.Task) error {
 		g.left = append(g.left, fmt.Sprintf("%s's worktree %s is not under %s; shoal does not remove it", t.Slug, t.Worktree, filepath.Join(g.p.dir, "worktrees")))
 		return nil
 	}
+	remove := []string{"worktree", "remove", t.Worktree}
+	if g.force {
+		remove = []string{"worktree", "remove", "--force", t.Worktree}
+	}
 	var removeErr error
 	if err := g.env.withGitLock(g.p, t, func() error {
-		_, removeErr = gitx.Run(ctx, g.p.root, "worktree", "remove", t.Worktree)
+		_, removeErr = gitx.Run(ctx, g.p.root, remove...)
 		return nil
 	}); err != nil {
 		return err
