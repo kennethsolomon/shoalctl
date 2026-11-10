@@ -1,0 +1,119 @@
+name: release
+
+# Runs only when a v* tag is pushed. Nothing here runs on branches or PRs;
+# ci.yml covers those.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: test (${{ matrix.target }})
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # Every release target runs the FTS5 spike without cgo (spec §2,
+          # FTS5 note). The full suite runs on the primary platforms; Windows
+          # is beta (spec §15.1), so its full suite does not block a release.
+          - { target: linux/amd64, os: ubuntu-latest, suite: full }
+          - { target: linux/arm64, os: ubuntu-24.04-arm, suite: fts5 }
+          - { target: darwin/arm64, os: macos-latest, suite: full }
+          - { target: darwin/amd64, os: macos-15-intel, suite: fts5 }
+          - { target: windows/amd64, os: windows-latest, suite: full }
+          - { target: windows/arm64, os: windows-11-arm, suite: fts5 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: FTS5 without cgo
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go env GOOS GOARCH
+          go test -count=1 -run TestFTS5CreateInsertMatch -v ./internal/spike
+
+      - name: Store and release guard without cgo
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 ./internal/store ./internal/releaseguard ./internal/buildinfo
+
+      - name: Install tmux (Linux)
+        if: matrix.suite == 'full' && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - name: Install tmux (macOS)
+        if: matrix.suite == 'full' && runner.os == 'macOS'
+        run: brew install tmux
+
+      - name: Full suite
+        if: matrix.suite == 'full'
+        shell: bash
+        continue-on-error: ${{ runner.os == 'Windows' }}
+        run: go test -count=1 -timeout 20m ./...
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          install-only: true
+
+      # Build everything for the tag without publishing, so the guard sees
+      # the exact archives before anything leaves the runner.
+      - name: Build the release (nothing published)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: goreleaser release --clean --skip=publish
+
+      - name: Release guard (no .db file, no reports/ path, binary + LICENSE + README only)
+        run: SHOAL_DIST="$GITHUB_WORKSPACE/dist" go test -count=1 -run TestReleaseArtifacts -v ./internal/releaseguard
+
+      - name: Keep the checked checksums
+        run: cp dist/checksums.txt "$RUNNER_TEMP/checked-checksums.txt"
+
+      # Builds are reproducible (-trimpath, commit timestamps), so this run
+      # rebuilds the same bytes and publishes them. Without the tap token
+      # the formula is not pushed.
+      - name: Publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          skip=""
+          if [ -z "$HOMEBREW_TAP_GITHUB_TOKEN" ]; then
+            echo "::warning::HOMEBREW_TAP_GITHUB_TOKEN is not set; the Homebrew formula is not published"
+            skip="--skip=homebrew"
+          fi
+          goreleaser release --clean $skip
+
+      - name: Published archives are the checked ones
+        run: |
+          diff "$RUNNER_TEMP/checked-checksums.txt" dist/checksums.txt
+          SHOAL_DIST="$GITHUB_WORKSPACE/dist" go test -count=1 -run TestReleaseArtifacts -v ./internal/releaseguard
