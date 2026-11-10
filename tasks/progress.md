@@ -1,3 +1,99 @@
+# Phase 5 progress
+
+Base: `6bc02ca` (Phase 4 shipped, Vex round 5 SHIP). Approved by Kenneth 2026-11-10. Acceptance bar: spec §15 Phase 5 row, Done when "Installed on a project with zero repo footprint". Nothing was pushed, tagged or published; no repo, secret or GitHub release was created.
+
+## Where I am
+
+- Done: `version` (ldflags plus build info), `uninstall`, `export`, `purge`, `gc`, the release guard, `.goreleaser.yaml`, `.github/workflows/release.yml` (tag push only; `ci.yml` untouched), README install docs (still pre-alpha), spec §16 rows 77-82.
+- Next: Vex review of Phase 5; then Kenneth's outward steps (below) for the first tag.
+
+| Scope item | Where | Proof |
+|---|---|---|
+| 1 `export <id>`, `purge <id>` | `internal/cli/offboard.go`, `store.Dump` | `TestExportWritesEveryTableAndReport`, `TestPurgeNeedsAHumanWhoTypesTheID` (agent refused exit 5, wrong answer exit 5, worktree left exit 5, lock held exit 8, unknown id exit 4, bad id exit 2), `TestDumpEveryTableButTheIndex` |
+| 2 `uninstall` | `internal/cli/uninstall.go`, `removeHooks`, `withoutManagedBlock`, `agents.Remove` | `TestRemoveHooksRoundTrip` (merge then remove is byte-identical for 9 shapes), `TestRemoveHooksMatchesOnlyShoal`, `TestWithoutManagedBlockRoundTrip`, `TestUninstallRestoresAStealthRepo`, `TestUninstallKeepsTheUsersSettings`, `TestUninstallRemovesTheManagedBlock`, `TestUninstallRefusesBeforeChangingAnything`, `TestUninstallRemovesOnlyUneditedAgents`, `TestRemoveKeepsEditedFiles` |
+| 3 `gc` | `internal/cli/gc.go`, `store.DropWorkingRows` | `TestPhase5GCAfterMerge` (real tmux window closed, dirty worktree kept with exit 5 then removed, rows dropped, summary kept, gone-glob lesson flagged, live decision not), `TestPhase5GCSkipsOpenTasks`, `TestDropWorkingRowsKeepsRecords` |
+| 4 `version` | `internal/buildinfo`, `cmd/shoalctl/main.go` | `TestResolve`, `TestString`, `TestVersionLdflags` (builds with the release ldflags) |
+| 5 Release pipeline | `.goreleaser.yaml` | `goreleaser release --snapshot --clean`: 6 archives + `checksums.txt` + formula (below); two runs gave identical checksums |
+| 6 Release guard | `internal/releaseguard` | `TestCheckFailsOnAPlantedDatabaseOrReport` (8 plants), `TestCheckVerifiesChecksums`; guard PASS on the real snapshot dist, FAIL on a copy with `memory.db` planted in the linux/amd64 tarball (it also caught macOS tar's `._memory.db`) |
+| 7 FTS5 on every target | `release.yml` job `test` | Six native runners, `CGO_ENABLED=0`; actionlint clean. Not run on GitHub (no tag pushed) |
+| 8 `release.yml`, tag only | `.github/workflows/release.yml` | `on: push: tags: ["v*"]` only; `git diff 6bc02ca -- .github/workflows/ci.yml` empty |
+| 9 README install | README Quick start | go install, `brew install kennethsolomon/tap/shoalctl`, archive + `shasum -a 256 --check --ignore-missing checksums.txt` (verified on the snapshot dist) |
+| 10 Zero footprint | `internal/cli/phase5_e2e_test.go` | `TestPhase5ZeroRepoFootprint`; manual dry run below |
+
+## Decisions (spec §16)
+
+| Row | Decision |
+|-----|----------|
+| 77 | uninstall: hook entries (any event), the managed block, unedited `shoal-*` agents (user-level only when no other project is registered); byte-exact; shoal-created files deleted; data, exclude lines and branches kept |
+| 78 | gc: closed tasks only, per task lock; window killed or forgotten; `git worktree remove` without `--force` (kept, exit 5); working rows dropped; records whose files are all gone from `[merge].base` flagged stale; branches kept |
+| 79 | export/purge take the project id and work without the checkout; purge: human types the id, refused with worktrees left or locks held |
+| 80 | release.yml: FTS5 on six native runners, build with `--skip=publish`, guard, publish, checksum equality check |
+| 81 | version: ldflags, then `debug.ReadBuildInfo`, then `dev` |
+| 82 | Homebrew formula via `brews` (deprecated in GoReleaser 2.10+); pushed only with a non-empty tap token |
+
+## Snapshot release (local, `goreleaser 2.20.0`, `--snapshot --clean`, no token)
+
+`goreleaser check`: exit 1, "configuration is valid, but uses deprecated properties" (`brews` only). Snapshot: exit 0 in 18 s; publish, announce and validate skipped by snapshot mode.
+
+```
+dist/shoalctl_0.0.1-snapshot+f110372_{darwin,linux}_{amd64,arm64}.tar.gz   LICENSE README.md shoalctl
+dist/shoalctl_0.0.1-snapshot+f110372_windows_{amd64,arm64}.zip             LICENSE README.md shoalctl.exe
+dist/checksums.txt                                                         sha256 of the 6 archives
+dist/homebrew/Formula/shoalctl.rb                                          written, not pushed
+```
+
+The linux/amd64 binary is statically linked; the darwin/arm64 one prints `shoalctl 0.0.1-snapshot+f110372 (commit f110372a2f39, built 2026-11-10T03:55:50Z)`. A second snapshot run produced the same `checksums.txt` byte for byte. `dist/` is gitignored.
+
+## Manual dry run (2026-11-10, snapshot binary, scratch repo and SHOAL_HOME)
+
+```sh
+git init -b main && commit a.txt; before=$(git status --porcelain --ignored --untracked-files=all)
+shoalctl version; shoalctl init      # git status --porcelain: empty
+shoalctl new feature "Dry run"; shoalctl status; shoalctl gc          # "nothing to collect"
+shoalctl export <id> --out export.json   # 25 tables, schema 7, 1 task
+shoalctl export bogus                    # exit 2
+shoalctl uninstall                       # 4 entries and the settings file shoal created removed
+[ "$before" = "$(git status --porcelain --ignored --untracked-files=all)" ]   # identical
+shoalctl purge <id> </dev/null           # exit 5: needs a human at a terminal
+(typed the id at a pty) shoalctl purge <id>   # project directory gone
+```
+
+It found one wording bug, fixed in `02db19c` (uninstall named a missing CLAUDE.md as "no shoal block in"). Not in the dry run: `start` with a real `claude` (covered by the e2e test with tmux and a fake claude).
+
+## Gates (fresh clone of `2d47b8b`, macOS, run alone)
+
+| Gate | Result |
+|---|---|
+| `gofmt -l .` | empty |
+| `go vet ./...` and `staticcheck ./...`, GOOS darwin, linux, windows | clean |
+| `GOOS=linux` and `GOOS=windows go test -c` per package | all compile (9 s) |
+| build-tag ignored files (`go list -test`) | only the OS pairs (`*_unix`/`*_windows`) and `race_on_test.go`; no Phase 5 file |
+| `git ls-files -oi --exclude-standard` | empty |
+| `caffeinate -i go test -race -count=1 ./...` | pass, 153 s wall; `internal/cli` 149.2 s (Phase 4: about 148 s) |
+
+## Spec drift fixed
+
+- §13 said artifacts hold "the binary and templates only": there is no templates directory; the agent definitions and config template are embedded. Now "binary, LICENSE and README.md".
+- The spec status line still listed Phases 3 and 4 as unbuilt; README's mockup note called `shoalctl why` planned.
+- `export <id>`/`purge <id>` did not say what the id is: now the project id, explicit in §4.4 and row 79.
+- `tasks/todo.md` was still the Phase 2 plan; replaced with Phase 5's.
+
+## Kenneth's outward steps (not done; none approved)
+
+1. Create the public repo `kennethsolomon/homebrew-tap` (empty, default branch `main`; GoReleaser writes `Formula/shoalctl.rb`).
+2. Create a fine-grained personal access token: resource owner kennethsolomon, repository access only `homebrew-tap`, permission Contents read and write (Metadata read is implied). Add it to `kennethsolomon/shoalctl` as the Actions secret `HOMEBREW_TAP_GITHUB_TOKEN`. The release itself uses the workflow's `GITHUB_TOKEN` (`contents: write`); nothing else is needed.
+3. Push main, then tag: `git tag -a v0.1.0 -m "shoalctl v0.1.0" && git push origin v0.1.0` (a `v0.x` tag with a suffix such as `-rc.1` is marked prerelease).
+4. Check the run: all six test jobs green, then `brew install kennethsolomon/tap/shoalctl && shoalctl version`.
+
+## Open risks
+
+- Runner labels `macos-15-intel`, `ubuntu-24.04-arm` and `windows-11-arm` were not exercised (no tag pushed). If one is unavailable the release waits on it; drop that row (its target still cross-compiles) or swap the label.
+- `brews` is deprecated in GoReleaser 2.10+; a future v3 removes it. A cask (`homebrew_casks`) would change the install to `brew install --cask` and is macOS-first.
+- The guard runs before the publishing run, which rebuilds; reproducibility makes the bytes equal and the final step diffs `checksums.txt`, but that check runs after publishing.
+- The skip of the formula push with an empty token is by `--skip=homebrew` in the workflow plus the `skip_upload` template; neither could be exercised locally without a tag.
+- `gc` keeps task branches and `uninstall` keeps the `.git/info/exclude` lines: invisible to `git status`, but they remain in `.git`.
+- `withGitLock` records `merge` as the lock's command for every caller (doctor, gc too); cosmetic, pre-existing, not changed.
+
 # Phase 4 progress
 
 Base: `eca06da` (Phase 3 shipped) plus the CI fix `c789a52`. Acceptance bar: spec §15 Phase 4 row ("Strategy pattern" end to end) and the five Done-when items of the build brief.

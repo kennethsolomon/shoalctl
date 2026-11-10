@@ -1,89 +1,60 @@
-# Phase 2: cross-task claims, merge queue, full doctor, attention watcher
+# Phase 5: Publish
 
-Acceptance bar: spec §15 Phase 2 row. Each "Done when" item has an end-to-end
-test in `internal/cli/phase2_e2e_test.go`. Phase 1 plan: done at `6d33f87`
-(see git history of this file).
+Acceptance bar: spec §15 Phase 5 row. Done when "Installed on a project with zero repo
+footprint": `TestPhase5ZeroRepoFootprint` plus the manual dry run in `tasks/progress.md`.
+Earlier phase plans are in the git history of this file (Phase 2 plan: `6bc02ca`).
 
-Conventions kept: every state change in one `BEGIN IMMEDIATE` write; `tasks.version`
-and `file_claims.version` guard updates (§10.2); lock order `merge.lock` ->
-`task-<id>.lock` -> `git.lock`; argv-only git/tmux; no transaction across a prompt,
-a git, tmux or test step; human-only actions need a terminal.
-
-## Schema
-
-- [x] 1. Migration `0004_phase2.sql` (store test: user_version 4, every new column/table).
-  - `tasks` + `prev_stage` (stage before a transient or `worktree-missing` stage),
-    `folded_into` (FK tasks), `attention`, `attention_at`.
-  - `task_blockers(task_id, blocker_id, created_at)` PK both: every `s` choice; `tasks.blocked_by`
-    mirrors the oldest open blocker.
-  - `merge_queue(task_id PK, position, state waiting|rebasing|testing|merged|failed, updated_at)`;
-    backfilled from tasks at `done`/`merging` in `closed_at, id` order.
-  - Index `file_claims_open (released_at, task_id)` for cross-task reads.
-
-## Pure logic
-
-- [x] 2. `globx.Overlaps`: exact for wildcard vs wildcard (segment product automaton,
-  `**` as any number of segments, `*`/`?`/classes per segment). Literal vs literal also
-  overlaps when one is a directory prefix of the other (consistent with `under`). Tests.
-- [x] 3. `internal/attention.Detect(screen)`: a `❯ N.` numbered menu with a second option
-  near the bottom of the screen, or a y/n prompt on the last line. Fixtures in testdata.
-
-## Store
-
-- [x] 4. `PlanClaims` (one tx: overlaps vs other open tasks' claims, stale callback, decisions
-  `s`/`m`/`p`, version-guarded stage change to `ready`/`blocked`/`folded`); `UnblockAfterMerge`;
-  queue (`Enqueue`, `SetQueueState`, `QueuedTasks`); `SetAttention`; `ReleaseStaleClaim`
-  (claim version guard + staleness recheck); `OpenClaims`. Store tests incl. claim conflicts.
+Conventions kept: every state change in one `BEGIN IMMEDIATE` write; lock order task lock ->
+`git.lock`; argv-only git/tmux; human-only actions through `requireHuman`; every file checked
+before any is written; byte-exact edits of user files. Outward actions (push, tag, release,
+tap repo, secrets) are Kenneth's, not this plan's.
 
 ## Commands
 
-- [x] 5. `plan <task> [--todo <file>] <glob>...` (§9.2): stages new/ready/blocked; prompt per
-  overlapping task (s/m/p/?), terminal only (no terminal + overlap = exit 5); stale claims
-  shown, never block; `s` refused when it would form a cycle; `m` only into an unfinished task.
-  `start` refuses `blocked` (exit 5), accepts `ready`; copies the plan's todo.md into `.shoal/`.
-- [x] 6. `done` enqueues; `merge` walks `merge_queue` by position, grouped per target branch;
-  queue states follow the run; a merge releases claims, unblocks tasks serialized behind it and
-  marks in-progress/qa tasks of the same target whose claims overlap the merged files `needs-rebase`.
-- [x] 7. `qa` on `needs-rebase`: rebase onto the target tip (conflict: aborted, stays, exit 9;
-  rebase already in progress: exit 5), new base + scratch baseline, then the round.
-- [x] 8. Merge output: accepted rows printed with class and reason before `merged`; partial
-  acceptance lists accepted, still-blocking, and "back at qa".
-- [x] 9. Full `doctor [--fix]` (§10.4): hooks (Phase 0 check kept), integrity + FK, migration
-  checksums, merge.lock-guarded queue rows at `rebasing` (asks) + `settleMerging` reuse,
-  `starting` rollback via `prev_stage` with `reapAbandoned` reuse, orphaned `running` runs,
-  worktree missing (mark/restore), orphan worktree dirs (report), `git worktree prune`,
-  gone tmux windows, hook entries in worktrees, stale claims. Exit 11 while anything remains.
-- [x] 10. `watch <task>` (internal) + `start` spawns it detached: polls `tmux capture-pane`
-  every 2 s, sets/clears `attention`, exits when the window or working stage ends, or on a
-  signal; one watcher per task (`watch-<id>.lock`). `status` shows NOTE (attention, blocked
-  by, queue position, claims) and JSON fields.
+- [x] 1. `version`: `-ldflags -X main.version/commit/date`, else `debug.ReadBuildInfo`, else `dev`
+  (`internal/buildinfo`, `TestVersionLdflags`).
+- [x] 2. `uninstall`: hook entries matched by basename `shoalctl` + first arg `hook` under any event,
+  the managed block (same column-0, fence-aware scan as init), unedited `shoal-*` agents
+  (user-level only when no other project is registered). Byte-exact round trips; refuse before
+  writing (exit 3).
+- [x] 3. `export <id> [--out]`: every table but `memory_fts`, in one transaction, plus reports, as JSON.
+- [x] 4. `purge <id>`: human only, type the id; refused with worktrees left (exit 5) or locks held
+  (exit 8); rename aside, then delete.
+- [x] 5. `gc`: closed tasks under their lock: close window, `git worktree remove` (kept, exit 5),
+  `DropWorkingRows`; flag records whose files are all gone from `[merge].base`.
 
-## Acceptance (end-to-end)
+## Release
 
-- [x] 11. `TestPhase2BugABugB` (Done-when 1)
-- [x] 12. `TestPhase2ConcurrentPlansOneWinner` (2, goroutines and processes, -race)
-- [x] 13. `TestPhase2DoctorRecoversKilledStartAndStaleClaim` (3)
-- [x] 14. `TestPhase2AttentionFlag` (real tmux, fake claude showing a dialog, real watcher process)
-- [x] 15. `TestPhase2MergeOutputAcceptance` (full and partial acceptance messages)
+- [x] 6. `.goreleaser.yaml`: CGO_ENABLED=0, darwin/linux/windows x amd64/arm64, `-trimpath`, commit
+  timestamps (reproducible), archives = binary + LICENSE + README.md, `checksums.txt`, formula
+  for `kennethsolomon/homebrew-tap` pushed only with a non-empty `HOMEBREW_TAP_GITHUB_TOKEN`.
+- [x] 7. `internal/releaseguard`: fails on `.db` (and companions), `reports/`, stray files, a missing
+  binary, unlisted or wrong checksums. Planted-file tests.
+- [x] 8. `.github/workflows/release.yml`, on `v*` tags only: FTS5 spike on six native runners, full
+  suite on Linux/macOS (Windows non-blocking), build `--skip=publish`, guard, publish, checksum
+  equality. `ci.yml` untouched.
 
-## Docs and gates
+## Acceptance and docs
 
-- [x] 16. README (Phase 2 built, plan/doctor/status, `[tests].setup = "true"` one-liner),
-  spec §4.4, §15 Phase 2 row (watcher), §16 rows 46+, progress.md.
-- [x] 17. Gates from a fresh clone: vet x3 GOOS, staticcheck x3 GOOS, `go test -race -count=1`,
-  `go test -c` linux/windows per package, `git ls-files -oi --exclude-standard`.
+- [x] 9. `TestPhase5ZeroRepoFootprint`, `TestPhase5GCAfterMerge`, `TestPhase5GCSkipsOpenTasks`.
+- [x] 10. Snapshot release and manual dry run recorded in `tasks/progress.md`.
+- [x] 11. README install (go install, brew, archive + checksum; still pre-alpha), spec §2, §4.4,
+  §4.6, §5.1, §7.1, §7.4, §13, §15, §16 rows 77-82.
+- [x] 12. Gates from a fresh clone: gofmt, vet x3 GOOS, staticcheck x3 GOOS, `go test -race`,
+  `go test -c` linux/windows per package, build-tag ignored files, `git ls-files -oi --exclude-standard`.
 
 ## Verification
 
 ```sh
-go vet ./... ; GOOS=linux go vet ./... ; GOOS=windows go vet ./...
-staticcheck ./... (x3 GOOS)
-go test -race -count=1 ./...
-for p in $(go list ./...); do GOOS=windows go test -c -o /dev/null $p; done   # and linux
-git ls-files -oi --exclude-standard   # empty
+gofmt -l .
+for os in darwin linux windows; do GOOS=$os go vet ./... && GOOS=$os ~/go/bin/staticcheck ./...; done
+caffeinate -i go test -race -count=1 ./...
+for os in linux windows; do for p in $(go list ./...); do GOOS=$os go test -c -o /dev/null $p; done; done
+goreleaser check; goreleaser release --snapshot --clean
+SHOAL_DIST=$PWD/dist go test -count=1 -run TestReleaseArtifacts ./internal/releaseguard
 ```
 
 ## Risks
 
-- Overlap prompt reads a line (key + Enter), like `scope review`, not a raw keypress.
-- The attention detector is a heuristic over the visible pane; fixtures pin current Claude Code dialogs.
+See `tasks/progress.md`, Phase 5 "Open risks": untested runner labels, deprecated `brews`,
+the guard runs before a rebuild (reproducible, diffed after), branches and exclude lines kept.
