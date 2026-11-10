@@ -595,6 +595,9 @@ func (env Env) launch(ctx context.Context, p *project, t store.Task, wt, claude,
 		return "", "", false, fmt.Errorf("tmux window %s closed right after launch, so claude likely exited at once; run `%s --model %s` in %s to see why: %w",
 			window, claude, model, wt, err)
 	}
+	if _, err = env.tmux(ctx, "set-option", "-w", "-t", window, "@shoal_task", windowTag(p.id, t.Slug)); err != nil {
+		return "", "", false, err
+	}
 	return session, window, created, nil
 }
 
@@ -760,3 +763,8 @@ summary.json:
 	}
 	return b.String()
 }
+
+// windowTag is the value of the @shoal_task window option start sets on a
+// task's window. tmux reuses window ids after a server restart, so gc closes
+// a recorded window only when it still carries this tag.
+func windowTag(projectID, slug string) string { return projectID + "/" + slug }

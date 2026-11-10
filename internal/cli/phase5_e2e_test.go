@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kennethsolomon/shoalctl/internal/store"
 	"github.com/kennethsolomon/shoalctl/internal/testutil"
 )
 
@@ -170,5 +171,69 @@ func TestPhase5GCSkipsOpenTasks(t *testing.T) {
 	}
 	if msgs, _ := h.db().Inbox(context.Background(), task.ID, "shoal-lead", true); len(msgs) != 1 {
 		t.Fatalf("gc dropped an open task's messages: %+v", msgs)
+	}
+}
+
+// mergedTask runs a task through start, done and merge, its window still open.
+func mergedTask(t *testing.T, h *harness, title, file string) store.Task {
+	t.Helper()
+	task := startedTask(t, h, "feature", title)
+	commitIn(t, task.Worktree, file, "x")
+	finish(t, h, task.Slug, task.Worktree)
+	h.mustRun("merge")
+	return task
+}
+
+// tmux reuses window ids (they restart at @0 with the server), so the id gc
+// recorded can name someone else's window by now. gc closes a window only
+// when it carries the task's @shoal_task tag; any other window under that id
+// is left open, and the record is forgotten.
+func TestPhase5GCLeavesAForeignWindowOpen(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t).withSession()
+	h.initWith(junitConfig)
+	task := mergedTask(t, h, "Clients export", "feature.txt")
+	h.tmuxOut("set-option", "-w", "-t", task.TmuxWindow, "@shoal_task", "someone else's window")
+
+	out := h.mustRun("gc")
+	mustContain(t, "gc", out, "window   "+task.Slug+": left tmux window "+task.TmuxWindow+" open")
+	if wins := h.tmuxOut("list-windows", "-a", "-F", "#{window_id}"); !strings.Contains(wins, task.TmuxWindow) {
+		t.Fatalf("gc closed a window that is not the task's: %q", wins)
+	}
+	if h.task(task.Slug).TmuxWindow != "" {
+		t.Fatal("gc did not forget the recorded window")
+	}
+	if fileExists(task.Worktree) {
+		t.Fatal("worktree not removed")
+	}
+}
+
+// A task started before windows were tagged has no tag: gc cannot tell its
+// window from a foreign one, so it closes nothing and says so.
+func TestPhase5GCLeavesAnUntaggedWindowOpen(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t).withSession()
+	h.initWith(junitConfig)
+	task := mergedTask(t, h, "Clients export", "feature.txt")
+	h.tmuxOut("set-option", "-w", "-u", "-t", task.TmuxWindow, "@shoal_task")
+
+	out := h.mustRun("gc")
+	mustContain(t, "gc", out, "window   "+task.Slug+": left tmux window "+task.TmuxWindow+" open", "close it yourself")
+	if wins := h.tmuxOut("list-windows", "-a", "-F", "#{window_id}"); !strings.Contains(wins, task.TmuxWindow) {
+		t.Fatalf("gc closed an untagged window: %q", wins)
+	}
+	if h.task(task.Slug).TmuxWindow != "" {
+		t.Fatal("gc did not forget the recorded window")
+	}
+}
+
+// start tags the window it opens with the task, which gc checks.
+func TestStartTagsItsWindow(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t).withSession()
+	p := h.initWith(junitConfig)
+	task := startedTask(t, h, "feature", "Tagged")
+	if got, want := h.tmuxOut("show-options", "-w", "-v", "-t", task.TmuxWindow, "@shoal_task"), windowTag(p.id, task.Slug); got != want {
+		t.Fatalf("window tag %q, want %q", got, want)
 	}
 }

@@ -14,7 +14,7 @@ import (
 )
 
 // cmdGC cleans up after closed (merged or folded) tasks (§4.4): it closes
-// their tmux windows, removes their
+// their tmux windows (only ones tagged as the task's), removes their
 // worktrees with git worktree remove, and drops their working rows, keeping
 // the summary and every record (§7.4). A task whose worktree holds changes
 // is left alone, window included, and reported (exit 5). It then flags
@@ -116,11 +116,22 @@ func (g *collector) window(ctx context.Context, t store.Task) error {
 		g.left = append(g.left, fmt.Sprintf("the window %s of %s%s cannot be checked: %s", t.TmuxWindow, t.Slug, socketNote(t.TmuxSocket), g.wins.why(t)))
 		return nil
 	}
+	e := g.env
+	if t.TmuxSocket != "" {
+		e.TmuxArgs = []string{"-S", t.TmuxSocket}
+	}
+	ours := false
 	if alive {
-		e := g.env
-		if t.TmuxSocket != "" {
-			e.TmuxArgs = []string{"-S", t.TmuxSocket}
+		// tmux reuses window ids after a restart: close the window only
+		// when it carries this task's tag.
+		tag, err := e.tmux(ctx, "show-options", "-w", "-q", "-v", "-t", t.TmuxWindow, "@shoal_task")
+		if err != nil {
+			g.left = append(g.left, fmt.Sprintf("the window %s of %s%s cannot be checked: %v", t.TmuxWindow, t.Slug, socketNote(t.TmuxSocket), err))
+			return nil
 		}
+		ours = tag == windowTag(g.p.id, t.Slug)
+	}
+	if ours {
 		if _, err := e.tmux(ctx, "kill-window", "-t", t.TmuxWindow); err != nil {
 			g.left = append(g.left, fmt.Sprintf("close the tmux window %s of %s yourself: %v", t.TmuxWindow, t.Slug, err))
 			return nil
@@ -129,9 +140,12 @@ func (g *collector) window(ctx context.Context, t store.Task) error {
 	if _, err := g.p.db.ClearWindow(ctx, t.ID, t.TmuxWindow); err != nil {
 		return err
 	}
-	if alive {
+	switch {
+	case ours:
 		g.say("window   %s: closed tmux window %s", t.Slug, t.TmuxWindow)
-	} else {
+	case alive:
+		g.say("window   %s: left tmux window %s open and forgot it: it is not tagged as this task's (tmux reuses window ids, or the task predates tags); if it is the task's, close it yourself", t.Slug, t.TmuxWindow)
+	default:
 		g.say("window   %s: forgot the gone tmux window %s", t.Slug, t.TmuxWindow)
 	}
 	return nil
