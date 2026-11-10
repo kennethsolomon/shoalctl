@@ -371,7 +371,7 @@ Every task is in exactly one lane, chosen at `shoalctl new <lane>`. The lane dec
 6. **Report**
 
 ### 6.3 Hotfix lane
-A hotfix repairs what is running in production right now. It follows the bugfix steps, with three differences.
+A hotfix repairs what is running in production right now. It follows the bugfix steps and the same full QA, with three differences: the start point (and merge target), the minimal-diff rule, and the backport task.
 
 1. **Start point.** The branch starts from `[hotfix].production_ref`, resolved locally (shoal never fetches):
    - a branch name: the tip of that local branch
@@ -383,7 +383,7 @@ A hotfix repairs what is running in production right now. It follows the bugfix 
    - no dependency or lockfile changes unless the bug is in a dependency
    - total added + removed lines outside test files must not exceed `[hotfix].max_diff_lines`
    `done` checks the line budget with `git diff --numstat <base_sha>...HEAD`. Over budget, `done` refuses until the diff shrinks or you pass `--accept-large-diff --reason "<text>"`, which goes into the report.
-3. **Full QA, no shortcuts.** Every gate and every QA agent runs, with the same 3-round cap. Production urgency is not a reason to skip a check.
+QA is the bugfix lane's, in full: every gate and every QA agent runs, with the same 3-round cap. Production urgency is not a reason to skip a check.
 
 **Backport.** When a hotfix reaches `done` and `[hotfix].backport = true`, shoal creates a bugfix-lane task titled `Backport: <hotfix title>` with `parent_task_id` set to the hotfix. It starts in `new` and is never started automatically. Its brief says:
 - cherry-pick the hotfix commits (listed by SHA) onto `[merge].base`

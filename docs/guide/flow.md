@@ -9,30 +9,32 @@ Task lifecycle, worked through one bug. <task> is the number or the slug.
    overlap with another task (s/m/p/?)
 3. shoalctl start 1   branch, worktree, baseline test run, tmux window,
    claude and the attention watcher
-4. The agent proves the bug, then the fix (shoalctl status: in-progress):
-   commits TestOrderKeepsCents, which fails without the fix, then runs
-     shoalctl repro red 1 --test TestOrderKeepsCents     must fail, else exit 9
-   fixes the rounding and commits again, then runs
-     shoalctl repro green 1 --test TestOrderKeepsCents   must pass, new commit
-   and writes .shoal/summary.json. It tells you when it is finished.
+4. The agent proves the bug, then the fix (shoalctl status: in-progress).
+   It commits a test that fails without the fix, then runs
+     shoalctl repro red 1 --file orders/order_test.go \
+       --test example.com/shop/orders::TestOrderKeepsCents
+   The id is the test as the report names it: package::Test (go-json) or
+   classname::name (junit). Red must fail: a pass is exit 9, an id not in
+   the report exit 4. It fixes the rounding, commits, then runs
+     shoalctl repro green 1 --test example.com/shop/orders::TestOrderKeepsCents
+   (green must pass), writes .shoal/summary.json, tells you it is finished.
 5. /exit in its window. Optional: shoalctl qa 1   one QA round: contract,
    suite vs baseline, lint, build. After 3 rounds the task is escalated.
 6. shoalctl done 1   final run and checks, summary and report, queued for
    merge. Refuses (exit 10) without the red/green proof.
 7. shoalctl merge   merges queued tasks in order through the gate; never
    pushes. shoalctl gc   closes merged tasks' windows and worktrees.
-Any time before merge: shoalctl abandon 1 --reason "<why>" gives the
+Any time before merge, shoalctl abandon 1 --reason "<why>"  gives the
 task up (asks y/N; status --all still lists it; branch and records stay)
 
 Feature: every new behaviour needs a new passing test or a decided manual
 check. See the case matrix with: shoalctl scope show <task>
 
-Hotfix: the bugfix steps, with three differences.
-  - The branch starts from [hotfix].production_ref (a branch, a tag, or
-    tag:<glob>), resolved locally; shoal never fetches.
+Hotfix: the bugfix steps and QA, with three differences.
+  - It branches from [hotfix].production_ref (a branch, a tag or
+    tag:<glob>; never fetched) and merges back into it (a tag: merge skips).
   - Minimal diff: at most [hotfix].max_diff_lines (default 100) added plus
     removed lines outside test files, else done refuses unless you pass
     shoalctl done <task> --accept-large-diff --reason "<why>"
-  - Full QA, no shortcuts.
-  With [hotfix].backport = true (the default), done creates a bugfix task
-  "Backport: <title>" to bring the fix to [merge].base.
+  - With [hotfix].backport = true (the default), done creates a bugfix task
+    "Backport: <title>" to bring the fix to [merge].base.
