@@ -73,6 +73,14 @@ Each item says whether it is built or planned. See [Roadmap](#roadmap) for the p
 
 ## Quick start
 
+### Requirements
+
+- macOS or Linux (Windows is beta, see below)
+- git 2.31+
+- tmux 3.2+ (`brew install tmux`)
+- Claude Code, with `claude` on your `PATH`
+- Go 1.27+, only if you install from source
+
 ### Install
 
 Three ways to install:
@@ -93,16 +101,43 @@ tar -xzf shoalctl_${VERSION}_${OS}_${ARCH}.tar.gz shoalctl && sudo mv shoalctl /
 shoalctl version
 ```
 
+`go install` puts the binary in `$(go env GOPATH)/bin` (usually `~/go/bin`). If your shell then says `command not found: shoalctl`, add that folder to your `PATH`:
+
+```sh
+echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.zshrc   # bash: ~/.bashrc
+source ~/.zshrc
+```
+
 Windows archives are `.zip` (`Get-FileHash shoalctl_<version>_windows_amd64.zip -Algorithm SHA256`, then compare with `checksums.txt`). Each archive holds only the `shoalctl` binary, `LICENSE` and `README.md`; the release fails if any `.db` file or `reports/` path would ship. Hooks call the binary by the absolute path `init` saw, so after moving or upgrading it run `shoalctl init` again (or `shoalctl doctor --fix`).
+
+### Set up a project
+
+Do this once per repository.
+
+1. **Install the agent team** (once per machine, not per project):
+   ```sh
+   shoalctl agents install      # writes the shoal-* agents to ~/.claude/agents/ (--commit: the repo's .claude/agents/ instead)
+   ```
+2. **Trust the repo in Claude Code.** In the repo's main checkout run `claude`, choose *Yes, I trust this folder*, then exit.
+3. **Register the project:**
+   ```sh
+   cd your-repo
+   shoalctl init                # wires the hooks; stealth by default, so nothing is committed
+   ```
+   `init` prints the project id and the config path, `~/.shoal/projects/<id>/config.toml`. Keep the id: `export` and `purge` take it.
+4. **Set the test command.** Open the config (for example `open -e ~/.shoal/projects/<id>/config.toml` on macOS) and set `command` and `format` under `[tests]`. `init` fills them in only for Go. See [Choosing `[tests].command` and `format`](#choosing-testscommand-and-format) for the value per stack.
+5. **Add setup if the tests need ignored files.** If the suite needs `.env`, `vendor/`, `node_modules/` or a virtualenv, set `[tests].setup` too, for example `setup = "cp {root}/.env . && composer install"`.
+6. **Check it:**
+   ```sh
+   shoalctl doctor              # checks hooks, DB, stuck tasks and runs; --fix repairs what is safe
+   ```
+7. **Open tmux.** Run shoal from a terminal inside tmux: `start` opens each task in its own tmux window.
 
 ### Use
 
 The flow (these commands are built):
 
 ```sh
-cd your-repo
-shoalctl init           # register the project, wire hooks (stealth, nothing committed); prints the config path
-                        # edit that config: set [tests].command, or format = "none" if there are no tests
 shoalctl new bugfix "Users page shows wrong display name"   # prints the slug, e.g. 1-users-page-shows-wrong-display-name
 shoalctl plan 1 app/Models/User.php 'resources/js/users/**'  # optional: expected files; asks on overlap with another task
 shoalctl start 1        # branch + worktree + baseline test run + tmux window + claude + attention watcher
@@ -123,9 +158,7 @@ shoalctl export <project-id> --out shoal-export.json   # every record and report
 shoalctl purge <project-id>                # human only: asks you to type the id, then deletes ~/.shoal/projects/<id>/
 ```
 
-Once per machine, `shoalctl agents install` puts the `shoal-*` agent definitions in `~/.claude/agents/` (or the repo's `.claude/agents/` with `--commit`). Planning is optional: `start` also runs a task straight from `new`.
-
-Requirements: macOS or Linux, git 2.31+, tmux 3.2+, and Claude Code (`claude` on `PATH`, trusted once in the main checkout: run `claude` there and choose *Yes, I trust this folder*).
+Planning is optional: `start` also runs a task straight from `new`.
 
 Platform support:
 
