@@ -25,10 +25,10 @@ var plannable = []string{StageNew, StageReady, StageBlocked}
 
 // unfoldable are the stages a task cannot be folded into: its work is
 // finished or gone.
-var unfoldable = []string{StageDone, StageMerging, StageMerged, StageFolded, StageWorktreeMissing}
+var unfoldable = []string{StageDone, StageMerging, StageMerged, StageFolded, StageWorktreeMissing, StageAbandoned}
 
 // closedOwnerStages excludes tasks whose claims no longer count.
-var closedOwnerStages = []string{StageMerged, StageFolded}
+var closedOwnerStages = []string{StageMerged, StageFolded, StageAbandoned}
 
 // OwnedClaim is an open claim together with the task holding it.
 type OwnedClaim struct {
@@ -493,6 +493,53 @@ func UnblockAfterMerge(ctx context.Context, tx *sql.Tx, merged int64) ([]int64, 
 		}
 	}
 	return ready, nil
+}
+
+// Abandonable are the stages abandon accepts: every stage before merged
+// except merging, which a running (or interrupted) merge owns.
+var Abandonable = []string{StageNew, StageReady, StageBlocked, StageStarting, StageBaselineFailed, StageInProgress,
+	StageQA, StageEscalated, StageNeedsRebase, StageDone, StageWorktreeMissing}
+
+// AbandonTask closes the task as abandoned by by, for reason ("" none),
+// guarded by its version and the abandonable stages. In the same
+// transaction it releases its claims, drops its merge-queue row and its own
+// waits, and releases the tasks serialized behind it: each one left with no
+// blocker becomes ready. It returns the task and the ids that became ready.
+func (s *Store) AbandonTask(ctx context.Context, t Task, by, reason string) (Task, []int64, error) {
+	var ready []int64
+	ts := now()
+	got, err := s.Update(ctx, t, Abandonable, `stage = ?, abandoned_by = ?, abandoned_at = ?, abandon_reason = ?,
+		closed_at = COALESCE(closed_at, ?), blocked_by = NULL, attention = NULL, attention_at = NULL`,
+		[]any{StageAbandoned, by, ts, nullable(reason), ts}, func(tx *sql.Tx) error {
+			ready = nil
+			if err := ReleaseTaskClaims(ctx, tx, t.ID); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM merge_queue WHERE task_id = ?`, t.ID); err != nil {
+				return fmt.Errorf("drop task %s from the merge queue: %w", t.Slug, err)
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM task_blockers WHERE task_id = ?`, t.ID); err != nil {
+				return fmt.Errorf("drop the waits of task %s: %w", t.Slug, err)
+			}
+			waiting, err := blockedOn(ctx, tx, t.ID)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM task_blockers WHERE blocker_id = ?`, t.ID); err != nil {
+				return fmt.Errorf("release tasks waiting on task %s: %w", t.Slug, err)
+			}
+			for _, id := range waiting {
+				ok, err := refreshBlocked(ctx, tx, id)
+				if err != nil {
+					return err
+				}
+				if ok {
+					ready = append(ready, id)
+				}
+			}
+			return nil
+		})
+	return got, ready, err
 }
 
 // MarkNeedsRebase moves the tasks among ids still at in-progress or qa to

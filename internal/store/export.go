@@ -92,7 +92,7 @@ func dumpTable(ctx context.Context, tx *sql.Tx, name string) ([]map[string]any, 
 // WorkingRows counts what DropWorkingRows deleted, by table.
 type WorkingRows map[string]int64
 
-// DropWorkingRows deletes a closed (merged or folded) task's working rows,
+// DropWorkingRows deletes a closed (merged, folded or abandoned) task's working rows,
 // the ones only an open task reads: its messages and their read marks,
 // file claims, hook marks, blocker rows on either side, and its merge-queue
 // row. The task row, its summary and every record (bugs, decisions,
@@ -110,7 +110,7 @@ func (s *Store) DropWorkingRows(ctx context.Context, taskID int64) (WorkingRows,
 			}
 			return fmt.Errorf("read task %d: %w", taskID, err)
 		}
-		if stage != StageMerged && stage != StageFolded {
+		if stage != StageMerged && stage != StageFolded && stage != StageAbandoned {
 			return fmt.Errorf("drop the working rows of task %d at %s: %w", taskID, stage, ErrStage)
 		}
 		for _, d := range []struct{ table, query string }{

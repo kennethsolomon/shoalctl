@@ -31,6 +31,9 @@ const (
 	StageBlocked         = "blocked"
 	StageFolded          = "folded"
 	StageWorktreeMissing = "worktree-missing"
+
+	// abandon: the human gave up on the task before it merged.
+	StageAbandoned = "abandoned"
 )
 
 type Task struct {
@@ -69,6 +72,10 @@ type Task struct {
 	FoldedInto  int64
 	Attention   string
 	AttentionAt string
+
+	AbandonedBy   string
+	AbandonedAt   string
+	AbandonReason string
 }
 
 const taskColumns = `id, slug, lane, title, ask, stage,
@@ -79,7 +86,8 @@ const taskColumns = `id, slug, lane, title, ask, stage,
 	COALESCE(started_at, ''), COALESCE(closed_at, ''),
 	qa_round, COALESCE(merged_sha, ''), COALESCE(parent_task_id, 0), COALESCE(gate_run_id, 0), COALESCE(large_diff_reason, ''),
 	COALESCE(blocked_by, 0), COALESCE(prev_stage, ''), COALESCE(folded_into, 0), COALESCE(attention, ''), COALESCE(attention_at, ''),
-	COALESCE(tmux_socket, '')`
+	COALESCE(tmux_socket, ''),
+	COALESCE(abandoned_by, ''), COALESCE(abandoned_at, ''), COALESCE(abandon_reason, '')`
 
 func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 	var t Task
@@ -89,7 +97,8 @@ func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 		&t.StartedAt, &t.ClosedAt,
 		&t.QARound, &t.MergedSHA, &t.ParentTaskID, &t.GateRunID, &t.LargeDiffReason,
 		&t.BlockedBy, &t.PrevStage, &t.FoldedInto, &t.Attention, &t.AttentionAt,
-		&t.TmuxSocket)
+		&t.TmuxSocket,
+		&t.AbandonedBy, &t.AbandonedAt, &t.AbandonReason)
 	return t, err
 }
 
