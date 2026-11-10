@@ -6,6 +6,7 @@ Base: `6bc02ca` (Phase 4 shipped, Vex round 5 SHIP). Approved by Kenneth 2026-11
 
 - Done: `version` (ldflags plus build info), `uninstall`, `export`, `purge`, `gc`, the release guard, `.goreleaser.yaml`, `.github/workflows/release.yml` (tag push only; `ci.yml` untouched), README install docs (still pre-alpha), spec §16 rows 77-82.
 - Vex HOLD round 1 on `d8dc033`: five findings fixed (section below).
+- Vex round 2 on `109ae03`: SHIP with six LOW findings, all closed (section below).
 - Next: Vex re-review; then Kenneth's outward steps (below) for the first tag.
 
 | Scope item | Where | Proof |
@@ -59,6 +60,19 @@ Reproducibility (`goreleaser 2.20.0 --snapshot --clean`, commit `e050a57`): two 
 
 Gates (fresh clone of `e050a57` in `/private/tmp`, macOS, run alone): `gofmt -l .` empty; `go vet` and `staticcheck` clean for GOOS darwin, linux, windows; `GOOS=linux|windows go test -c ./...` exit 0 (15 test binaries each); `caffeinate -i go test -race -count=1 ./...` pass, 189 s wall, `internal/cli` 185.6 s (three new tmux e2e tests); `goreleaser check` exit 2 (deprecated `brews` only); snapshot exit 0; guard `TestReleaseArtifacts` PASS on its `dist/`; `ci.yml` byte-identical to `6bc02ca`; actionlint on `release.yml` clean (no shellcheck installed).
 
+## Vex round 2 (SHIP on `109ae03`, six LOW)
+
+| # | Finding | Outcome | Commit | Test / proof |
+|---|---|---|---|---|
+| 1 | `removeFirstShoalEntry` read only the last `hooks` key of a group: `{"hooks":[user],"hooks":[shoal]}` lost the user entry | `refuseRepeatedKeys` (top level, event, group) in `decodeHooks` and `removeHooks`: uninstall, init and `doctor --fix` refuse with exit 3 before any change | `6e2727b` | `TestUninstallRefusesBeforeChangingAnything` (third shape; before the fix uninstall deleted the file), `TestMergeHooksRejectsInvalid` (three shapes) |
+| 2 | a re-run release job left a second draft | `release.replace_existing_draft: true` (in 2.20.0's `goreleaser jsonschema`; `check` still exit 2 for `brews` only) | `ed57bb0` | config only |
+| 3 | a failed formula push could not be re-run | own `formula` job, `needs: release`, formula as a 7-day run artifact (upload-artifact v4.6.2, download-artifact v4.3.0, SHA-pinned), `concurrency: homebrew-tap`, skip when the tap holds a newer version (`sort -V`); manual push in spec row 82 | `9f6b3da` | actionlint clean; version check run locally on 6 pairs; manual command (`--skip=publish,announce` with a local tag in a throwaway clone) wrote the `0.0.99` formula |
+| 4 | tag not unique across two SHOAL_HOMEs | tag is `<project id>/<slug>@<SHOAL_HOME>` (no nonce, no migration); older tags read as foreign: left open | `bcbe7f7` | `TestPhase5GCLeavesAnotherHomesWindowOpen`, `TestStartTagsItsWindow` |
+| 5 | qa renamed a window by id only | `escalate` checks the tag (shared `isTaskWindow`, task's socket), warns and leaves a foreign or untagged window as it was; the window-claims text above corrected (done fails safe) | `aeeaf00` | `TestEscalateRenamesOnlyTheTasksWindow` (foreign and untagged) |
+| 6 | gc removes git-ignored files with the worktree | documented: help, output line (`with its git-ignored files`), spec, README | `2dfe6d5` | `TestPhase5GCAfterMerge` (ignored `debug.log` goes, output says so) |
+
+Gates (fresh clone of `2dfe6d5` in `/private/tmp`, macOS, run alone): `gofmt -l .` empty; `go vet` and `staticcheck` clean for GOOS darwin, linux, windows (1-2 s each); `GOOS=linux|windows go test -c ./...` exit 0 (15 binaries each); `caffeinate -i go test -race -count=1 ./...` pass, 158 s wall (`internal/cli` 154.3 s); `goreleaser release --snapshot --clean` exit 0 (4 s, warm cache); guard `TestReleaseArtifacts` PASS on its `dist/`; actionlint v1.7.12 on `release.yml` clean; `ci.yml` byte-identical to `6bc02ca`.
+
 ## Manual dry run (2026-11-10, snapshot binary, scratch repo and SHOAL_HOME)
 
 ```sh
@@ -105,6 +119,7 @@ It found one wording bug, fixed in `02db19c` (uninstall named a missing CLAUDE.m
 - Runner labels `macos-15-intel`, `ubuntu-24.04-arm` and `windows-11-arm` were not exercised (no tag pushed). If one is unavailable the release waits on it; drop that row (its target still cross-compiles) or swap the label.
 - `brews` is deprecated in GoReleaser 2.10+; a future v3 removes it. A cask (`homebrew_casks`) would change the install to `brew install --cask` and is macOS-first.
 - The draft flow (upload to a draft, `gh release download` of a draft by tag, `gh release edit --draft=false`) and the formula push step could not be exercised without a tag; the asset check's shell logic was run locally against a copy of `dist/` (pass; an extra asset and a tampered archive both fail). If the guard or the asset check fails, the draft stays (invisible to the public); re-running the release job replaces it (`replace_existing_draft: true`, in GoReleaser 2.20.0's schema, `goreleaser check` still exit 2 for `brews` only), or delete it with `gh release delete <tag>`.
+- The `formula` job relies on "Re-run failed jobs" keeping the run's artifacts ("Re-run all jobs" drops them and re-runs the published release job, which fails); not exercised without a tag. Manual push in spec row 82.
 - gc trusts the `@shoal_task` tag. A window of a task started before this change has no tag, so gc leaves it open (and says so); close those by hand once. `status`, `doctor` and the stale-claim check still treat any live window under the recorded id as the task's; they never close a window, so the worst case is a claim that does not go stale (unchanged behaviour).
 - `gc` keeps task branches and `uninstall` keeps the `.git/info/exclude` lines: invisible to `git status`, but they remain in `.git`.
 - `withGitLock` records `merge` as the lock's command for every caller (doctor, gc too); cosmetic, pre-existing, not changed.
