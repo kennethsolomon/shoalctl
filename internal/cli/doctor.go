@@ -500,7 +500,7 @@ func (d *doctor) windows(ctx context.Context, p *project) error {
 	wins := d.env.tmuxWindows(ctx, tasks)
 	clean := true
 	for _, t := range tasks {
-		if t.TmuxWindow == "" || t.Stage == store.StageMerged || t.Stage == store.StageFolded {
+		if t.TmuxWindow == "" || contains(closedStages, t.Stage) {
 			continue
 		}
 		alive, known := wins.alive(t)

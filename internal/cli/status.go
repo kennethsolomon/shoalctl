@@ -36,6 +36,8 @@ type statusRow struct {
 	Claims    int    `json:"claims"`
 	// Phase 3: a started task that merges after another (late overlap, §9.2).
 	MergesAfter string `json:"merges_after"`
+	// abandon: who gave up on the task, and why when they said.
+	Abandoned string `json:"abandoned"`
 }
 
 // note is the NOTE column: everything in a row a human may need to act on.
@@ -56,6 +58,9 @@ func (r statusRow) note() string {
 	if r.Claims > 0 {
 		parts = append(parts, fmt.Sprintf("%d claim(s)", r.Claims))
 	}
+	if r.Abandoned != "" {
+		parts = append(parts, "abandoned by "+r.Abandoned)
+	}
 	if len(parts) == 0 {
 		return "-"
 	}
@@ -65,6 +70,7 @@ func (r statusRow) note() string {
 func (env Env) cmdStatus(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "print JSON")
+	all := fs.Bool("all", false, "every task: abandoned ones and ones closed more than 14 days ago too")
 	if _, err := parseArgs(fs, args, 0); err != nil {
 		return err
 	}
@@ -74,9 +80,22 @@ func (env Env) cmdStatus(ctx context.Context, args []string) error {
 	}
 	defer p.close()
 
-	tasks, err := p.db.ListTasks(ctx, time.Now().UTC().Add(-14*24*time.Hour).Format(time.RFC3339))
+	since := time.Now().UTC().Add(-14 * 24 * time.Hour).Format(time.RFC3339)
+	if *all {
+		since = ""
+	}
+	tasks, err := p.db.ListTasks(ctx, since)
 	if err != nil {
 		return err
+	}
+	if !*all {
+		shown := tasks[:0]
+		for _, t := range tasks {
+			if t.Stage != store.StageAbandoned {
+				shown = append(shown, t)
+			}
+		}
+		tasks = shown
 	}
 	alive := env.liveWindows(ctx)
 	slugs := map[int64]string{}
@@ -110,6 +129,12 @@ func (env Env) cmdStatus(ctx context.Context, args []string) error {
 			row.Baseline = baselineLabel(run)
 		}
 		row.Attention, row.Queue = t.Attention, place[t.ID]
+		if t.Stage == store.StageAbandoned {
+			row.Abandoned = t.AbandonedBy
+			if t.AbandonReason != "" {
+				row.Abandoned += ": " + t.AbandonReason
+			}
+		}
 		if t.BlockedBy != 0 {
 			who := slugs[t.BlockedBy]
 			if who == "" {
@@ -117,11 +142,11 @@ func (env Env) cmdStatus(ctx context.Context, args []string) error {
 			}
 			if t.Stage == store.StageBlocked {
 				row.BlockedBy = who
-			} else if t.Stage != store.StageMerged && t.Stage != store.StageFolded {
+			} else if !contains(closedStages, t.Stage) {
 				row.MergesAfter = who
 			}
 		}
-		if t.Stage != store.StageMerged && t.Stage != store.StageFolded {
+		if !contains(closedStages, t.Stage) {
 			cl, err := p.db.Claims(ctx, t.ID)
 			if err != nil {
 				return err

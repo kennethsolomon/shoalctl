@@ -187,7 +187,7 @@ commands:
   new <feature|bugfix|hotfix> "<title>" [--ask "<text>" | --ask-file <path>] [--scope "<text>"]...
   plan <task> [--todo <file>] <glob>...    expected file claims; asks on overlap (s/m/p/?)
   start <task> [--model <model>]
-  status [--json]
+  status [--json] [--all]                  --all: every task, abandoned and long-closed ones too
   test <task> [--kind gate|qa|baseline]
   test quarantine list [--all] | release <test>
   qa <task>
@@ -218,6 +218,7 @@ commands:
   promote lesson:<id>      human only: a lesson shown in 3 tasks becomes a project rule (context.md)
   doctor [--fix]      check shoal's state; --fix repairs what is safe (exit 11 while a problem remains)
   watch <task>        internal: the attention watcher start launches
+  abandon <task> [--reason "<text>"] [--force]   human only: give up on a task that has not merged
   gc                  close merged tasks' windows, remove their worktrees (git-ignored files such as .env go too) and working rows; flag records whose files are gone
   export <project-id> [--out <file>]   every record and report of a project, as JSON
   purge <project-id>  human only: delete the project's data under $SHOAL_HOME (asks for the id)
@@ -300,6 +301,8 @@ func Main(args []string, env Env, version string) int {
 		err = env.cmdPromote(ctx, args[1:])
 	case "uninstall":
 		err = env.cmdUninstall(ctx, args[1:])
+	case "abandon":
+		err = env.cmdAbandon(ctx, args[1:])
 	case "gc":
 		err = env.cmdGC(ctx, args[1:])
 	case "export":
