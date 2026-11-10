@@ -266,7 +266,9 @@ func (env Env) appendReportNote(p *project, slug, note string) error {
 }
 
 // mergeOne takes one done task through the gate into its target branch. It
-// returns false for a task with no merge target (a hotfix cut from a tag).
+// returns false for a task with no merge target (a hotfix cut from a tag),
+// and for one that is no longer done when re-read (abandoned while the run
+// went on): the run skips it with a note and goes on.
 func (env Env) mergeOne(ctx context.Context, p *project, t store.Task, acc []*acceptance) (bool, error) {
 	target := p.cfg.Merge.Base
 	if t.Lane == "hotfix" {
@@ -279,9 +281,24 @@ func (env Env) mergeOne(ctx context.Context, p *project, t store.Task, acc []*ac
 	}
 	tlock, err := p.lockTask(t, "merge")
 	if err != nil {
+		// A task that left done (abandoned, say, by the command that still
+		// holds its lock while it cleans up) is not mergeable: skip it.
+		if codeOf(err) == ExitBusy {
+			if cur, gerr := p.db.GetTask(ctx, t.Slug); gerr == nil && cur.Stage != store.StageDone {
+				fmt.Fprintf(env.Stdout, "%s: skipped, it is %s now, no longer done\n", t.Slug, cur.Stage)
+				return false, nil
+			}
+		}
 		return false, err
 	}
 	defer tlock.Release()
+	if t, err = p.db.GetTask(ctx, t.Slug); err != nil {
+		return false, err
+	}
+	if t.Stage != store.StageDone {
+		fmt.Fprintf(env.Stdout, "%s: skipped, it is %s now, no longer done\n", t.Slug, t.Stage)
+		return false, nil
+	}
 	if t, err = p.db.Update(ctx, t, []string{store.StageDone}, "stage = ?", []any{store.StageMerging}, queueState(ctx, t.ID, store.QueueRebasing)); err != nil {
 		return false, err
 	}

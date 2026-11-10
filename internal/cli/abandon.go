@@ -22,7 +22,9 @@ import (
 // does for a closed task runs: its tagged tmux window closes, its worktree
 // is removed (--force: changes and all) and its working rows go; its
 // attention watcher stops by itself once the task leaves the watched stages
-// and its window is gone, and abandon waits for it. What that cleanup
+// and its window is gone, and abandon waits for it. The prompt comes before
+// the task lock; the checks are redone under it, and a task that changed
+// meanwhile is refused with nothing changed. What that cleanup
 // cannot do is reported (exit 5) and left to gc. The branch, the summary
 // and every record stay.
 func (env Env) cmdAbandon(ctx context.Context, args []string) error {
@@ -36,27 +38,14 @@ func (env Env) cmdAbandon(ctx context.Context, args []string) error {
 	if err := env.requireHuman("abandon"); err != nil {
 		return err
 	}
-	p, t, lock, err := env.lockedTask(ctx, pos[0], "abandon")
+	p, t, err := env.openTask(ctx, pos[0])
 	if err != nil {
 		return err
 	}
 	defer p.close()
-	defer lock.Release()
-	switch {
-	case t.Stage == store.StageAbandoned:
-		return fail(ExitState, "task %s was already abandoned by %s at %s", t.Slug, t.AbandonedBy, t.AbandonedAt)
-	case t.Stage == store.StageMerged:
-		return fail(ExitState, "task %s is merged (%s); a merged task cannot be abandoned: revert its commit instead", t.Slug, shortSHA(t.MergedSHA))
-	case !contains(store.Abandonable, t.Stage):
-		return fail(ExitState, "task %s is at %s; abandon accepts a task at %s", t.Slug, t.Stage, strings.Join(store.Abandonable, ", "))
-	}
-	dirty, err := dirtyWorktree(ctx, t)
+	dirty, err := abandonChecks(ctx, t, *force)
 	if err != nil {
-		return fmt.Errorf("check the worktree %s of task %s: %w", t.Worktree, t.Slug, err)
-	}
-	if dirty && !*force {
-		return fail(ExitState, "task %s's worktree %s holds changes or untracked files; nothing changed. "+
-			"Commit or remove them, or pass --force to delete them with the worktree", t.Slug, t.Worktree)
+		return err
 	}
 
 	fmt.Fprintf(env.Stdout, "abandon task %d %s %q (%s, %s):\n", t.ID, t.Slug, t.Title, t.Lane, t.Stage)
@@ -77,12 +66,34 @@ func (env Env) cmdAbandon(ctx context.Context, args []string) error {
 		fmt.Fprint(env.Stdout, "  ")
 	}
 	fmt.Fprintln(env.Stdout, "the summary and every record stay")
+	// The prompt runs without the task lock, so a merge or another command
+	// is never held up while the human decides; the lock is taken after the
+	// answer and every check is redone under it.
 	ok, err := env.confirm("Abandon it? [y/N]: ")
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return fail(ExitState, "task %s not abandoned; nothing changed", t.Slug)
+	}
+	lock, err := p.lockTask(t, "abandon")
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	asked := t
+	if t, err = p.db.GetTask(ctx, asked.Slug); err != nil {
+		return err
+	}
+	if t.Stage != asked.Stage || t.Version != asked.Version {
+		return fail(ExitState, "task %s changed while you were deciding (now %s); nothing changed. Run shoalctl abandon %s again", t.Slug, t.Stage, t.Slug)
+	}
+	nowDirty, err := abandonChecks(ctx, t, true)
+	if err != nil {
+		return err
+	}
+	if nowDirty && !dirty {
+		return fail(ExitState, "task %s's worktree %s took changes while you were deciding; nothing changed. Run shoalctl abandon %s again", t.Slug, t.Worktree, t.Slug)
 	}
 
 	watched := t.TmuxWindow != ""
@@ -127,4 +138,26 @@ func (g *collector) watcherStopped(t store.Task) error {
 		return err
 	}
 	return l.Release()
+}
+
+// abandonChecks refuses a task abandon cannot take (§16 row 84) and reports
+// whether its worktree holds changes; a dirty one is refused without force.
+func abandonChecks(ctx context.Context, t store.Task, force bool) (bool, error) {
+	switch {
+	case t.Stage == store.StageAbandoned:
+		return false, fail(ExitState, "task %s was already abandoned by %s at %s", t.Slug, t.AbandonedBy, t.AbandonedAt)
+	case t.Stage == store.StageMerged:
+		return false, fail(ExitState, "task %s is merged (%s); a merged task cannot be abandoned: revert its commit instead", t.Slug, shortSHA(t.MergedSHA))
+	case !contains(store.Abandonable, t.Stage):
+		return false, fail(ExitState, "task %s is at %s; abandon accepts a task at %s", t.Slug, t.Stage, strings.Join(store.Abandonable, ", "))
+	}
+	dirty, err := dirtyWorktree(ctx, t)
+	if err != nil {
+		return false, fmt.Errorf("check the worktree %s of task %s: %w", t.Worktree, t.Slug, err)
+	}
+	if dirty && !force {
+		return false, fail(ExitState, "task %s's worktree %s holds changes or untracked files; nothing changed. "+
+			"Commit or remove them, or pass --force to delete them with the worktree", t.Slug, t.Worktree)
+	}
+	return dirty, nil
 }

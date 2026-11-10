@@ -290,3 +290,134 @@ func TestAbandonMergedRefused(t *testing.T) {
 		t.Fatalf("merged task changed: %+v", got)
 	}
 }
+
+// duringPrompt answers a prompt after running before, which sees the world
+// as it is while the human decides.
+type duringPrompt struct {
+	before func()
+	answer *strings.Reader
+}
+
+func (d *duringPrompt) Read(b []byte) (int, error) {
+	if d.before != nil {
+		d.before()
+		d.before = nil
+	}
+	return d.answer.Read(b)
+}
+
+// abandonDuring runs abandon at a terminal; before runs while the y/N
+// prompt waits, and the answer is y.
+func (h *harness) abandonDuring(before func(), want int, args ...string) (string, string) {
+	h.t.Helper()
+	h.env.Terminal = func() bool { return true }
+	h.env.Stdin = &duringPrompt{before: before, answer: strings.NewReader("y\n")}
+	defer func() { h.env.Terminal, h.env.Stdin = nil, nil }()
+	code, out, errOut := h.run(append([]string{"abandon"}, args...)...)
+	if code != want {
+		h.t.Fatalf("abandon %v exited %d, want %d\nstdout: %s\nstderr: %s", args, code, want, out, errOut)
+	}
+	return out, errOut
+}
+
+// The y/N prompt does not hold the task lock, so a merge or any other
+// command is not held up by a human deciding.
+func TestAbandonPromptsWithoutTheTaskLock(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	p := h.initWith(junitConfig)
+	slug := newTask(t, h, "bugfix", "sample task")
+	task := h.task(slug)
+	h.abandonDuring(func() {
+		l, err := p.lockTask(task, "test")
+		if err != nil {
+			t.Errorf("the task lock is held during the prompt: %v", err)
+			return
+		}
+		if err := l.Release(); err != nil {
+			t.Error(err)
+		}
+	}, ExitOK, slug)
+	if got := h.task(slug); got.Stage != store.StageAbandoned {
+		t.Fatalf("task not abandoned: %+v", got)
+	}
+}
+
+// A task that changed while the prompt waited (another command moved it on,
+// or its worktree took changes) is refused under the lock, nothing changed.
+func TestAbandonRefusesATaskThatChangedDuringThePrompt(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t).withSession()
+	h.initWith(junitConfig)
+	slug := newTask(t, h, "bugfix", "sample task")
+	h.mustRun("plan", slug, "src/**")
+	task := h.task(slug)
+	_, errOut := h.abandonDuring(func() {
+		if _, err := h.db().Update(context.Background(), task, []string{store.StageReady}, "title = title", nil, nil); err != nil {
+			t.Error(err)
+		}
+	}, ExitState, slug)
+	mustContain(t, "changed", errOut, "task "+slug+" changed while you were deciding (now ready); nothing changed", "shoalctl abandon "+slug+" again")
+	if got := h.task(slug); got.Stage != store.StageReady || got.AbandonedBy != "" || openClaimCount(t, h, task.ID) != 1 {
+		t.Fatalf("a changed task was abandoned: %+v", got)
+	}
+
+	started := startedTask(t, h, "bugfix", "started task")
+	_, errOut = h.abandonDuring(func() {
+		testutil.WriteFile(t, filepath.Join(started.Worktree, "late.txt"), "x")
+	}, ExitState, started.Slug)
+	mustContain(t, "dirty", errOut, "took changes while you were deciding; nothing changed")
+	if got := h.task(started.Slug); got.Stage != started.Stage || !fileExists(filepath.Join(started.Worktree, "late.txt")) {
+		t.Fatalf("a task whose worktree took changes was abandoned: %+v", got)
+	}
+}
+
+// A merge run that reaches a task abandoned since the queue was read skips
+// it with a note, whether abandon still holds the task lock or not, and the
+// tasks queued after it still merge.
+func TestMergeSkipsATaskAbandonedDuringTheRun(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t).withSession()
+	h.initWith(junitConfig)
+	a := startedTask(t, h, "feature", "Task A")
+	commitIn(t, a.Worktree, "feature.txt", "x")
+	finish(t, h, a.Slug, a.Worktree)
+	b := startedTask(t, h, "feature", "Task B")
+	commitIn(t, b.Worktree, "notes.txt", "x")
+	finish(t, h, b.Slug, b.Worktree)
+	queued := h.task(a.Slug)
+	h.abandonAs("y\n", ExitOK, a.Slug)
+
+	ctx := context.Background()
+	p, err := h.env.openProject(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.close()
+	var out strings.Builder
+	env := h.env
+	env.Stdout = &out
+	held, err := p.lockTask(queued, "abandon")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok, err := env.mergeOne(ctx, p, queued, nil)
+	if err := held.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if ok || err != nil {
+		t.Fatalf("mergeOne of an abandoned task, lock held: %v %v", ok, err)
+	}
+	if ok, err := env.mergeOne(ctx, p, queued, nil); ok || err != nil {
+		t.Fatalf("mergeOne of an abandoned task: %v %v", ok, err)
+	}
+	if n := strings.Count(out.String(), a.Slug+": skipped, it is abandoned now, no longer done\n"); n != 2 {
+		t.Fatalf("want the skip note twice, got:\n%s", out.String())
+	}
+	if ok, err := env.mergeOne(ctx, p, h.task(b.Slug), nil); !ok || err != nil {
+		t.Fatalf("the task queued after it did not merge: %v %v\n%s", ok, err, out.String())
+	}
+	if got := h.task(a.Slug); got.Stage != store.StageAbandoned {
+		t.Fatalf("abandoned task changed: %+v", got)
+	}
+}

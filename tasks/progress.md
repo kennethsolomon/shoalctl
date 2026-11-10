@@ -552,3 +552,15 @@ Base: `37d5fea`. Kenneth asked for a clearer flag name: `--details` and `--detai
 | One flag twice keeps the last value, as before (stdlib `flag`) | `cmdNew` | `TestNew` (`--details` twice, `--ask` twice) |
 | Usage shows `--details`/`--details-file`, says `--ask`/`--ask-file` still work | `usage`, `internal/cli/cli.go` | `TestUsageShowsDetailsAndTheOldAskNames`, `TestGuideNamesOnlyCommandsSubcommandsAndFlagsInUsage` |
 | Docs | guide `quick` step 1 and `flow` worked example, README Use block, full flow, Commands table; spec §4.4, §15, §16 row 86 | guide tests, `TestREADMEQuotesQuickSetupAndTestsVerbatimBetweenMarkers` |
+
+## Vex HOLD fixes after row 86
+
+Base: `7c2ac43`. Nothing pushed; the local `v0.1.0` tag was not touched.
+
+| Item | Where | Proof |
+|------|-------|-------|
+| `guide flow` step 4: `repro red` with its required `--file`, a real report id (`package::Test`); green without `--file`; exit 9 and 4 named | `docs/guide/flow.md` | `TestGuideCommandLinesPassTheirCommandsArgumentParsing` |
+| Every guide command line runs through its command's real argument parsing (continuations joined, placeholders filled with refs that do not exist): a usage error fails | `internal/cli/guide_test.go` | planted `repro red` without `--file`, `repro green --file`, `record lesson` without `--pattern`: all three failed; restored |
+| Hotfix differences per §6.3: start point and merge target, minimal diff, backport (full QA is the bugfix lane's too) | `docs/guide/flow.md`, spec §6.3 | guide tests |
+| abandon asks y/N before taking the task lock, then re-reads and re-checks under it: a changed stage/version or a worktree that took changes is exit 5, nothing changed | `cmdAbandon`, spec §16 row 84 | `TestAbandonPromptsWithoutTheTaskLock`, `TestAbandonRefusesATaskThatChangedDuringThePrompt` |
+| merge skips, with a note, a task that is no longer `done` under its lock (or whose lock is held while it is not `done`), and goes on | `mergeOne`, spec §9.4, README | `TestMergeSkipsATaskAbandonedDuringTheRun` |
