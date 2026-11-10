@@ -19,7 +19,7 @@
 
 ## Status
 
-> **Pre-alpha, not yet released.** Phases 0 to 4 are built: `init`, `new`, `plan` (cross-task claims and the overlap prompt), `start` (with an attention watcher), `status`, `done`, the full `doctor`, the `shoal-*` agent team (`agents`, `msg`, `contract`, `claim`/`release`), the QA loop (`qa`), the scope matrix (`scope`), red/green proofs (`repro`), the `test` command, the zero-regression `merge` gate with its merge queue, and the memory: `record`, `why`, `recall`, `brief`, `flag-stale` and the injecting `SessionStart`, `PreToolUse` and `PostToolUse` hooks, conventions (`convention`), lesson promotion (`promote`) and the opt-in managed CLAUDE.md block. Phase 5 is built too: `gc`, `export`, `purge`, `uninstall`, `version`, and the release pipeline (cross-compiled archives, checksums, a Homebrew formula), but no version has been tagged or published yet, so install from source for now. Each feature and command below is marked, and the [Roadmap](#roadmap) gives the phase. [`docs/spec.md`](docs/spec.md) is the full design. Screenshots are mockups.
+> **Alpha, v0.1.0.** Expect breaking changes before 1.0. Phases 0 to 5 are built: `init`, `new`, `plan` (cross-task claims and the overlap prompt), `start` (with an attention watcher), `status`, `done`, the full `doctor`, the `shoal-*` agent team (`agents`, `msg`, `contract`, `claim`/`release`), the QA loop (`qa`), the scope matrix (`scope`), red/green proofs (`repro`), the `test` command, the zero-regression `merge` gate with its merge queue, and the memory: `record`, `why`, `recall`, `brief`, `flag-stale` and the injecting `SessionStart`, `PreToolUse` and `PostToolUse` hooks, conventions (`convention`), lesson promotion (`promote`) and the opt-in managed CLAUDE.md block. Phase 5 adds `gc`, `export`, `purge`, `uninstall`, `version`, and the release pipeline (cross-compiled archives, checksums, a Homebrew formula). Each feature and command below is marked, and the [Roadmap](#roadmap) gives the phase. [`docs/spec.md`](docs/spec.md) is the full design. Screenshots are mockups.
 
 ## What is shoal
 
@@ -75,13 +75,13 @@ Each item says whether it is built or planned. See [Roadmap](#roadmap) for the p
 
 ### Install
 
-No version is published yet: until the first tag, only `go install` works. The other two are how releases will install.
+Three ways to install:
 
 ```sh
-# From source (works today; needs Go 1.27+)
+# From source (needs Go 1.27+)
 go install github.com/kennethsolomon/shoalctl/cmd/shoalctl@latest
 
-# Homebrew (macOS, Linux), once a release is published
+# Homebrew (macOS, Linux)
 brew install kennethsolomon/tap/shoalctl
 
 # Release archive: darwin, linux or windows; amd64 or arm64
@@ -315,16 +315,16 @@ deny_globs = [".env*"]
 | Phase | Scope | Status |
 |-------|-------|--------|
 | Design | Spec, README, mockups | **Done** |
-| 0: MVP | `init`, `new`, `start`, `status`, `done`, minimal hook-only `doctor`, baseline test run, report render | **Built** (not yet released) |
-| 1: Agent team + merge gate | `shoal-*` agents, messages, contracts, QA loop, scope matrix, hotfix backport, zero-regression merge gate, serialized `merge` | **Built** (not yet released) |
-| 2: Claims + queue | Cross-task file claims, overlap prompt, merge queue, full `doctor`, attention watcher | **Built** (not yet released) |
-| 3: Memory + hooks | Lessons, decisions, bugs, FTS5, injecting hooks, `why`, `recall` | **Built** (not yet released) |
-| 4: Conventions | Convention lifecycle, lesson promotion, managed CLAUDE.md block, conflict check | **Built** (not yet released) |
-| 5: Publish | `export`/`purge`/`uninstall`, `gc`, `version`, release pipeline (GoReleaser, release guard, FTS5 on every target), Homebrew formula | **Built** (no version tagged or published yet) |
+| 0: MVP | `init`, `new`, `start`, `status`, `done`, minimal hook-only `doctor`, baseline test run, report render | **Built** (v0.1.0) |
+| 1: Agent team + merge gate | `shoal-*` agents, messages, contracts, QA loop, scope matrix, hotfix backport, zero-regression merge gate, serialized `merge` | **Built** (v0.1.0) |
+| 2: Claims + queue | Cross-task file claims, overlap prompt, merge queue, full `doctor`, attention watcher | **Built** (v0.1.0) |
+| 3: Memory + hooks | Lessons, decisions, bugs, FTS5, injecting hooks, `why`, `recall` | **Built** (v0.1.0) |
+| 4: Conventions | Convention lifecycle, lesson promotion, managed CLAUDE.md block, conflict check | **Built** (v0.1.0) |
+| 5: Publish | `export`/`purge`/`uninstall`, `gc`, `version`, release pipeline (GoReleaser, release guard, FTS5 on every target), Homebrew formula | **Built** (v0.1.0) |
 
 ## Contributing
 
-shoal is pre-alpha. [Issues](https://github.com/kennethsolomon/shoalctl/issues) and discussion on the [spec](docs/spec.md) are welcome. Code contributions will open once the first release is tagged.
+shoal is alpha. [Issues](https://github.com/kennethsolomon/shoalctl/issues) and discussion on the [spec](docs/spec.md) are welcome. Code contributions are not open yet.
 
 ## License
 
