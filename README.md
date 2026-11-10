@@ -112,26 +112,40 @@ Windows archives are `.zip` (`Get-FileHash shoalctl_<version>_windows_amd64.zip 
 
 ### Set up a project
 
-Do this once per repository.
+The same steps are in `shoalctl guide setup` (this block is that file, `docs/guide/setup.md`).
 
-1. **Install the agent team** (once per machine, not per project):
-   ```sh
-   shoalctl agents install      # writes the shoal-* agents to ~/.claude/agents/ (--commit: the repo's .claude/agents/ instead)
-   ```
-2. **Trust the repo in Claude Code.** In the repo's main checkout run `claude`, choose *Yes, I trust this folder*, then exit.
-3. **Register the project:**
-   ```sh
-   cd your-repo
-   shoalctl init                # wires the hooks; stealth by default, so nothing is committed
-   ```
-   `init` prints the project id and the config path, `~/.shoal/projects/<id>/config.toml`. Keep the id: `export` and `purge` take it.
-4. **Set the test command.** Open the config (for example `open -e ~/.shoal/projects/<id>/config.toml` on macOS) and set `command` and `format` under `[tests]`. `init` fills them in only for Go. See [Choosing `[tests].command` and `format`](#choosing-testscommand-and-format) for the value per stack.
-5. **Add setup if the tests need ignored files.** If the suite needs `.env`, `vendor/`, `node_modules/` or a virtualenv, set `[tests].setup` too, for example `setup = "cp {root}/.env . && composer install"`.
-6. **Check it:**
-   ```sh
-   shoalctl doctor              # checks hooks, DB, stuck tasks and runs; --fix repairs what is safe
-   ```
-7. **Open tmux.** Run shoal from a terminal inside tmux: `start` opens each task in its own tmux window.
+<!-- guide:setup -->
+```text
+Set up a project. Do this once per repository.
+
+1. Install the agent team (once per machine, not per project):
+      shoalctl agents install
+   It writes the shoal-* agents to ~/.claude/agents/ (with --commit: the
+   repo's .claude/agents/ instead).
+2. Trust the repo in Claude Code. In the repo's main checkout run claude,
+   choose "Yes, I trust this folder", then exit.
+3. Register the project:
+      cd your-repo
+      shoalctl init
+   It wires the hooks. Stealth by default, so nothing is committed. init
+   prints the project id and the config path,
+   ~/.shoal/projects/<id>/config.toml. Keep the id: export and purge take it.
+4. Set the test command. Open the config (for example on macOS:
+   open -e ~/.shoal/projects/<id>/config.toml) and set command and format
+   under [tests]. init fills them in only for Go. For the value per stack
+   run: shoalctl guide tests
+5. Add setup if the tests need ignored files. If the suite needs .env,
+   vendor/, node_modules/ or a virtualenv, set [tests].setup too, for example
+      setup = "cp {root}/.env . && composer install"
+6. Check it:
+      shoalctl doctor
+   It checks hooks, DB, stuck tasks and runs; --fix repairs what is safe.
+7. Open tmux. Run shoal from a terminal inside tmux: start opens each task
+   in its own tmux window.
+
+Then run: shoalctl guide flow
+```
+<!-- /guide:setup -->
 
 ### Use
 
@@ -282,28 +296,51 @@ deny_globs = [".env*"]
 
 ### Choosing `[tests].command` and `format`
 
-`init` fills these in only for Go modules. For any other stack, set them once per project. `command` is what you would type to run the full suite. `format` is how shoal reads the result. Pick the first answer that applies:
+Also `shoalctl guide tests` (this block is that file, `docs/guide/tests.md`).
 
-1. The project has no tests: `none`. There is no regression gate.
-2. It is a Go module: `go-json`.
-3. The test runner can write a JUnit XML report (look for a flag like `--log-junit`, `--junitxml` or `--reporter=junit`): `junit`, with `{junit}` where the report path goes.
-4. Otherwise: `exit-code`. Any command works, but shoal only sees pass or fail for the whole suite, so the merge gate cannot name which test broke.
+<!-- guide:tests -->
+```text
+Choosing [tests].command and format
 
-Prefer `junit` (or `go-json`) whenever the runner supports it, because the zero-regression gate compares results test by test.
+init fills these in only for Go modules. For any other stack, set them once
+per project. command is what you would type to run the full suite. format
+is how shoal reads the result. Pick the first answer that applies:
 
-| Stack | `command` | `format` |
-|---|---|---|
-| Laravel (PHPUnit) | `php artisan test --log-junit {junit}` | `junit` |
-| Laravel (Pest) | `vendor/bin/pest --log-junit {junit}` | `junit` |
-| PHPUnit | `vendor/bin/phpunit --log-junit {junit}` | `junit` |
-| Go | `go test -json ./...` (written by `init`) | `go-json` |
-| Vitest | `npx vitest run --reporter=junit --outputFile={junit}` | `junit` |
-| Jest (needs `jest-junit`) | `JEST_JUNIT_OUTPUT_FILE={junit} npx jest --reporters=jest-junit` | `junit` |
-| pytest | `pytest --junitxml={junit}` | `junit` |
-| Script with no test runner | a smoke check, e.g. `python3 -m py_compile app.py` | `exit-code` |
-| No tests | `""` | `none` |
+1. The project has no tests: none. There is no regression gate.
+2. It is a Go module: go-json.
+3. The test runner can write a JUnit XML report (look for a flag like
+   --log-junit, --junitxml or --reporter=junit): junit, with {junit} where
+   the report path goes.
+4. Otherwise: exit-code. Any command works, but shoal only sees pass or
+   fail for the whole suite, so the merge gate cannot name which test broke.
 
-If the suite needs git-ignored files (`.env`, `vendor/`, `node_modules/`, a virtualenv), also set `[tests].setup`, for example `setup = "cp {root}/.env . && composer install"`. The baseline runs in a clean worktree that does not have them.
+Prefer junit (or go-json) whenever the runner supports it, because the
+zero-regression gate compares results test by test.
+
+format     stack: command
+junit      Laravel (PHPUnit): php artisan test --log-junit {junit}
+junit      Laravel (Pest): vendor/bin/pest --log-junit {junit}
+junit      PHPUnit: vendor/bin/phpunit --log-junit {junit}
+go-json    Go: go test -json ./...   (written by init)
+junit      Vitest: npx vitest run --reporter=junit --outputFile={junit}
+junit      Jest (needs jest-junit):
+             JEST_JUNIT_OUTPUT_FILE={junit} npx jest --reporters=jest-junit
+junit      pytest: pytest --junitxml={junit}
+exit-code  Script with no test runner: a smoke check, for example
+             python3 -m py_compile app.py
+none       No tests: ""
+
+In the config it looks like this:
+   [tests]
+   command = "php artisan test --log-junit {junit}"
+   format = "junit"
+
+If the suite needs git-ignored files (.env, vendor/, node_modules/, a
+virtualenv), also set [tests].setup, for example
+   setup = "cp {root}/.env . && composer install"
+The baseline runs in a clean worktree that does not have them.
+```
+<!-- /guide:tests -->
 
 ## Commands
 
