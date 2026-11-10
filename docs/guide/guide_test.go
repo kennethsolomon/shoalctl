@@ -50,6 +50,10 @@ func TestCheatSheetOpensWithTheQuickFlow(t *testing.T) {
 	if !strings.HasSuffix(quick, "\nEverything else is optional.\n") {
 		t.Errorf("quick.md must end with the line \"Everything else is optional.\":\n%s", quick)
 	}
+	lines := strings.Split(strings.TrimSuffix(quick, "\n"), "\n")
+	if len(lines) < 2 || !strings.HasPrefix(lines[len(lines)-2], "5. ") {
+		t.Errorf("step 5 must be directly followed by \"Everything else is optional.\":\n%s", quick)
+	}
 	for i := 1; i <= 5; i++ {
 		if strings.Count(quick, fmt.Sprintf("\n%d. ", i)) != 1 {
 			t.Errorf("quick.md must hold step %d exactly once:\n%s", i, quick)
