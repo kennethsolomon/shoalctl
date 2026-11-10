@@ -47,6 +47,10 @@ func (env Env) cmdUninstall(ctx context.Context, args []string) error {
 	if err := env.uninstallAgents(p); err != nil {
 		return err
 	}
+	if !fileExists(p.dir) {
+		fmt.Fprintf(env.Stdout, "data     none: %s is already gone (purged)\n", p.dir)
+		return nil
+	}
 	fmt.Fprintf(env.Stdout, "kept     %s (the project's memory, reports and config): shoalctl export %s, then shoalctl purge %s, to remove it\n", p.dir, p.id, p.id)
 	return nil
 }

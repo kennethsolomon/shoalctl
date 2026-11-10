@@ -248,6 +248,22 @@ func TestUninstallRefusesBeforeChangingAnything(t *testing.T) {
 	}
 }
 
+// uninstall after purge has no project data left to keep, and says so.
+func TestUninstallAfterPurge(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.mustRun("init")
+	p := h.project()
+	h.asHuman()
+	h.answers = p.id + "\n"
+	h.mustRun("purge", p.id)
+	out := h.mustRun("uninstall")
+	mustContain(t, "uninstall", out, "data     none: "+p.dir+" is already gone")
+	if strings.Contains(out, "kept     "+p.dir) {
+		t.Fatalf("uninstall says it kept a purged directory:\n%s", out)
+	}
+}
+
 func TestUninstallRemovesOnlyUneditedAgents(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
