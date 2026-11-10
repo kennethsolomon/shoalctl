@@ -203,6 +203,26 @@ func TestAbandonWaitsForTheWatcher(t *testing.T) {
 	}
 }
 
+// A watcher still running after the wait is reported with what to do:
+// nothing, unless that pid outlives its next tick.
+func TestAbandonReportsAWatcherThatStillRuns(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t).withSession()
+	p := h.initWith(junitConfig)
+	task := startedTask(t, h, "feature", "Watched")
+	l, err := lockfile.Acquire(watchLockPath(p, task.ID), 0, lockfile.Info{PID: 4242, Command: "watch", Task: task.Slug})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Release()
+	_, errOut := h.abandonAs("y\n", ExitState, task.Slug)
+	mustContain(t, "watcher", errOut, task.Slug+" is abandoned, but 1 thing(s) are left for you: the attention watcher of "+task.Slug+" still runs",
+		"pid 4242", "Nothing needs doing: it exits on its next tick", "If that pid still runs a minute from now, stop it with kill <pid>")
+	if got := h.task(task.Slug); got.Stage != store.StageAbandoned {
+		t.Fatalf("task at %s", got.Stage)
+	}
+}
+
 // A worktree holding changes is refused (exit 5) before anything changes,
 // as gc keeps one; --force removes it, changes and all.
 func TestAbandonDirtyWorktree(t *testing.T) {

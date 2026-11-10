@@ -134,7 +134,8 @@ func (g *collector) watcherStopped(t store.Task) error {
 	l, err := lockfile.Acquire(watchLockPath(g.p, t.ID), 3*watchInterval,
 		lockfile.Info{PID: os.Getpid(), Command: "abandon", Task: t.Slug, StartedAt: nowUTC()})
 	if errors.Is(err, lockfile.ErrHeld) {
-		g.left = append(g.left, fmt.Sprintf("the attention watcher of %s still runs (%v); it stops by itself once it sees the task abandoned", t.Slug, err))
+		g.left = append(g.left, fmt.Sprintf("the attention watcher of %s still runs (%v). Nothing needs doing: it exits on its next tick now that the task is abandoned, "+
+			"and nothing waits for it (abandon again only says it is abandoned). If that pid still runs a minute from now, stop it with kill <pid>", t.Slug, err))
 		return nil
 	}
 	if err != nil {
