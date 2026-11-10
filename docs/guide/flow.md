@@ -1,31 +1,29 @@
-Task lifecycle. <task> is the number or the slug that new printed.
+Task lifecycle, worked through one bug. <task> is the number or the slug.
 
-1. shoalctl new <feature|bugfix|hotfix> "<title>"   create the task
-2. shoalctl plan <task> <glob>...   optional: expected files; asks on
+1. shoalctl new bugfix "POST /api/orders saves 150 instead of 150.50"
+   prints 1-post-api-orders-saves-150-instead-of-150, so the task is 1.
+   Lanes: feature, bugfix, hotfix.
+2. Optional: shoalctl plan 1 'app/Orders/**'   expected files; asks on
    overlap with another task (s/m/p/?)
-3. shoalctl start <task>   branch, worktree, baseline test run, tmux
-   window, claude and the attention watcher
-4. shoalctl status   the board. When the agent says it is finished, exit
-   claude in its window with /exit.
-5. shoalctl qa <task>   one QA round: contract, suite vs baseline, lint,
-   build. After 3 rounds the task is escalated.
-6. shoalctl done <task>   final run and checks, summary and report, then
-   queued for merge
+3. shoalctl start 1   branch, worktree, baseline test run, tmux window,
+   claude and the attention watcher
+4. The agent proves the bug, then the fix (shoalctl status: in-progress):
+   commits TestOrderKeepsCents, which fails without the fix, then runs
+     shoalctl repro red 1 --test TestOrderKeepsCents     must fail, else exit 9
+   fixes the rounding and commits again, then runs
+     shoalctl repro green 1 --test TestOrderKeepsCents   must pass, new commit
+   and writes .shoal/summary.json. It tells you when it is finished.
+5. /exit in its window. Optional: shoalctl qa 1   one QA round: contract,
+   suite vs baseline, lint, build. After 3 rounds the task is escalated.
+6. shoalctl done 1   final run and checks, summary and report, queued for
+   merge. Refuses (exit 10) without the red/green proof.
 7. shoalctl merge   merges queued tasks in order through the gate; never
-   pushes
-8. shoalctl gc   closes merged tasks' windows, removes their worktrees
-Any time before merge: shoalctl abandon <task> --reason "<why>" gives the
+   pushes. shoalctl gc   closes merged tasks' windows and worktrees.
+Any time before merge: shoalctl abandon 1 --reason "<why>" gives the
 task up (asks y/N; status --all still lists it; branch and records stay)
 
 Feature: every new behaviour needs a new passing test or a decided manual
 check. See the case matrix with: shoalctl scope show <task>
-
-Bugfix: prove the bug, then the fix.
-  1. Commit a regression test that fails without the fix.
-  2. shoalctl repro red <task> --test <id>     must fail (exit 9 if not)
-  3. Fix the bug and commit.
-  4. shoalctl repro green <task> --test <id>   must pass on a later commit
-  done refuses (exit 10) without the red/green proof.
 
 Hotfix: the bugfix steps, with three differences.
   - The branch starts from [hotfix].production_ref (a branch, a tag, or
