@@ -183,7 +183,13 @@ func TestMergeHooks(t *testing.T) {
 
 func TestMergeHooksRejectsInvalid(t *testing.T) {
 	t.Parallel()
-	for _, in := range []string{"not json", "[1, 2]", `{"hooks": []}`, `{"hooks": {"Stop": {"x": 1}}}`, `{"hooks": {"Stop": [{"hooks": "nope"}]}}`, "null"} {
+	for _, in := range []string{"not json", "[1, 2]", `{"hooks": []}`, `{"hooks": {"Stop": {"x": 1}}}`, `{"hooks": {"Stop": [{"hooks": "nope"}]}}`, "null",
+		// Repeated keys: a JSON parser keeps only the last, and replacing the
+		// shoal entry by name would drop the user's entry with it.
+		`{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "mine"}], "hooks": [{"type": "command", "command": "/old/shoalctl hook stop"}]}]}}`,
+		`{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "mine"}]}], "Stop": [{"hooks": [{"type": "command", "command": "/old/shoalctl hook stop"}]}]}}`,
+		`{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "mine"}]}]}, "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "/old/shoalctl hook stop"}]}]}}`,
+	} {
 		if _, _, err := mergeHooks([]byte(in), "/bin/shoalctl"); err == nil {
 			t.Errorf("mergeHooks(%q): want error", in)
 		}

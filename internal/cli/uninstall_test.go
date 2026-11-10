@@ -234,11 +234,12 @@ func TestUninstallRefusesBeforeChangingAnything(t *testing.T) {
 	testutil.WriteFile(t, settings, "[not, an, object]")
 	mustContain(t, "bad settings", h.expectCode(ExitConfig, "uninstall"), "not a JSON object", "Nothing was changed")
 
-	// Two "hooks" keys, or one event twice: a JSON parser keeps only the last,
-	// and removing by name would drop both. Refused before anything changes.
+	// Two "hooks" keys (top level or in one group), or one event twice: a JSON
+	// parser keeps only the last, and removing by name would drop both. Refused before anything changes.
 	for _, dup := range []string{
 		strings.Replace(registered, "{", `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "mine"}]}]},`, 1),
 		strings.Replace(registered, `"hooks": {`, `"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "mine"}]}], "Stop": [],`, 1),
+		`{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "mine"}], "hooks": [{"type": "command", "command": "/bin/shoalctl hook stop || true"}]}]}}`,
 	} {
 		testutil.WriteFile(t, settings, dup)
 		mustContain(t, "duplicate keys", h.expectCode(ExitConfig, "uninstall"), "more than once", "Nothing was changed")

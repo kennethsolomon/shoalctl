@@ -25,7 +25,7 @@ Base: `6bc02ca` (Phase 4 shipped, Vex round 5 SHIP). Approved by Kenneth 2026-11
 
 | Row | Decision |
 |-----|----------|
-| 77 | uninstall: hook entries (any event), the managed block, unedited `shoal-*` agents (user-level only when no other project is registered); byte-exact; shoal-created files deleted; a repeated `hooks` key (top level or event) refused with exit 3; data, exclude lines and branches kept ("already gone" after purge) |
+| 77 | uninstall: hook entries (any event), the managed block, unedited `shoal-*` agents (user-level only when no other project is registered); byte-exact; shoal-created files deleted; a repeated `hooks` key (top level, event or inside a group) refused with exit 3, by init and doctor --fix too; data, exclude lines and branches kept ("already gone" after purge) |
 | 78 | gc: closed tasks only, per task lock; dirty worktree first (task left alone, exit 5); window killed only when tagged `@shoal_task` = `<project id>/<slug>`, else left open and forgotten; `git worktree remove` without `--force` (kept, exit 5); working rows dropped; records whose files are all gone from `[merge].base` flagged stale; branches kept |
 | 79 | export/purge take the project id and work without the checkout; purge: human types the id, refused with worktrees left or locks held |
 | 80 | release.yml: FTS5 on six native runners; one build to a draft release, guard, draft assets checked against the guarded checksums, draft published; actions pinned by SHA, GoReleaser v2.20.0 |

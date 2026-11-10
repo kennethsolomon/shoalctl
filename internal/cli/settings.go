@@ -241,12 +241,15 @@ func jsonEqual(a, b json.RawMessage) bool {
 	return fmt.Sprint(x) == fmt.Sprint(y)
 }
 
-// decodeHooks validates the settings shape shoal edits and returns the groups
-// of each event.
+// decodeHooks validates the settings shape shoal edits (no repeated key it
+// edits by name) and returns the groups of each event.
 func decodeHooks(data []byte) (map[string][]hookGroup, error) {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(data, &top); err != nil || top == nil {
 		return nil, fmt.Errorf("not a JSON object: %v", err)
+	}
+	if err := refuseRepeatedKeys(data); err != nil {
+		return nil, err
 	}
 	out := map[string][]hookGroup{}
 	raw, ok := top["hooks"]
@@ -330,6 +333,36 @@ func mergeHooks(data []byte, exe string) ([]byte, bool, error) {
 		return data, false, nil
 	}
 	return doc, true, nil
+}
+
+// refuseRepeatedKeys fails when a key shoal edits by name appears more than
+// once: the top-level "hooks", an event under it, or "hooks" inside a hook
+// group. A JSON parser keeps only the last of repeated keys, and an edit by
+// name would drop them all, the user's entries included. doc is a valid JSON
+// object.
+func refuseRepeatedKeys(doc []byte) error {
+	top := topValue(doc)
+	if countKey(doc, top, "hooks") > 1 {
+		return fmt.Errorf(`the top-level key "hooks" appears more than once`)
+	}
+	hooks, ok := member(doc, top, "hooks")
+	if !ok || doc[hooks.val.start] != '{' {
+		return nil
+	}
+	for _, ev := range objectMembers(doc, hooks.val) {
+		if countKey(doc, hooks.val, ev.key) > 1 {
+			return fmt.Errorf(`the key "hooks.%s" appears more than once`, ev.key)
+		}
+		if doc[ev.val.start] != '[' {
+			continue
+		}
+		for i, g := range arrayElements(doc, ev.val) {
+			if doc[g.start] == '{' && countKey(doc, g, "hooks") > 1 {
+				return fmt.Errorf(`the key "hooks" in hooks.%s[%d] appears more than once`, ev.key, i)
+			}
+		}
+	}
+	return nil
 }
 
 // eventArray finds hooks.<event> in doc.
@@ -576,19 +609,12 @@ func removeHooks(data []byte, keepHooks bool) ([]byte, int, error) {
 	if !ok {
 		return data, 0, nil
 	}
-	// A JSON parser keeps only the last of repeated keys, and removing by
-	// name would drop them all, the user's entries included.
-	if countKey(data, topValue(data), "hooks") > 1 {
-		return nil, 0, fmt.Errorf(`the top-level key "hooks" appears more than once`)
+	if err := refuseRepeatedKeys(data); err != nil {
+		return nil, 0, err
 	}
 	var events map[string]json.RawMessage
 	if json.Unmarshal(rawHooks, &events) != nil || events == nil {
 		return data, 0, nil
-	}
-	for event := range events {
-		if countKey(data, hooksObject(data), event) > 1 {
-			return nil, 0, fmt.Errorf(`the key "hooks.%s" appears more than once`, event)
-		}
 	}
 	doc, removed := data, 0
 	for event, raw := range events {
