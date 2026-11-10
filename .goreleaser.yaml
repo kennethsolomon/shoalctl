@@ -81,6 +81,11 @@ release:
     owner: kennethsolomon
     name: shoalctl
   prerelease: auto
+  # Created as a draft, which only repo writers see. release.yml runs the
+  # release guard on dist/, checks the uploaded assets against
+  # dist/checksums.txt, and only then publishes the draft. One build: the
+  # guarded bytes are the published bytes.
+  draft: true
 
 # brews writes a formula, as spec §2 names it (kennethsolomon/tap/shoalctl).
 # GoReleaser 2.10+ marks brews deprecated in favour of homebrew_casks, so
@@ -91,12 +96,11 @@ brews:
     repository:
       owner: kennethsolomon
       name: homebrew-tap
-      # A fine-grained token with Contents read/write on homebrew-tap only.
-      # Without it the formula is still written to dist/ but never pushed.
-      token: '{{ envOrDefault "HOMEBREW_TAP_GITHUB_TOKEN" "" }}'
-    # An unset or empty token (a missing Actions secret is an empty string)
-    # skips the push; the release workflow also passes --skip=homebrew then.
-    skip_upload: '{{ if envOrDefault "HOMEBREW_TAP_GITHUB_TOKEN" "" }}false{{ else }}true{{ end }}'
+    # GoReleaser never pushes the formula: it only writes it to
+    # dist/homebrew/Formula/shoalctl.rb. release.yml pushes that file to the
+    # tap after the guarded draft is published, and only for a stable tag
+    # with HOMEBREW_TAP_GITHUB_TOKEN set (a draft's URLs do not download).
+    skip_upload: "true"
     directory: Formula
     commit_msg_template: "chore(formula): shoalctl {{ .Tag }}"
     homepage: https://github.com/kennethsolomon/shoalctl

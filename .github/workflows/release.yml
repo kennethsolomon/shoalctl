@@ -85,35 +85,74 @@ jobs:
           version: "~> v2"
           install-only: true
 
-      # Build everything for the tag without publishing, so the guard sees
-      # the exact archives before anything leaves the runner.
-      - name: Build the release (nothing published)
+      # One build. It uploads to a draft release (.goreleaser.yaml
+      # release.draft), which only repo writers can see; nothing is public
+      # until the guard and the asset check below pass. GoReleaser never
+      # pushes the formula (brews skip_upload); the last step does.
+      - name: Build and upload to a draft release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: goreleaser release --clean --skip=publish
+        run: goreleaser release --clean
 
       - name: Release guard (no .db file, no reports/ path, binary + LICENSE + README only)
         run: SHOAL_DIST="$GITHUB_WORKSPACE/dist" go test -count=1 -run TestReleaseArtifacts -v ./internal/releaseguard
 
-      - name: Keep the checked checksums
-        run: cp dist/checksums.txt "$RUNNER_TEMP/checked-checksums.txt"
-
-      # Builds are reproducible (-trimpath, commit timestamps), so this run
-      # rebuilds the same bytes and publishes them. Without the tap token
-      # the formula is not pushed.
-      - name: Publish
+      # The draft's assets must be exactly the guarded files: same
+      # checksums.txt, and every archive hashing to its line in it.
+      - name: Draft assets are the guarded ones
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
         run: |
-          skip=""
-          if [ -z "$HOMEBREW_TAP_GITHUB_TOKEN" ]; then
-            echo "::warning::HOMEBREW_TAP_GITHUB_TOKEN is not set; the Homebrew formula is not published"
-            skip="--skip=homebrew"
+          got="$RUNNER_TEMP/draft-assets"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$got"
+          if ! cmp -s dist/checksums.txt "$got/checksums.txt"; then
+            echo "::error::the draft's checksums.txt differs from the guarded dist/checksums.txt; the draft stays unpublished"
+            diff dist/checksums.txt "$got/checksums.txt" || true
+            exit 1
           fi
-          goreleaser release --clean $skip
+          if ! (cd "$got" && sha256sum --check --strict checksums.txt); then
+            echo "::error::a draft asset does not match the guarded checksums; the draft stays unpublished"
+            exit 1
+          fi
+          want=$(awk '{print $2}' dist/checksums.txt | sort)
+          have=$(cd "$got" && for f in *; do [ "$f" = checksums.txt ] || echo "$f"; done | sort)
+          if [ "$want" != "$have" ]; then
+            echo "::error::the draft holds other assets than the guarded ones: want [$want], have [$have]"
+            exit 1
+          fi
 
-      - name: Published archives are the checked ones
+      - name: Publish the draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+
+      # A prerelease tag (v1.2.0-rc.1: any "-" suffix, as GoReleaser's
+      # prerelease: auto reads it) or a missing token pushes no formula.
+      - name: Push the Homebrew formula
+        env:
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
         run: |
-          diff "$RUNNER_TEMP/checked-checksums.txt" dist/checksums.txt
-          SHOAL_DIST="$GITHUB_WORKSPACE/dist" go test -count=1 -run TestReleaseArtifacts -v ./internal/releaseguard
+          case "$TAG" in
+            *-*) echo "::notice::$TAG is a prerelease; the Homebrew formula is not pushed"; exit 0 ;;
+          esac
+          if [ -z "$HOMEBREW_TAP_GITHUB_TOKEN" ]; then
+            echo "::warning::HOMEBREW_TAP_GITHUB_TOKEN is not set; the Homebrew formula is not pushed"
+            exit 0
+          fi
+          tap="$RUNNER_TEMP/homebrew-tap"
+          git clone --depth 1 "https://x-access-token:${HOMEBREW_TAP_GITHUB_TOKEN}@github.com/kennethsolomon/homebrew-tap.git" "$tap"
+          mkdir -p "$tap/Formula"
+          cp dist/homebrew/Formula/shoalctl.rb "$tap/Formula/shoalctl.rb"
+          cd "$tap"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/shoalctl.rb
+          if git diff --cached --quiet; then
+            echo "formula unchanged"
+            exit 0
+          fi
+          git commit -m "chore(formula): shoalctl $TAG"
+          git push origin HEAD:main
