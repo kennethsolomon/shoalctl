@@ -25,6 +25,7 @@ shoalctl guide: the short manual. Each topic below fits one screen.
    shoalctl doctor                  find problems (exit 11 while one stays)
    shoalctl doctor --fix            repair what is safe
    shoalctl status                  see which task is stuck or blocked
+   shoalctl abandon <task>          give up on a task that has not merged
    shoalctl why <file>              stored reasons plus git log for a file
    shoalctl recall <query>          search lessons, decisions, bugs, answers
 

@@ -14,6 +14,8 @@ Task lifecycle. <task> is the number or the slug that new printed.
 7. shoalctl merge   merges queued tasks in order through the gate; never
    pushes
 8. shoalctl gc   closes merged tasks' windows, removes their worktrees
+Any time before merge: shoalctl abandon <task> --reason "<why>" gives the
+task up (asks y/N; status --all still lists it; branch and records stay)
 
 Feature: every new behaviour needs a new passing test or a decided manual
 check. See the case matrix with: shoalctl scope show <task>
