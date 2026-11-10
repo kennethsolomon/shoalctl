@@ -27,12 +27,13 @@ tap repo, secrets) are Kenneth's, not this plan's.
 
 - [x] 6. `.goreleaser.yaml`: CGO_ENABLED=0, darwin/linux/windows x amd64/arm64, `-trimpath`, commit
   timestamps (reproducible), archives = binary + LICENSE + README.md, `checksums.txt`, formula
-  for `kennethsolomon/homebrew-tap` pushed only with a non-empty `HOMEBREW_TAP_GITHUB_TOKEN`.
+  for `kennethsolomon/homebrew-tap` (written by GoReleaser, pushed by release.yml for stable tags
+  with a non-empty `HOMEBREW_TAP_GITHUB_TOKEN`).
 - [x] 7. `internal/releaseguard`: fails on `.db` (and companions), `reports/`, stray files, a missing
   binary, unlisted or wrong checksums. Planted-file tests.
 - [x] 8. `.github/workflows/release.yml`, on `v*` tags only: FTS5 spike on six native runners, full
-  suite on Linux/macOS (Windows non-blocking), build `--skip=publish`, guard, publish, checksum
-  equality. `ci.yml` untouched.
+  suite on Linux/macOS (Windows non-blocking), one build to a draft release, guard, draft assets
+  checked against the guarded checksums, publish the draft, formula push. `ci.yml` untouched.
 
 ## Acceptance and docs
 
@@ -57,4 +58,4 @@ SHOAL_DIST=$PWD/dist go test -count=1 -run TestReleaseArtifacts ./internal/relea
 ## Risks
 
 See `tasks/progress.md`, Phase 5 "Open risks": untested runner labels, deprecated `brews`,
-the guard runs before a rebuild (reproducible, diffed after), branches and exclude lines kept.
+the draft-release flow not run on GitHub yet, branches and exclude lines kept.

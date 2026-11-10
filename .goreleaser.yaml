@@ -89,7 +89,7 @@ release:
 
 # brews writes a formula, as spec §2 names it (kennethsolomon/tap/shoalctl).
 # GoReleaser 2.10+ marks brews deprecated in favour of homebrew_casks, so
-# `goreleaser check` exits 1 with "valid, but uses deprecated properties";
+# `goreleaser check` exits 2 with "valid, but uses deprecated properties";
 # the release itself only warns. See tasks/progress.md, Phase 5 risks.
 brews:
   - name: shoalctl
