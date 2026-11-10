@@ -95,21 +95,37 @@ func TestPhase5GCAfterMerge(t *testing.T) {
 		t.Fatalf("the task's window %s is not open before gc: %q", task.TmuxWindow, out)
 	}
 
+	// A dirty worktree is checked first: gc then leaves the whole task alone,
+	// window and working rows included, and says so (exit 5).
 	testutil.WriteFile(t, filepath.Join(task.Worktree, "notes.txt"), "mine")
 	errOut := h.expectCode(ExitState, "gc")
 	mustContain(t, "gc with an untracked file", errOut, "kept "+task.Slug+"'s worktree "+task.Worktree, "run gc again")
 	if !fileExists(filepath.Join(task.Worktree, "notes.txt")) {
 		t.Fatal("gc deleted an untracked file")
 	}
-	if out := h.tmuxOut("list-windows", "-a", "-F", "#{window_id}"); strings.Contains(out, task.TmuxWindow) {
-		t.Fatalf("window %s still open after gc: %q", task.TmuxWindow, out)
+	if out := h.tmuxOut("list-windows", "-a", "-F", "#{window_id}"); !strings.Contains(out, task.TmuxWindow) {
+		t.Fatalf("gc closed window %s of a task whose worktree it kept: %q", task.TmuxWindow, out)
+	}
+	if h.task(task.Slug).TmuxWindow != task.TmuxWindow {
+		t.Fatal("gc forgot the window of a task whose worktree it kept")
+	}
+	db := h.db()
+	ctx := context.Background()
+	if msgs, _ := db.Inbox(ctx, task.ID, "shoal-lead", true); len(msgs) != 1 {
+		t.Fatalf("gc dropped the rows of a task whose worktree it kept: %+v", msgs)
+	}
+
+	os.Remove(filepath.Join(task.Worktree, "notes.txt"))
+	out := h.mustRun("gc")
+	mustContain(t, "gc", out, "window   "+task.Slug+": closed tmux window "+task.TmuxWindow,
+		"worktree "+task.Slug+": removed "+task.Worktree+" (branch "+task.Branch+" kept)")
+	if wins := h.tmuxOut("list-windows", "-a", "-F", "#{window_id}"); strings.Contains(wins, task.TmuxWindow) {
+		t.Fatalf("window %s still open after gc: %q", task.TmuxWindow, wins)
 	}
 	merged := h.task(task.Slug)
 	if merged.TmuxWindow != "" {
 		t.Fatalf("window not forgotten: %+v", merged)
 	}
-	db := h.db()
-	ctx := context.Background()
 	if msgs, _ := db.Inbox(ctx, merged.ID, "shoal-lead", true); len(msgs) != 0 {
 		t.Fatalf("messages kept: %+v", msgs)
 	}
@@ -128,9 +144,6 @@ func TestPhase5GCAfterMerge(t *testing.T) {
 		t.Fatalf("decision on a live file flagged: %+v", decisions)
 	}
 
-	os.Remove(filepath.Join(task.Worktree, "notes.txt"))
-	out := h.mustRun("gc")
-	mustContain(t, "gc", out, "worktree "+task.Slug+": removed "+task.Worktree+" (branch "+task.Branch+" kept)")
 	if fileExists(task.Worktree) {
 		t.Fatal("worktree still on disk")
 	}

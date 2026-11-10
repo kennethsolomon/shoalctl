@@ -14,9 +14,10 @@ import (
 )
 
 // cmdGC cleans up after closed (merged or folded) tasks (§4.4): it closes
-// their tmux windows, removes their worktrees with git worktree remove (a
-// worktree with changes is kept and reported, exit 5), and drops their
-// working rows, keeping the summary and every record (§7.4). It then flags
+// their tmux windows, removes their
+// worktrees with git worktree remove, and drops their working rows, keeping
+// the summary and every record (§7.4). A task whose worktree holds changes
+// is left alone, window included, and reported (exit 5). It then flags
 // stale every record whose files are all gone from the base branch (§11.1).
 // It never deletes a branch, and never touches an open task.
 func (env Env) cmdGC(ctx context.Context, args []string) error {
@@ -80,6 +81,9 @@ func (g *collector) task(ctx context.Context, t store.Task) error {
 		return err
 	}
 	defer lock.Release()
+	if g.dirty(ctx, t) {
+		return nil
+	}
 	if err := g.window(ctx, t); err != nil {
 		return err
 	}
@@ -131,6 +135,25 @@ func (g *collector) window(ctx context.Context, t store.Task) error {
 		g.say("window   %s: forgot the gone tmux window %s", t.Slug, t.TmuxWindow)
 	}
 	return nil
+}
+
+// dirty reports whether a closed task's worktree holds changes or untracked
+// files. Such a task is left alone, window and rows included, and reported:
+// someone may still be working in it.
+func (g *collector) dirty(ctx context.Context, t store.Task) bool {
+	if t.Worktree == "" || !fileExists(t.Worktree) {
+		return false
+	}
+	st, err := gitx.Run(ctx, t.Worktree, "status", "--porcelain")
+	if err != nil {
+		g.left = append(g.left, fmt.Sprintf("kept %s's worktree %s and its window: git status failed there: %v", t.Slug, t.Worktree, err))
+		return true
+	}
+	if st == "" {
+		return false
+	}
+	g.left = append(g.left, fmt.Sprintf("kept %s's worktree %s and its window: it holds changes or untracked files. Commit or remove what is in it, then run gc again", t.Slug, t.Worktree))
+	return true
 }
 
 // worktree removes a closed task's worktree with git worktree remove, which
