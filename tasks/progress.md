@@ -520,3 +520,23 @@ Base: `8dc1e63`. A task made by mistake (`shoalctl new bugfix "sample task"`) co
 | Abandoned counts as closed: claim conflicts, folding, msg/claim/scope, gc, doctor windows | `closedStages`, `closedOwnerStages`, `unfoldable`, `DropWorkingRows` | `TestAbandonStartedTask` (gc nothing to collect, doctor ok) |
 | `status` hides abandoned; `--all` shows every task with who and why | `internal/cli/status.go` | `TestAbandonNeverStartedTask` |
 | Docs | guide index and flow, README Use, Commands, human-only list, exit 5; spec §4.4, §4.5, §6, §10.4, §16 row 84 | guide tests |
+
+## Quick flow first (spec §16 row 85)
+
+Base: `d88da93`. Kenneth, testing shoal for the first time, found the cheat sheet confusing: `shoalctl guide` now opens with the minimal five-command bugfix flow and the line "Everything else is optional." Nothing pushed; the local `v0.1.0` tag was not touched.
+
+Accuracy check against the code (no behaviour changed):
+- `done` needs no `qa`: it accepts `in-progress`, `qa` or `needs-rebase` (`cmdDone`).
+- Red/green is not automatic: the agent runs `shoalctl repro red` and `repro green` itself, as the brief (`renderTeam`) and `shoal-lead` tell it; no hook runs them. `done` refuses (exit 10) without the proof and (exit 5) without `.shoal/summary.json`, which the brief also asks for.
+- `status` shows no proof: STAGE stays `in-progress` until `done` (then `done`, queued), NOTE shows `NEEDS ATTENTION` when the watcher sees claude waiting.
+- `done` refuses while the claude session runs (unless `--force`), so `/exit` comes first.
+- The window's first line is `sessionPrompt`: "Read .shoal/brief.md first. It is your task brief. Follow it."
+
+| Item | Where | Proof |
+|------|-------|-------|
+| Five-command flow, single-sourced, before the rest of the cheat sheet | `docs/guide/quick.md`, `guide.Quick`, `guide.Index` | `TestCheatSheetOpensWithTheQuickFlow`, `TestGuideOutputIsPlainASCIIUnder80ColumnsAndOneScreen` |
+| Its quote of the prompt start sends claude stays true | `internal/cli/guide_test.go` | `TestGuideQuickFlowQuotesTheOpeningWordsStartSendsClaude` |
+| README Use opens with the same block | README `<!-- guide:quick -->` markers | `TestREADMEQuotesQuickSetupAndTestsVerbatimBetweenMarkers` |
+| Optional `plan`/`qa`/`gc` kept in a compact group; `new feature` moved to `guide flow` | `docs/guide/index.md`, `docs/guide/flow.md` | `TestGuideNamesOnlyCommandsSubcommandsAndFlagsInUsage` |
+| `guide flow`: one worked bugfix, slug `1-post-api-orders-saves-150-instead-of-150` (from `slugWords`, cut at 40 characters) | `docs/guide/flow.md` | guide tests |
+| Docs | README Quick start line, spec §4.4 row and §16 row 85 | - |
