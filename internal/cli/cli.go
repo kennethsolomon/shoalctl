@@ -217,7 +217,7 @@ commands:
   promote lesson:<id>      human only: a lesson shown in 3 tasks becomes a project rule (context.md)
   doctor [--fix]      check shoal's state; --fix repairs what is safe (exit 11 while a problem remains)
   watch <task>        internal: the attention watcher start launches
-  gc                  close merged tasks' windows, remove their worktrees and working rows; flag records whose files are gone
+  gc                  close merged tasks' windows, remove their worktrees (git-ignored files such as .env go too) and working rows; flag records whose files are gone
   export <project-id> [--out <file>]   every record and report of a project, as JSON
   purge <project-id>  human only: delete the project's data under $SHOAL_HOME (asks for the id)
   uninstall           remove shoal's hook entries, the CLAUDE.md block and unedited shoal-* agents; nothing else

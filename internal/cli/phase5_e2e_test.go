@@ -117,9 +117,24 @@ func TestPhase5GCAfterMerge(t *testing.T) {
 	}
 
 	os.Remove(filepath.Join(task.Worktree, "notes.txt"))
+	// git worktree remove takes git-ignored files (.env, logs) with the
+	// worktree, and gc says so.
+	f, err := os.OpenFile(filepath.Join(h.repo, ".git", "info", "exclude"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("*.log\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	ignored := filepath.Join(task.Worktree, "debug.log")
+	testutil.WriteFile(t, ignored, "ignored")
 	out := h.mustRun("gc")
 	mustContain(t, "gc", out, "window   "+task.Slug+": closed tmux window "+task.TmuxWindow,
-		"worktree "+task.Slug+": removed "+task.Worktree+" (branch "+task.Branch+" kept)")
+		"worktree "+task.Slug+": removed "+task.Worktree+" with its git-ignored files (branch "+task.Branch+" kept)")
+	if fileExists(ignored) {
+		t.Fatal("the ignored file outlived its worktree")
+	}
 	if wins := h.tmuxOut("list-windows", "-a", "-F", "#{window_id}"); strings.Contains(wins, task.TmuxWindow) {
 		t.Fatalf("window %s still open after gc: %q", task.TmuxWindow, wins)
 	}

@@ -167,7 +167,8 @@ func (g *collector) dirty(ctx context.Context, t store.Task) bool {
 }
 
 // worktree removes a closed task's worktree with git worktree remove, which
-// refuses one holding changes or untracked files: that one is kept.
+// refuses one holding changes or untracked files: that one is kept. Like git,
+// it deletes git-ignored files (.env, logs) with the worktree.
 func (g *collector) worktree(ctx context.Context, t store.Task) error {
 	if t.Worktree == "" || !fileExists(t.Worktree) {
 		return nil
@@ -187,7 +188,7 @@ func (g *collector) worktree(ctx context.Context, t store.Task) error {
 		g.left = append(g.left, fmt.Sprintf("kept %s's worktree %s: %v. Commit or remove what is in it, then run gc again", t.Slug, t.Worktree, removeErr))
 		return nil
 	}
-	g.say("worktree %s: removed %s (branch %s kept)", t.Slug, t.Worktree, t.Branch)
+	g.say("worktree %s: removed %s with its git-ignored files (branch %s kept)", t.Slug, t.Worktree, t.Branch)
 	return nil
 }
 
