@@ -179,7 +179,8 @@ func codeOf(err error) int {
 	return ExitInternal
 }
 
-const usage = `usage: shoalctl <command> [args]
+const usage = `New here? Run: shoalctl guide
+usage: shoalctl <command> [args]
 
 commands:
   init [--commit-config] [--rebind]
@@ -221,6 +222,7 @@ commands:
   export <project-id> [--out <file>]   every record and report of a project, as JSON
   purge <project-id>  human only: delete the project's data under $SHOAL_HOME (asks for the id)
   uninstall           remove shoal's hook entries, the CLAUDE.md block and unedited shoal-* agents; nothing else
+  guide [<topic>]     the step-by-step manual; topics: setup, tests, flow, memory
   version
 `
 
@@ -304,6 +306,8 @@ func Main(args []string, env Env, version string) int {
 		err = env.cmdExport(ctx, args[1:])
 	case "purge":
 		err = env.cmdPurge(ctx, args[1:])
+	case "guide":
+		err = env.cmdGuide(ctx, args[1:])
 	case "help", "-h", "--help":
 		fmt.Fprint(env.Stdout, usage)
 	default:
