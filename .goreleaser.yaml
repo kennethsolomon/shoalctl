@@ -25,8 +25,7 @@ builds:
     flags: [-trimpath]
     ldflags:
       - -s -w -X main.version={{ .Version }} -X main.commit={{ .FullCommit }} -X main.date={{ .CommitDate }}
-    # Reproducible: the same tag builds the same bytes, so the guard's
-    # dry run and the publishing run produce identical archives.
+    # Reproducible: the same commit builds the same bytes on any checkout.
     mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:
@@ -39,10 +38,26 @@ archives:
     # The binary plus these files, nothing else: the release guard
     # (internal/releaseguard) fails the release on any other file, any .db
     # file or any reports/ path.
+    # mtime, mode and owner are pinned: a checkout stamps LICENSE and
+    # README.md with the time it ran, its umask and its user, which would
+    # otherwise make two builds of one commit differ.
     files:
-      - LICENSE
-      - README.md
+      - src: LICENSE
+        info:
+          owner: root
+          group: root
+          mode: 0644
+          mtime: "{{ .CommitDate }}"
+      - src: README.md
+        info:
+          owner: root
+          group: root
+          mode: 0644
+          mtime: "{{ .CommitDate }}"
     builds_info:
+      owner: root
+      group: root
+      mode: 0755
       mtime: "{{ .CommitDate }}"
 
 checksum:
