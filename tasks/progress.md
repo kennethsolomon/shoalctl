@@ -492,3 +492,16 @@ INFO notes, no action:
 
 - `refuseRepeatedKeys` also refuses repeated group `hooks` keys in events shoal never edits. Safe but strict.
 - No test pins `qa`'s escalation to the task's recorded tmux socket, since the harness uses one socket.
+
+## shoalctl guide (spec §16 row 83)
+
+Base: `816a52b`. A manual beside the flat `--help` for a reader who wants the next step, not a list. Nothing pushed; the local `v0.1.0` tag was not touched.
+
+| Item | Where | Proof |
+|------|-------|-------|
+| `guide` with no topic: cheat sheet by workflow, real config path or "run init first" | `internal/cli/guide.go` (reuses `identify`, `readMeta`, `config.ProjectPath`), `docs/guide/index.md` | `TestGuidePrintsTheConfigPathOfAnInitializedRepo`, `TestGuideOutputIsPlainASCIIUnder80ColumnsAndOneScreen` (outside a repo, before init) |
+| Topics `setup`, `tests`, `flow`, `memory`; unknown topic or extra args exit 2 listing them | `docs/guide/*.md`, embedded by `docs/guide/embed.go` | `TestGuideRefusesAnUnknownTopicOrExtraArguments` |
+| `--help` opens with `New here? Run: shoalctl guide`; `guide` in the usage | `internal/cli/cli.go` | `TestHelpPointsNewcomersAtTheGuide` |
+| Drift: commands, subcommands and flags the guide names exist in the usage; every topic file listed and resolving | `internal/cli/guide_test.go` | `TestGuideNamesOnlyCommandsSubcommandsAndFlagsInUsage`, `TestGuideCheatSheetListsEveryTopicFile`; a planted unknown command, subcommand, flag, topic and an 85-column line each failed |
+| Drift: README setup and tests sections are the guide files | README between `<!-- guide:setup -->` / `<!-- guide:tests -->` markers | `TestREADMEQuotesSetupAndTestsVerbatimBetweenMarkers` |
+| Docs | README Quick start line and Commands row, spec §4.4 row and §16 row 83 | - |

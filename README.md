@@ -73,6 +73,8 @@ Each item says whether it is built or planned. See [Roadmap](#roadmap) for the p
 
 ## Quick start
 
+New here? After installing, run `shoalctl guide`: a one-screen cheat sheet of setup, the daily task flow and what to do when something's wrong, with `shoalctl guide setup|tests|flow|memory` for each part.
+
 ### Requirements
 
 - macOS or Linux (Windows is beta, see below)
@@ -376,6 +378,7 @@ The baseline runs in a clean worktree that does not have them.
 | `shoalctl export <project-id> [--out <file>]` | Every table of `memory.db` and every report as one JSON document; `--out` writes a new 0600 file, never overwrites | Built |
 | `shoalctl purge <project-id>` | Human only: type the id to delete `~/.shoal/projects/<id>/`; refused while task worktrees exist or another shoalctl holds the project's locks. Does not touch the repo | Built |
 | `shoalctl uninstall` | Remove shoal's hook entries, the managed CLAUDE.md block and unedited `shoal-*` agent definitions; nothing else | Built |
+| `shoalctl guide [<topic>]` | The manual: with no topic a one-screen cheat sheet (setup with this repo's config path, the daily flow, troubleshooting); topics `setup`, `tests`, `flow`, `memory`. Plain text, at most 80 columns | Built |
 | `shoalctl version` | Version, commit and build date (release builds inject them; `go install` shows the module version) | Built |
 
 ## Exit codes
