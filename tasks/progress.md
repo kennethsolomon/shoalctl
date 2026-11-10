@@ -5,13 +5,14 @@ Base: `6bc02ca` (Phase 4 shipped, Vex round 5 SHIP). Approved by Kenneth 2026-11
 ## Where I am
 
 - Done: `version` (ldflags plus build info), `uninstall`, `export`, `purge`, `gc`, the release guard, `.goreleaser.yaml`, `.github/workflows/release.yml` (tag push only; `ci.yml` untouched), README install docs (still pre-alpha), spec §16 rows 77-82.
-- Next: Vex review of Phase 5; then Kenneth's outward steps (below) for the first tag.
+- Vex HOLD round 1 on `d8dc033`: five findings fixed (section below).
+- Next: Vex re-review; then Kenneth's outward steps (below) for the first tag.
 
 | Scope item | Where | Proof |
 |---|---|---|
 | 1 `export <id>`, `purge <id>` | `internal/cli/offboard.go`, `store.Dump` | `TestExportWritesEveryTableAndReport`, `TestPurgeNeedsAHumanWhoTypesTheID` (agent refused exit 5, wrong answer exit 5, worktree left exit 5, lock held exit 8, unknown id exit 4, bad id exit 2), `TestDumpEveryTableButTheIndex` |
 | 2 `uninstall` | `internal/cli/uninstall.go`, `removeHooks`, `withoutManagedBlock`, `agents.Remove` | `TestRemoveHooksRoundTrip` (merge then remove is byte-identical for 9 shapes), `TestRemoveHooksMatchesOnlyShoal`, `TestWithoutManagedBlockRoundTrip`, `TestUninstallRestoresAStealthRepo`, `TestUninstallKeepsTheUsersSettings`, `TestUninstallRemovesTheManagedBlock`, `TestUninstallRefusesBeforeChangingAnything`, `TestUninstallRemovesOnlyUneditedAgents`, `TestRemoveKeepsEditedFiles` |
-| 3 `gc` | `internal/cli/gc.go`, `store.DropWorkingRows` | `TestPhase5GCAfterMerge` (real tmux window closed, dirty worktree kept with exit 5 then removed, rows dropped, summary kept, gone-glob lesson flagged, live decision not), `TestPhase5GCSkipsOpenTasks`, `TestDropWorkingRowsKeepsRecords` |
+| 3 `gc` | `internal/cli/gc.go`, `store.DropWorkingRows` | `TestPhase5GCAfterMerge` (dirty worktree: task left alone, window and rows kept, exit 5; then window closed and worktree removed, rows dropped, summary kept, gone-glob lesson flagged, live decision not), `TestPhase5GCSkipsOpenTasks`, `TestPhase5GCLeavesAForeignWindowOpen`, `TestPhase5GCLeavesAnUntaggedWindowOpen`, `TestStartTagsItsWindow`, `TestDropWorkingRowsKeepsRecords` |
 | 4 `version` | `internal/buildinfo`, `cmd/shoalctl/main.go` | `TestResolve`, `TestString`, `TestVersionLdflags` (builds with the release ldflags) |
 | 5 Release pipeline | `.goreleaser.yaml` | `goreleaser release --snapshot --clean`: 6 archives + `checksums.txt` + formula (below); two runs gave identical checksums |
 | 6 Release guard | `internal/releaseguard` | `TestCheckFailsOnAPlantedDatabaseOrReport` (8 plants), `TestCheckVerifiesChecksums`; guard PASS on the real snapshot dist, FAIL on a copy with `memory.db` planted in the linux/amd64 tarball (it also caught macOS tar's `._memory.db`) |
@@ -24,16 +25,16 @@ Base: `6bc02ca` (Phase 4 shipped, Vex round 5 SHIP). Approved by Kenneth 2026-11
 
 | Row | Decision |
 |-----|----------|
-| 77 | uninstall: hook entries (any event), the managed block, unedited `shoal-*` agents (user-level only when no other project is registered); byte-exact; shoal-created files deleted; data, exclude lines and branches kept |
-| 78 | gc: closed tasks only, per task lock; window killed or forgotten; `git worktree remove` without `--force` (kept, exit 5); working rows dropped; records whose files are all gone from `[merge].base` flagged stale; branches kept |
+| 77 | uninstall: hook entries (any event), the managed block, unedited `shoal-*` agents (user-level only when no other project is registered); byte-exact; shoal-created files deleted; a repeated `hooks` key (top level or event) refused with exit 3; data, exclude lines and branches kept ("already gone" after purge) |
+| 78 | gc: closed tasks only, per task lock; dirty worktree first (task left alone, exit 5); window killed only when tagged `@shoal_task` = `<project id>/<slug>`, else left open and forgotten; `git worktree remove` without `--force` (kept, exit 5); working rows dropped; records whose files are all gone from `[merge].base` flagged stale; branches kept |
 | 79 | export/purge take the project id and work without the checkout; purge: human types the id, refused with worktrees left or locks held |
-| 80 | release.yml: FTS5 on six native runners, build with `--skip=publish`, guard, publish, checksum equality check |
+| 80 | release.yml: FTS5 on six native runners; one build to a draft release, guard, draft assets checked against the guarded checksums, draft published; actions pinned by SHA, GoReleaser v2.20.0 |
 | 81 | version: ldflags, then `debug.ReadBuildInfo`, then `dev` |
-| 82 | Homebrew formula via `brews` (deprecated in GoReleaser 2.10+); pushed only with a non-empty tap token |
+| 82 | Homebrew formula via `brews` (deprecated in GoReleaser 2.10+); GoReleaser never pushes it; release.yml pushes it after publishing, for stable tags with a non-empty tap token only |
 
 ## Snapshot release (local, `goreleaser 2.20.0`, `--snapshot --clean`, no token)
 
-`goreleaser check`: exit 1, "configuration is valid, but uses deprecated properties" (`brews` only). Snapshot: exit 0 in 18 s; publish, announce and validate skipped by snapshot mode.
+`goreleaser check`: exit 2 (2.20.0), "configuration is valid, but uses deprecated properties" (`brews` only). Snapshot: exit 0 in 18 s; publish, announce and validate skipped by snapshot mode.
 
 ```
 dist/shoalctl_0.0.1-snapshot+f110372_{darwin,linux}_{amd64,arm64}.tar.gz   LICENSE README.md shoalctl
@@ -43,6 +44,20 @@ dist/homebrew/Formula/shoalctl.rb                                          writt
 ```
 
 The linux/amd64 binary is statically linked; the darwin/arm64 one prints `shoalctl 0.0.1-snapshot+f110372 (commit f110372a2f39, built 2026-11-10T03:55:50Z)`. A second snapshot run produced the same `checksums.txt` byte for byte. `dist/` is gitignored.
+
+## Vex HOLD round 1 (on `d8dc033`)
+
+| # | Finding | Fix | Commit | Test |
+|---|---|---|---|---|
+| 1 HIGH | gc killed a window by recorded id only; tmux reuses ids after a restart | `start` tags its window `@shoal_task` = `<project id>/<slug>`; gc kills only a window with that tag; another tag or none (pre-tag tasks): left open, record forgotten, reported. Only gc kills windows (doctor, status and the stale check only read or forget) | `77950a9` | `TestPhase5GCLeavesAForeignWindowOpen`, `TestPhase5GCLeavesAnUntaggedWindowOpen`, `TestStartTagsItsWindow` |
+| 2 MED | gc killed the window before finding the worktree dirty | worktree checked first (`git status --porcelain`); dirty or unreadable: task left alone (window, worktree, rows), exit 5 | `06d9807` | `TestPhase5GCAfterMerge` (asserts the window and rows survive the dirty run) |
+| 3 MED | guard checked build 1, publish rebuilt; archive bytes followed LICENSE/README mtimes | archived files pinned (commit date, mode, `root:root`); one build to a draft release, guard on that `dist/`, draft assets downloaded and checked against `dist/checksums.txt` (`::error::`, exit 1), then `gh release edit --draft=false` | `ccbceb1`, `3150b56` | snapshot evidence below; asset-check logic run locally: pass, extra asset fails, tampered archive fails |
+| 4 LOW | formula pushed for prerelease tags | GoReleaser never pushes (`skip_upload: "true"`); release.yml pushes `dist/homebrew/Formula/shoalctl.rb` after publishing, only for a tag without `-` and with the token | `3150b56` | actionlint clean; not runnable without a tag |
+| 5 LOW | unpinned actions; uninstall after purge said "kept"; duplicate `hooks` keys lost both; progress said `check` exits 1 | actions pinned to SHAs (checkout v4.4.0, setup-go v5.6.0, goreleaser-action v6.4.0), GoReleaser `v2.20.0`; "data none: ... already gone (purged)"; repeated top-level `hooks` or event key refused with exit 3 before any change; exit 2 recorded | `06782e3`, `e20d333`, `0e3efc7`, `e050a57` | `TestUninstallAfterPurge`, `TestUninstallRefusesBeforeChangingAnything` (two duplicate shapes) |
+
+Reproducibility (`goreleaser 2.20.0 --snapshot --clean`, commit `e050a57`): two runs in a fresh clone with `touch LICENSE README.md` and `chmod 600 README.md` between them gave byte-identical `checksums.txt`; a third run in the main checkout (different path, clean tree) matched too. The old config (`d8dc033`) gave different checksums after the same touch. A dirty tree still changes the binary (Go embeds `vcs.modified=true`); the release builds from a clean tag checkout.
+
+Gates (fresh clone of `e050a57` in `/private/tmp`, macOS, run alone): `gofmt -l .` empty; `go vet` and `staticcheck` clean for GOOS darwin, linux, windows; `GOOS=linux|windows go test -c ./...` exit 0 (15 test binaries each); `caffeinate -i go test -race -count=1 ./...` pass, 189 s wall, `internal/cli` 185.6 s (three new tmux e2e tests); `goreleaser check` exit 2 (deprecated `brews` only); snapshot exit 0; guard `TestReleaseArtifacts` PASS on its `dist/`; `ci.yml` byte-identical to `6bc02ca`; actionlint on `release.yml` clean (no shellcheck installed).
 
 ## Manual dry run (2026-11-10, snapshot binary, scratch repo and SHOAL_HOME)
 
@@ -80,17 +95,17 @@ It found one wording bug, fixed in `02db19c` (uninstall named a missing CLAUDE.m
 
 ## Kenneth's outward steps (not done; none approved)
 
-1. Create the public repo `kennethsolomon/homebrew-tap` (empty, default branch `main`; GoReleaser writes `Formula/shoalctl.rb`).
-2. Create a fine-grained personal access token: resource owner kennethsolomon, repository access only `homebrew-tap`, permission Contents read and write (Metadata read is implied). Add it to `kennethsolomon/shoalctl` as the Actions secret `HOMEBREW_TAP_GITHUB_TOKEN`. The release itself uses the workflow's `GITHUB_TOKEN` (`contents: write`); nothing else is needed.
-3. Push main, then tag: `git tag -a v0.1.0 -m "shoalctl v0.1.0" && git push origin v0.1.0` (a `v0.x` tag with a suffix such as `-rc.1` is marked prerelease).
+1. Create the public repo `kennethsolomon/homebrew-tap` (may be empty; release.yml pushes `Formula/shoalctl.rb` to `main`).
+2. Create a fine-grained personal access token: resource owner kennethsolomon, repository access only `homebrew-tap`, permission Contents read and write (Metadata read is implied). Add it to `kennethsolomon/shoalctl` as the Actions secret `HOMEBREW_TAP_GITHUB_TOKEN`. The release itself uses the workflow's `GITHUB_TOKEN` (`contents: write`, also used by `gh` to check and publish the draft); nothing else is needed.
+3. Push main, then tag: `git tag -a v0.1.0 -m "shoalctl v0.1.0" && git push origin v0.1.0` (a tag with a suffix such as `-rc.1` is marked prerelease and gets no formula).
 4. Check the run: all six test jobs green, then `brew install kennethsolomon/tap/shoalctl && shoalctl version`.
 
 ## Open risks
 
 - Runner labels `macos-15-intel`, `ubuntu-24.04-arm` and `windows-11-arm` were not exercised (no tag pushed). If one is unavailable the release waits on it; drop that row (its target still cross-compiles) or swap the label.
 - `brews` is deprecated in GoReleaser 2.10+; a future v3 removes it. A cask (`homebrew_casks`) would change the install to `brew install --cask` and is macOS-first.
-- The guard runs before the publishing run, which rebuilds; reproducibility makes the bytes equal and the final step diffs `checksums.txt`, but that check runs after publishing.
-- The skip of the formula push with an empty token is by `--skip=homebrew` in the workflow plus the `skip_upload` template; neither could be exercised locally without a tag.
+- The draft flow (upload to a draft, `gh release download` of a draft by tag, `gh release edit --draft=false`) and the formula push step could not be exercised without a tag; the asset check's shell logic was run locally against a copy of `dist/` (pass; an extra asset and a tampered archive both fail). If the guard or the asset check fails, the draft stays (invisible to the public): delete it with `gh release delete <tag>` after fixing.
+- gc trusts the `@shoal_task` tag. A window of a task started before this change has no tag, so gc leaves it open (and says so); close those by hand once. `status`, `doctor` and the stale-claim check still treat any live window under the recorded id as the task's; they never close a window, so the worst case is a claim that does not go stale (unchanged behaviour).
 - `gc` keeps task branches and `uninstall` keeps the `.git/info/exclude` lines: invisible to `git status`, but they remain in `.git`.
 - `withGitLock` records `merge` as the lock's command for every caller (doctor, gc too); cosmetic, pre-existing, not changed.
 
