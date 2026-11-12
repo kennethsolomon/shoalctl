@@ -317,6 +317,12 @@ func (env Env) mergeOne(ctx context.Context, p *project, t store.Task, acc []*ac
 	if _, err := requireClean(ctx, t.Worktree, "merging"); err != nil {
 		return back(store.StageDone, err)
 	}
+	// Checked before the rebase, which moves the code onto the target.
+	if qa, err := currentQAState(ctx, p, t); err != nil {
+		return back(store.StageDone, err)
+	} else if w := qa.warning(t.Slug, "merging anyway; the merge gate still runs"); w != "" {
+		fmt.Fprintln(env.Stderr, w)
+	}
 	targetSHA, err := gitx.Run(ctx, p.root, "rev-parse", "--verify", "--quiet", "refs/heads/"+target+"^{commit}")
 	if err != nil || targetSHA == "" {
 		return back(store.StageDone, fail(ExitConfig, "merge target %q is not a local branch", target))

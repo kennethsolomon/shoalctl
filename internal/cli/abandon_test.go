@@ -414,9 +414,9 @@ func TestMergeSkipsATaskAbandonedDuringTheRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer p.close()
-	var out strings.Builder
+	var out, errOut strings.Builder
 	env := h.env
-	env.Stdout = &out
+	env.Stdout, env.Stderr = &out, &errOut
 	held, err := p.lockTask(queued, "abandon")
 	if err != nil {
 		t.Fatal(err)

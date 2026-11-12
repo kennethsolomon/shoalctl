@@ -151,6 +151,14 @@ func (env Env) cmdDone(ctx context.Context, args []string) error {
 		return fail(ExitDoneRefused, "refused:\n  %s", strings.Join(refusals, "\n  "))
 	}
 
+	// QA is optional: a missing, failed or stale round warns and done goes
+	// on. The line comes before the final run, so stopping here leaves the
+	// task as it was, free for a round (§16 row 88).
+	if qa, err := currentQAState(ctx, p, t); err != nil {
+		return err
+	} else if w := qa.warning(t.Slug, "to run one first, stop done now (Ctrl-C) and run shoalctl qa "+t.Slug); w != "" {
+		fmt.Fprintln(env.Stderr, w)
+	}
 	if err := env.reapAbandoned(ctx, p, t); err != nil {
 		return err
 	}
