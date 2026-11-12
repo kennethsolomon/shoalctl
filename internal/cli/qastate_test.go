@@ -167,6 +167,10 @@ func TestAgentQAIsNotAHumanRound(t *testing.T) {
 	errOut := h.expectCode(ExitState, "qa", task.Slug)
 	mustContain(t, "qa in Claude Code", errOut, "Claude Code session", "shoalctl test "+task.Slug+" --kind qa")
 	h.setenv("CLAUDECODE", "")
+	h.setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+	errOut = h.expectCode(ExitState, "qa", task.Slug)
+	mustContain(t, "qa with CLAUDE_CODE_ENTRYPOINT", errOut, "CLAUDE_CODE_ENTRYPOINT is set", "shoalctl test "+task.Slug+" --kind qa")
+	h.setenv("CLAUDE_CODE_ENTRYPOINT", "")
 	if got := h.task(task.Slug); got.QARound != 0 || got.Stage != "in-progress" {
 		t.Fatalf("a refused qa changed the task: %+v", got)
 	}
@@ -237,6 +241,14 @@ func TestDoneAndMergeWarnWithoutQAOnTheCode(t *testing.T) {
 		return errOut
 	}
 	stop := "; to run one first, stop done now (Ctrl-C) and run shoalctl qa "
+	// A refused done warns about nothing: it records nothing either.
+	testutil.WriteFile(t, filepath.Join(never.Worktree, "dirty.txt"), "d")
+	if errOut := h.expectCode(ExitState, "done", "--force", never.Slug); strings.Contains(errOut, "warning") {
+		t.Fatalf("a refused done warned about QA:\n%s", errOut)
+	}
+	if err := os.Remove(filepath.Join(never.Worktree, "dirty.txt")); err != nil {
+		t.Fatal(err)
+	}
 	mustContain(t, "done never", done(never.Slug, never.Worktree),
 		"warning: "+never.Slug+": no QA round ran on this code (QA is optional)"+stop+never.Slug+"\n")
 	if errOut := done(fresh.Slug, fresh.Worktree); strings.Contains(errOut, "warning") {
