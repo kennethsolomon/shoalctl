@@ -568,3 +568,17 @@ Base: `7c2ac43`. Nothing pushed; the local `v0.1.0` tag was not touched.
 | abandon's prompt names a hotfix's open backport task (with its abandon line) and the tasks folded into the task; output only | `printRelatedTasks`, spec §16 row 84 | `TestAbandonNamesTheBackportAndFoldedTasks` |
 | README `guide` row: the cheat sheet opens with the quick 5-command flow. abandon's exit-5 line for a watcher still running says nothing needs doing, and to kill the named pid if it outlives its next tick (re-running abandon only says it is abandoned; gc does not touch watchers) | README Commands, `watcherStopped`, spec §16 row 84 | `TestAbandonReportsAWatcherThatStillRuns` |
 | quick flow: the format note moved into step 3 ("needs format junit or go-json"), so step 5 is directly followed by "Everything else is optional." (Kenneth's spec; README quote kept verbatim). Spec row 84 records two accepted LOWs: a merge during abandon's locked re-check stops with ExitBusy (fail-safe, re-run merge); the "changed while you were deciding" line may name the same stage when only the version changed | `docs/guide/quick.md`, README Use, spec §16 rows 84 and 87 | `TestCheatSheetOpensWithTheQuickFlow` (step 5 then the optional line) |
+
+## QA status follows the code (spec §16 row 88)
+
+Base: `bb1bdbc`. Kenneth could not tell from the `1/3` round counter whether QA ran on the code he had just chatted into a task's window. Nothing pushed, nothing tagged.
+
+| Item | Where | Proof |
+|------|-------|-------|
+| `gitx.CodeTree`: the worktree's code as a git tree id (HEAD's tree when clean; else a copy of the index, `git add --all`, `git write-tree`); ignored files never count, the real index is untouched | `internal/gitx/gitx.go` | `TestCodeTree` |
+| Migration 0009: `qa_rounds.head_sha`, `qa_rounds.tree`, `test_runs.tree`, `test_runs.verdict` | `internal/store/migrations/0009_qa_code.sql`, `internal/store/gate.go`, `internal/store/runs.go` | `TestQACodeIdentity`, store migration tests |
+| `qa` records the round's commit and tree and refuses inside Claude Code; `test --kind qa` records the agents' verdict and tree, never a round | `cmdQA`, `cmdTest` | `TestAgentQAIsNotAHumanRound` |
+| status QA column `-`, `pass N/M`, `fail N/M`, `stale N/M`, plus `agent pass\|fail\|stale`; NOTE hint for a stale round; `--json` adds `qa_state`, `qa_sha`, `agent_qa_state`, `agent_qa_sha` | `internal/cli/qastate.go`, `cmdStatus` | `TestStatusQATracksTheCode`, `TestQARoundsEscalateAfterCap` |
+| `done` (before the final run) and `merge` (per task, before the rebase) warn on stderr without a pass on the code, and go on | `cmdDone`, `mergeOne` | `TestDoneAndMergeWarnWithoutQAOnTheCode`, `TestAgentQAIsNotAHumanRound` |
+| `shoal-lead` step 7 and the brief's "When you finish" step 4: re-run the QA agents through `test --kind qa` after every revision | `internal/agents/defs/shoal-lead.md`, `renderBrief` in `internal/cli/start.go` | `TestLeadReRunsQAAfterARevision`, `TestStartTwoTasksShareBaseline` brief checks |
+| Docs | README Features, full flow and Commands rows; guide `flow` step 5 (cheat sheet already 40 lines: unchanged); spec §4.4, tables, row 26, row 88 | guide tests |
