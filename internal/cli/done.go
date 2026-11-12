@@ -101,7 +101,7 @@ func (env Env) cmdDone(ctx context.Context, args []string) error {
 	if err := waitIndexLock(ctx, wt); err != nil {
 		return err
 	}
-	if dirty, err := gitx.Run(ctx, wt, "status", "--porcelain"); err != nil {
+	if dirty, err := gitx.Run(ctx, wt, "status", "--porcelain", "--untracked-files=normal"); err != nil {
 		return err
 	} else if dirty != "" {
 		return fail(ExitState, "worktree %s has uncommitted changes; commit them first:\n%s", wt, dirty)

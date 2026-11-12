@@ -128,6 +128,13 @@ func TestDoneRefusals(t *testing.T) {
 	if errOut := h.expectCode(ExitState, "done", task.Slug); !strings.Contains(errOut, "uncommitted") {
 		t.Errorf("dirty: %s", errOut)
 	}
+	// status.showUntrackedFiles=no does not hide the file: done refuses up
+	// front, before the final run.
+	testutil.Git(t, task.Worktree, "config", "status.showUntrackedFiles", "no")
+	if errOut := h.expectCode(ExitState, "done", task.Slug); !strings.Contains(errOut, "uncommitted") || !strings.Contains(errOut, "dirty.txt") {
+		t.Errorf("dirty under showUntrackedFiles=no: %s", errOut)
+	}
+	testutil.Git(t, task.Worktree, "config", "--unset", "status.showUntrackedFiles")
 	os.Remove(filepath.Join(task.Worktree, "dirty.txt"))
 
 	for name, body := range map[string]string{
