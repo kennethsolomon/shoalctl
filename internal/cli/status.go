@@ -15,6 +15,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/kennethsolomon/shoalctl/internal/gitx"
 	"github.com/kennethsolomon/shoalctl/internal/store"
 )
 
@@ -38,6 +39,14 @@ type statusRow struct {
 	MergesAfter string `json:"merges_after"`
 	// abandon: who gave up on the task, and why when they said.
 	Abandoned string `json:"abandoned"`
+	// QA against the code now (§16 row 88): none, pass, fail or stale, for
+	// the last shoalctl qa round and the newest agent check after it.
+	QAState      string `json:"qa_state"`
+	QASHA        string `json:"qa_sha"`
+	AgentQAState string `json:"agent_qa_state"`
+	AgentQASHA   string `json:"agent_qa_sha"`
+	qa           qaState
+	qaRerun      bool // shoalctl qa can run a round from this stage
 }
 
 // note is the NOTE column: everything in a row a human may need to act on.
@@ -60,6 +69,9 @@ func (r statusRow) note() string {
 	}
 	if r.Abandoned != "" {
 		parts = append(parts, "abandoned by "+r.Abandoned)
+	}
+	if r.QAState == qaStale && r.qaRerun {
+		parts = append(parts, "code changed since QA: run shoalctl qa "+r.Slug)
 	}
 	if len(parts) == 0 {
 		return "-"
@@ -153,6 +165,18 @@ func (env Env) cmdStatus(ctx context.Context, args []string) error {
 			}
 			row.Claims = len(cl)
 		}
+		tree := ""
+		if contains(qaCheckedStages, t.Stage) {
+			if tree, err = gitx.CodeTree(ctx, t.Worktree); err != nil {
+				fmt.Fprintf(env.Stderr, "warning: %s: cannot read the worktree's code, so its QA shows as stale if it passed: %v\n", t.Slug, err)
+				tree = unreadableTree
+			}
+		}
+		if row.qa, err = qaStateOf(ctx, p, t, tree); err != nil {
+			return err
+		}
+		row.QAState, row.QASHA, row.AgentQAState, row.AgentQASHA = row.qa.Human, row.qa.SHA, row.qa.Agent, row.qa.AgentSHA
+		row.qaRerun = contains(qaRoundStages, t.Stage)
 		if t.TmuxWindow != "" {
 			row.Window = "gone"
 			if alive[t.TmuxWindow] {
@@ -172,10 +196,7 @@ func (env Env) cmdStatus(ctx context.Context, args []string) error {
 		tw := tabwriter.NewWriter(env.Stdout, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(tw, "SLUG\tLANE\tSTAGE\tQA\tBASE\tBASELINE\tWINDOW\tLAST SEEN\tNOTE")
 		for _, r := range rows {
-			qa := "-"
-			if r.QARound > 0 {
-				qa = fmt.Sprintf("%d/%d", r.QARound, p.cfg.Lanes.QAMaxRounds)
-			}
+			qa := r.qa.label(p.cfg.Lanes.QAMaxRounds)
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Slug, r.Lane, r.Stage, qa, r.Base, r.Baseline, r.Window, r.LastSeen, r.note())
 		}
 		if err := tw.Flush(); err != nil {

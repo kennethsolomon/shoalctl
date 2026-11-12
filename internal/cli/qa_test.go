@@ -53,7 +53,7 @@ func TestQARoundsEscalateAfterCap(t *testing.T) {
 	}
 	h.expectCode(ExitState, "qa", task.Slug)
 	h.expectCode(ExitState, "done", "--force", task.Slug)
-	if st := h.mustRun("status"); !strings.Contains(st, "escalated  3/3") {
+	if st := h.mustRun("status"); !strings.Contains(st, "escalated  fail 3/3") {
 		t.Fatalf("status:\n%s", st)
 	}
 }
