@@ -134,3 +134,57 @@ func TestChanged(t *testing.T) {
 		t.Fatal("an unknown commit must be an error, not unchanged")
 	}
 }
+
+// CodeTree names the code on disk: equal content, equal id, whatever the
+// commits; any edit, staged or not, and any new unignored file changes it;
+// ignored files never do. The real index is left as it was.
+func TestCodeTree(t *testing.T) {
+	testutil.Isolate(t)
+	ctx := context.Background()
+	repo := testutil.Repo(t)
+	testutil.WriteFile(t, filepath.Join(repo, ".gitignore"), "ignored.txt\n")
+	testutil.Git(t, repo, "add", ".gitignore")
+	testutil.Git(t, repo, "commit", "-q", "-m", "ignore")
+	tree := func() string {
+		t.Helper()
+		id, err := CodeTree(ctx, repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	clean := tree()
+	if want := testutil.Git(t, repo, "rev-parse", "HEAD^{tree}"); clean != want {
+		t.Fatalf("clean worktree: %s, want HEAD's tree %s", clean, want)
+	}
+	testutil.WriteFile(t, filepath.Join(repo, "ignored.txt"), "x")
+	if got := tree(); got != clean {
+		t.Fatalf("an ignored file changed the id: %s -> %s", clean, got)
+	}
+	testutil.WriteFile(t, filepath.Join(repo, "README.md"), "edited\n")
+	edited := tree()
+	if edited == clean {
+		t.Fatal("an unstaged edit kept the id")
+	}
+	if st := testutil.Git(t, repo, "status", "--porcelain"); st != "M README.md" {
+		t.Fatalf("CodeTree touched the real index: status %q", st)
+	}
+	testutil.WriteFile(t, filepath.Join(repo, "new.txt"), "n")
+	withNew := tree()
+	if withNew == edited {
+		t.Fatal("an untracked file kept the id")
+	}
+	testutil.Git(t, repo, "add", "-A")
+	if got := tree(); got != withNew {
+		t.Fatalf("staging changed the id: %s -> %s", withNew, got)
+	}
+	testutil.Git(t, repo, "commit", "-q", "-m", "edit")
+	if got := tree(); got != withNew {
+		t.Fatalf("committing changed the id: %s -> %s", withNew, got)
+	}
+	testutil.Git(t, repo, "rm", "-q", "new.txt")
+	testutil.WriteFile(t, filepath.Join(repo, "README.md"), "app\n")
+	if got := tree(); got != clean {
+		t.Fatalf("back to the first content: %s, want %s", got, clean)
+	}
+}

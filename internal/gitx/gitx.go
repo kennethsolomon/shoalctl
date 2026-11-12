@@ -22,9 +22,15 @@ var (
 
 // Run runs git in dir and returns its stdout with surrounding whitespace trimmed.
 func Run(ctx context.Context, dir string, args ...string) (string, error) {
+	return runEnv(ctx, dir, nil, args...)
+}
+
+// runEnv is Run with extra KEY=VALUE environment entries, such as
+// GIT_INDEX_FILE, on top of the process environment.
+func runEnv(ctx context.Context, dir string, env []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -158,4 +164,51 @@ func Changed(ctx context.Context, dir, from string, pathspecs []string) (bool, e
 		return true, nil
 	}
 	return false, fmt.Errorf("git %s (in %s): %w: %s", strings.Join(args, " "), dir, err, strings.TrimSpace(stderr.String()))
+}
+
+// CodeTree returns the git tree id of the code in worktree wt as it is on
+// disk: tracked files with any uncommitted edits, plus untracked files git
+// does not ignore. Ignored files (shoal's own .shoal/ is excluded by init)
+// do not count. Equal code gives an equal id, whatever the commits.
+//
+// A clean worktree is HEAD's tree. A dirty one is staged into a copy of its
+// index (the copy keeps git's stat cache, so unchanged files are not
+// re-read) and written as a tree; the real index is never touched. That
+// stores blobs for the edited files in the object database, as git add
+// would; git gc prunes them once nothing refers to them.
+func CodeTree(ctx context.Context, wt string) (string, error) {
+	dirty, err := Run(ctx, wt, "--no-optional-locks", "status", "--porcelain")
+	if err != nil {
+		return "", err
+	}
+	if dirty == "" {
+		return Run(ctx, wt, "rev-parse", "HEAD^{tree}")
+	}
+	index, err := Run(ctx, wt, "rev-parse", "--git-path", "index")
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(index) {
+		index = filepath.Join(wt, index)
+	}
+	tmp, err := os.MkdirTemp("", "shoal-index-")
+	if err != nil {
+		return "", fmt.Errorf("code tree of %s: %w", wt, err)
+	}
+	defer os.RemoveAll(tmp)
+	copyIndex := filepath.Join(tmp, "index")
+	data, err := os.ReadFile(index)
+	switch {
+	case err == nil:
+		if err := os.WriteFile(copyIndex, data, 0o600); err != nil {
+			return "", fmt.Errorf("code tree of %s: %w", wt, err)
+		}
+	case !errors.Is(err, os.ErrNotExist):
+		return "", fmt.Errorf("code tree of %s: read index: %w", wt, err)
+	}
+	env := []string{"GIT_INDEX_FILE=" + copyIndex}
+	if _, err := runEnv(ctx, wt, env, "add", "--all"); err != nil {
+		return "", err
+	}
+	return runEnv(ctx, wt, env, "write-tree")
 }
