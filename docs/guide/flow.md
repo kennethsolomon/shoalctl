@@ -5,8 +5,7 @@ Task lifecycle, worked through one bug. <task> is the number or the slug.
    prints 1-post-api-orders-saves-150-instead-of-150, so the task is 1.
    Lanes: feature, bugfix, hotfix. --details-file <path> reads the details
    from a file; the old names --ask and --ask-file still work.
-2. Optional: shoalctl plan 1 'app/Orders/**'   expected files; asks on
-   overlap with another task (s/m/p/?)
+2. Optional: shoalctl plan 1 'app/Orders/**'   expected files; asks on overlap
 3. shoalctl start 1   branch, worktree, baseline test run, tmux window,
    claude and the attention watcher
 4. The agent proves the bug, then the fix (shoalctl status: in-progress).
@@ -19,7 +18,8 @@ Task lifecycle, worked through one bug. <task> is the number or the slug.
      shoalctl repro green 1 --test example.com/shop/orders::TestOrderKeepsCents
    (green must pass), writes .shoal/summary.json, tells you it is finished.
 5. /exit in its window. Optional: shoalctl qa 1   one QA round: contract,
-   suite vs baseline, lint, build. After 3 rounds the task is escalated.
+   suite vs baseline, lint, build; escalated after 3. status QA then reads
+   pass 1/3, fail 1/3, or stale 1/3 once the code changes (qa it again).
 6. shoalctl done 1   final run and checks, summary and report, queued for
    merge. Refuses (exit 10) without the red/green proof.
 7. shoalctl merge   merges queued tasks in order through the gate; never
