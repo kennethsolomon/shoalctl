@@ -121,7 +121,7 @@ func (env Env) cmdQA(ctx context.Context, args []string) error {
 	if ctx.Err() != nil {
 		return fail(ExitInterrupted, "interrupted; the round was not counted")
 	}
-	if err := requireUnchanged(ctx, t.Worktree, head, t.Slug); err != nil {
+	if err := requireUnchanged(ctx, t.Worktree, head, "done "+t.Slug); err != nil {
 		return err
 	}
 	tree, err := gitx.Run(ctx, t.Worktree, "rev-parse", head+"^{tree}")

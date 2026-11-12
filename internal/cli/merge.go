@@ -370,7 +370,7 @@ func (env Env) mergeOne(ctx context.Context, p *project, t store.Task, acc []*ac
 	if ctx.Err() != nil {
 		return back(store.StageDone, fail(ExitInterrupted, "interrupted during lint or build"))
 	}
-	if err := requireUnchanged(ctx, t.Worktree, head, t.Slug); err != nil {
+	if err := requireUnchanged(ctx, t.Worktree, head, "done "+t.Slug); err != nil {
 		return back(store.StageDone, err)
 	}
 	changed, err := changedPaths(ctx, t.Worktree, targetSHA)

@@ -175,7 +175,7 @@ func (env Env) cmdDone(ctx context.Context, args []string) error {
 	if ctx.Err() != nil {
 		return fail(ExitInterrupted, "interrupted during lint or build; the task is still %s, run shoalctl done %s again", t.Stage, t.Slug)
 	}
-	if err := requireUnchanged(ctx, wt, head, t.Slug); err != nil {
+	if err := requireUnchanged(ctx, wt, head, "done "+t.Slug); err != nil {
 		return err
 	}
 	base, err := p.db.GetRun(ctx, t.BaselineRunID)
@@ -414,8 +414,9 @@ func (env Env) requireSessionEnded(ctx context.Context, t store.Task) error {
 }
 
 // requireUnchanged refuses to record a task whose branch or worktree changed
-// while the final suite ran, since the results would not describe HEAD.
-func requireUnchanged(ctx context.Context, wt, head, slug string) error {
+// while the suite ran, since the results would not describe HEAD. rerun is
+// the command to run again, such as "done <slug>".
+func requireUnchanged(ctx context.Context, wt, head, rerun string) error {
 	now, err := gitx.Run(ctx, wt, "rev-parse", "HEAD")
 	if err != nil {
 		return err
@@ -425,8 +426,8 @@ func requireUnchanged(ctx context.Context, wt, head, slug string) error {
 		return err
 	}
 	if now != head || dirty != "" {
-		return fail(ExitDoneRefused, "the branch or worktree changed while done ran (HEAD %s, now %s; uncommitted: %q); nothing was recorded. "+
-			"Make sure the agent has finished, then run shoalctl done %s again", shortSHA(head), shortSHA(now), dirty, slug)
+		return fail(ExitDoneRefused, "the branch or worktree changed while %s ran (HEAD %s, now %s; uncommitted: %q); nothing was recorded. "+
+			"Make sure the agent has finished, then run shoalctl %s again", strings.Fields(rerun)[0], shortSHA(head), shortSHA(now), dirty, rerun)
 	}
 	return nil
 }

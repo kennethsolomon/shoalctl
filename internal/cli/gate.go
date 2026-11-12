@@ -325,7 +325,11 @@ func (env Env) cmdTest(ctx context.Context, args []string) error {
 	g.print(env.Stdout, *kind)
 	if *kind == "qa" {
 		// The agents' QA check: status shows it apart from the human's
-		// shoalctl qa rounds, and it never counts as one (§16 row 88).
+		// shoalctl qa rounds, and it never counts as one (§16 row 88). Like
+		// qa, it records nothing when the code changed while the suite ran.
+		if err := requireUnchanged(ctx, t.Worktree, head, "test "+t.Slug+" --kind qa"); err != nil {
+			return err
+		}
 		tree, err := gitx.Run(ctx, t.Worktree, "rev-parse", head+"^{tree}")
 		if err != nil {
 			return err

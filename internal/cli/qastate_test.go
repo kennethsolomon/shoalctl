@@ -190,6 +190,27 @@ func TestAgentQAIsNotAHumanRound(t *testing.T) {
 	mustContain(t, "done after an agent pass", errOut, "warning: "+task.Slug+": QA round 1 failed and no round passed since (QA is optional)")
 }
 
+// An agent QA check whose code changed while the suite ran records no
+// verdict, as qa records no round.
+func TestAgentQARefusesCodeChangedMidRun(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t).withSession()
+	p := h.initWith(junitConfig)
+	task := startedTask(t, h, "feature", "Moving code")
+	commitIn(t, task.Worktree, "feature.txt", "x")
+	cfg := strings.Replace(junitConfig, "sh ./test.sh {junit}", "sh ./test.sh {junit}; echo late > late.txt", 1)
+	if err := os.WriteFile(filepath.Join(p.dir, "config.toml"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	errOut := h.expectCode(ExitDoneRefused, "test", task.Slug, "--kind", "qa")
+	mustContain(t, "changed mid-run", errOut, "changed while test ran", "nothing was recorded", "run shoalctl test "+task.Slug+" --kind qa again")
+	if n := countRows(t, p, `SELECT count(*) FROM test_runs WHERE verdict != ''`); n != 0 {
+		t.Fatalf("%d run(s) got a verdict over code that changed mid-run", n)
+	}
+	expectQA(t, h, task.Slug, "after the refused check", qaNone, "-", 0)
+}
+
 // done and merge warn on stderr, and go on, when no human QA round passed on
 // the code: never ran or stale. A fresh pass gets no warning.
 func TestDoneAndMergeWarnWithoutQAOnTheCode(t *testing.T) {
