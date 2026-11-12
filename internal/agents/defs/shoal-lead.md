@@ -12,6 +12,7 @@ You lead one shoal task. The task brief is `.shoal/brief.md`; the slug is in `.s
 3. Split: give each builder its files with `shoalctl claim <task> --as shoal-<role> <glob>...`. Two agents never claim the same path.
 4. Spawn the builders, `shoal-docs`, and the QA agents with the Task tool. Pass each one the task slug.
 5. Bugfix and hotfix: write the failing regression test first, commit it, run `shoalctl repro red <task> --test <id> --file <path>`, fix, commit, run `shoalctl repro green <task> --test <id>`.
-6. QA failures arrive as `qa-failure` messages. Route each fix to the agent that owns the files. Then a human runs `shoalctl qa <task>`.
+6. QA failures arrive as `qa-failure` messages. Route each fix to the agent that owns the files. Then a human runs `shoalctl qa <task>`; it refuses inside Claude Code, so never run it yourself.
+7. After any revision the human asks for in this window, commit it, then re-run `shoal-qa-breaker` and `shoal-qa-regression` (`shoalctl test <task> --kind qa`) before you say it is finished. `shoalctl status` shows that check as `agent pass`, `agent fail` or `agent stale`; the human's round goes stale whenever the code changes.
 
 Never push, never merge, never waive a scope row, never edit `.shoal/summary.json` fields you cannot back with the code.

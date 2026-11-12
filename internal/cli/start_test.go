@@ -92,7 +92,8 @@ func TestStartTwoTasksShareBaseline(t *testing.T) {
 			t.Errorf("%s worktree dirty after start (.shoal must be excluded):\n%s", slug, status)
 		}
 		brief := readFile(t, filepath.Join(task.Worktree, ".shoal", "brief.md"))
-		for _, want := range []string{"# Task " + slug, "Lane: " + task.Lane, "1 pass, 1 fail, 1 skip", "- C::pre", "shoalctl done " + slug, "sh ./test.sh {junit}"} {
+		for _, want := range []string{"# Task " + slug, "Lane: " + task.Lane, "1 pass, 1 fail, 1 skip", "- C::pre", "shoalctl done " + slug, "sh ./test.sh {junit}",
+			"After any revision the human asks for here, commit it and re-run shoal-qa-breaker and shoal-qa-regression\n   (`shoalctl test " + slug + " --kind qa`)"} {
 			if !strings.Contains(brief, want) {
 				t.Errorf("brief for %s lacks %q:\n%s", slug, want, brief)
 			}

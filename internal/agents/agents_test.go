@@ -101,3 +101,26 @@ func TestRemoveKeepsEditedFiles(t *testing.T) {
 		t.Fatalf("second Remove: %+v %v", again, err)
 	}
 }
+
+// After a revision the human asks for, the lead re-runs the QA agents
+// through shoalctl test --kind qa, and never runs the human's shoalctl qa.
+func TestLeadReRunsQAAfterARevision(t *testing.T) {
+	t.Parallel()
+	defs, err := Defs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range defs {
+		if d.Name != "shoal-lead" {
+			continue
+		}
+		for _, want := range []string{"After any revision the human asks for in this window", "re-run `shoal-qa-breaker` and `shoal-qa-regression` (`shoalctl test <task> --kind qa`)",
+			"it refuses inside Claude Code, so never run it yourself"} {
+			if !strings.Contains(string(d.Body), want) {
+				t.Errorf("shoal-lead lacks %q:\n%s", want, d.Body)
+			}
+		}
+		return
+	}
+	t.Fatal("no shoal-lead definition")
+}

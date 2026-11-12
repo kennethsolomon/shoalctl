@@ -660,7 +660,7 @@ func renderTeam(b *strings.Builder, t store.Task, cfg config.Config, items []sto
 	} else {
 		fmt.Fprintf(b, "- proof: shoalctl repro red %[1]s --test <id> --file <path> before the fix, shoalctl repro green %[1]s --test <id> after\n", t.Slug)
 	}
-	fmt.Fprintf(b, "- QA: shoalctl test %[1]s --kind qa; a human runs shoalctl qa %[1]s (at most %[2]d rounds, then the task escalates)\n", t.Slug, cfg.Lanes.QAMaxRounds)
+	fmt.Fprintf(b, "- QA: shoalctl test %[1]s --kind qa; a human runs shoalctl qa %[1]s (at most %[2]d rounds, then the task escalates; it refuses inside Claude Code)\n", t.Slug, cfg.Lanes.QAMaxRounds)
 	fmt.Fprintf(b, `- memory: after a failed QA round, shoalctl record lesson %[1]s --pattern "<what went wrong>" --fix "<what fixed it>" --glob <files>;
   shoalctl record decision|qa %[1]s for choices and answers; shoalctl why <file> and shoalctl recall <words> read what earlier tasks recorded
 - conventions: when the human sets a rule from now on ("use X from now on"), shoalctl convention propose %[1]s --rule "<rule>" --scope <glob>;
@@ -751,6 +751,8 @@ func renderBrief(t store.Task, cfg config.Config, base store.Run, results []stor
 1. Commit all work on this branch. Do not push. Do not merge.
 2. Write ` + "`.shoal/summary.json`" + ` (format below).
 3. Tell the human you are finished: they exit this session, then run ` + "`shoalctl done " + t.Slug + "`" + `.
+4. After any revision the human asks for here, commit it and re-run shoal-qa-breaker and shoal-qa-regression
+   (` + "`shoalctl test " + t.Slug + " --kind qa`" + `) before you say it is finished again.
 
 summary.json:
 {"decision": "...", "alternatives_rejected": [{"option": "...", "why": "..."}],
