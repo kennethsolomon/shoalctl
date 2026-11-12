@@ -105,6 +105,36 @@ func TestStatusQATracksTheCode(t *testing.T) {
 	}
 }
 
+// A worktree status cannot read warns on stderr and shows a pass as stale,
+// with no hint to run shoalctl qa, which cannot succeed there.
+func TestStatusQAOnAnUnreadableWorktree(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t).withSession()
+	h.initWith(junitConfig)
+	task := startedTask(t, h, "feature", "Gone worktree")
+	commitIn(t, task.Worktree, "feature.txt", "x")
+	h.mustRun("qa", task.Slug)
+	moved := filepath.Join(t.TempDir(), "moved")
+	if err := os.Rename(task.Worktree, moved); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errOut := h.run("status")
+	if code != 0 {
+		t.Fatalf("status: exit %d\n%s", code, errOut)
+	}
+	mustContain(t, "status stderr", errOut, "warning: "+task.Slug+": cannot read the worktree's code")
+	var line string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, task.Slug+" ") {
+			line = l
+		}
+	}
+	if !strings.Contains(line, "  stale 1/3  ") || strings.Contains(line, "code changed since QA") {
+		t.Fatalf("unreadable worktree: line %q", line)
+	}
+}
+
 // An agent's QA check (shoalctl test --kind qa) shows as "agent ..." and
 // never counts as the human's round; shoalctl qa refuses inside Claude Code.
 func TestAgentQAIsNotAHumanRound(t *testing.T) {

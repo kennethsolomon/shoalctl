@@ -176,7 +176,8 @@ func (env Env) cmdStatus(ctx context.Context, args []string) error {
 			return err
 		}
 		row.QAState, row.QASHA, row.AgentQAState, row.AgentQASHA = row.qa.Human, row.qa.SHA, row.qa.Agent, row.qa.AgentSHA
-		row.qaRerun = contains(qaRoundStages, t.Stage)
+		// shoalctl qa cannot run over a worktree whose code is unreadable.
+		row.qaRerun = contains(qaRoundStages, t.Stage) && tree != unreadableTree
 		if t.TmuxWindow != "" {
 			row.Window = "gone"
 			if alive[t.TmuxWindow] {
