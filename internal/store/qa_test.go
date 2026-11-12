@@ -58,7 +58,7 @@ func TestQACodeIdentity(t *testing.T) {
 }
 
 // Migration 9 keeps the qa rounds and test runs recorded before it and gives
-// them '' for the code they ran on, so a pass from then shows as stale.
+// them an empty tree, so a pass from then shows as stale.
 func TestQACodeMigrationKeepsOldRows(t *testing.T) {
 	migs, _ := Migrations()
 	if len(migs) < 9 || migs[8].Name != "qa_code" {
