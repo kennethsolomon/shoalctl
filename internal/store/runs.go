@@ -303,3 +303,43 @@ func (s *Store) Results(ctx context.Context, runID int64) ([]Result, error) {
 	}
 	return out, nil
 }
+
+// AgentQA is the newest agent QA check of a task: a shoalctl test --kind qa
+// run that recorded a verdict. A shoalctl qa round's own run has none.
+type AgentQA struct {
+	RunID  int64
+	SHA    string
+	Tree   string
+	Passed bool
+}
+
+// SetRunVerdict records what shoalctl test --kind qa decided about a
+// completed run and the tree it ran on.
+func (s *Store) SetRunVerdict(ctx context.Context, runID int64, passed bool, tree string) error {
+	verdict := "fail"
+	if passed {
+		verdict = "pass"
+	}
+	return s.write(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE test_runs SET verdict = ?, tree = ? WHERE id = ?`, verdict, tree, runID); err != nil {
+			return fmt.Errorf("record the verdict of run %d: %w", runID, err)
+		}
+		return nil
+	})
+}
+
+// LatestAgentQA returns the task's newest agent QA check.
+func (s *Store) LatestAgentQA(ctx context.Context, taskID int64) (AgentQA, bool, error) {
+	var a AgentQA
+	var verdict string
+	err := s.db.QueryRowContext(ctx, `SELECT id, sha, tree, verdict FROM test_runs
+		WHERE task_id = ? AND kind = 'qa' AND verdict != '' ORDER BY id DESC LIMIT 1`, taskID).Scan(&a.RunID, &a.SHA, &a.Tree, &verdict)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AgentQA{}, false, nil
+	}
+	if err != nil {
+		return AgentQA{}, false, fmt.Errorf("latest agent qa check of task %d: %w", taskID, err)
+	}
+	a.Passed = verdict == "pass"
+	return a, true, nil
+}

@@ -363,6 +363,8 @@ type QARound struct {
 	RunID    int64
 	Passed   bool
 	Failures string // JSON array of strings
+	HeadSHA  string // the commit the round ran at
+	Tree     string // that commit's tree: the code the round checked; "" before migration 0009
 }
 
 // InsertQARound records a round inside a caller's transaction.
@@ -371,8 +373,8 @@ func InsertQARound(ctx context.Context, tx *sql.Tx, r QARound) error {
 	if r.RunID != 0 {
 		run = r.RunID
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO qa_rounds (task_id, round, run_id, passed, failures, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		r.TaskID, r.Round, run, r.Passed, r.Failures, now()); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO qa_rounds (task_id, round, run_id, passed, failures, head_sha, tree, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.TaskID, r.Round, run, r.Passed, r.Failures, r.HeadSHA, r.Tree, now()); err != nil {
 		return fmt.Errorf("record qa round %d of task %d: %w", r.Round, r.TaskID, err)
 	}
 	return nil
@@ -380,7 +382,7 @@ func InsertQARound(ctx context.Context, tx *sql.Tx, r QARound) error {
 
 // QARounds returns a task's QA rounds in order.
 func (s *Store) QARounds(ctx context.Context, taskID int64) ([]QARound, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT task_id, round, COALESCE(run_id, 0), passed, failures FROM qa_rounds WHERE task_id = ? ORDER BY round`, taskID)
+	rows, err := s.db.QueryContext(ctx, `SELECT task_id, round, COALESCE(run_id, 0), passed, failures, head_sha, tree FROM qa_rounds WHERE task_id = ? ORDER BY round`, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("read qa rounds of task %d: %w", taskID, err)
 	}
@@ -388,7 +390,7 @@ func (s *Store) QARounds(ctx context.Context, taskID int64) ([]QARound, error) {
 	var out []QARound
 	for rows.Next() {
 		var r QARound
-		if err := rows.Scan(&r.TaskID, &r.Round, &r.RunID, &r.Passed, &r.Failures); err != nil {
+		if err := rows.Scan(&r.TaskID, &r.Round, &r.RunID, &r.Passed, &r.Failures, &r.HeadSHA, &r.Tree); err != nil {
 			return nil, fmt.Errorf("scan qa round: %w", err)
 		}
 		out = append(out, r)
