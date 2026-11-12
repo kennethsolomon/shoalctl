@@ -322,6 +322,17 @@ func (env Env) cmdTest(ctx context.Context, args []string) error {
 		return err
 	}
 	g.print(env.Stdout, *kind)
+	if *kind == "qa" {
+		// The agents' QA check: status shows it apart from the human's
+		// shoalctl qa rounds, and it never counts as one (§16 row 88).
+		tree, err := gitx.Run(ctx, t.Worktree, "rev-parse", head+"^{tree}")
+		if err != nil {
+			return err
+		}
+		if err := p.db.SetRunVerdict(ctx, run.ID, len(g.blocking) == 0, tree); err != nil {
+			return err
+		}
+	}
 	if len(g.blocking) > 0 {
 		return fail(ExitGate, "%d blocking row(s) against the baseline: %s", len(g.blocking), strings.Join(g.blocking, ", "))
 	}

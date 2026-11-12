@@ -41,6 +41,11 @@ func (env Env) cmdQA(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	// A round is the human's QA: an agent must not count one (§16 row 88).
+	if k := env.claudeCodeSession(); k != "" {
+		return fail(ExitState, "qa refused: this process runs inside a Claude Code session (%s is set), and a QA round is the human's. "+
+			"Agents check with shoalctl test %s --kind qa; the human runs shoalctl qa in their own terminal", k, pos[0])
+	}
 	p, t, lock, err := env.lockedTask(ctx, pos[0], "qa")
 	if err != nil {
 		return err
@@ -119,6 +124,10 @@ func (env Env) cmdQA(ctx context.Context, args []string) error {
 	if err := requireUnchanged(ctx, t.Worktree, head, t.Slug); err != nil {
 		return err
 	}
+	tree, err := gitx.Run(ctx, t.Worktree, "rev-parse", head+"^{tree}")
+	if err != nil {
+		return err
+	}
 
 	passed := len(failures) == 0
 	stage := store.StageQA
@@ -127,7 +136,8 @@ func (env Env) cmdQA(ctx context.Context, args []string) error {
 	}
 	enc, _ := json.Marshal(nonNilStrings(failures))
 	t, err = p.db.Update(ctx, t, from, "stage = ?, qa_round = ?", []any{stage, round}, func(tx *sql.Tx) error {
-		if err := store.InsertQARound(ctx, tx, store.QARound{TaskID: t.ID, Round: round, RunID: runID, Passed: passed, Failures: string(enc)}); err != nil {
+		if err := store.InsertQARound(ctx, tx, store.QARound{TaskID: t.ID, Round: round, RunID: runID, Passed: passed, Failures: string(enc),
+			HeadSHA: head, Tree: tree}); err != nil {
 			return err
 		}
 		if passed {
