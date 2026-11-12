@@ -99,7 +99,16 @@ func TestPhase5GCAfterMerge(t *testing.T) {
 	// A dirty worktree is checked first: gc then leaves the whole task alone,
 	// window and working rows included, and says so (exit 5).
 	testutil.WriteFile(t, filepath.Join(task.Worktree, "notes.txt"), "mine")
+	// status.showUntrackedFiles=no hides the file from a plain git status and
+	// from git worktree remove; it still keeps the worktree.
+	testutil.Git(t, task.Worktree, "config", "status.showUntrackedFiles", "no")
 	errOut := h.expectCode(ExitState, "gc")
+	mustContain(t, "gc with a hidden untracked file", errOut, "kept "+task.Slug+"'s worktree "+task.Worktree, "run gc again")
+	if !fileExists(filepath.Join(task.Worktree, "notes.txt")) {
+		t.Fatal("gc deleted an untracked file hidden by status.showUntrackedFiles=no")
+	}
+	testutil.Git(t, task.Worktree, "config", "--unset", "status.showUntrackedFiles")
+	errOut = h.expectCode(ExitState, "gc")
 	mustContain(t, "gc with an untracked file", errOut, "kept "+task.Slug+"'s worktree "+task.Worktree, "run gc again")
 	if !fileExists(filepath.Join(task.Worktree, "notes.txt")) {
 		t.Fatal("gc deleted an untracked file")

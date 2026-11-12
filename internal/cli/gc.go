@@ -174,12 +174,14 @@ func (g *collector) dirty(ctx context.Context, t store.Task) bool {
 }
 
 // dirtyWorktree reports whether the task's worktree exists and holds
-// changes or untracked files.
+// changes or untracked files. It counts untracked files even under
+// status.showUntrackedFiles=no: git worktree remove obeys that setting and
+// would delete them.
 func dirtyWorktree(ctx context.Context, t store.Task) (bool, error) {
 	if t.Worktree == "" || !fileExists(t.Worktree) {
 		return false, nil
 	}
-	st, err := gitx.Run(ctx, t.Worktree, "status", "--porcelain")
+	st, err := gitx.Run(ctx, t.Worktree, "status", "--porcelain", "--untracked-files=normal")
 	return st != "", err
 }
 
