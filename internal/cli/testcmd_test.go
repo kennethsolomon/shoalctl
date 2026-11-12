@@ -43,6 +43,9 @@ func TestTestCommandBlocksOnRegression(t *testing.T) {
 
 	testutil.WriteFile(t, filepath.Join(task.Worktree, "dirty.txt"), "x")
 	h.expectCode(ExitState, "test", task.Slug)
+	// An untracked file stays uncommitted code under status.showUntrackedFiles=no.
+	testutil.Git(t, task.Worktree, "config", "status.showUntrackedFiles", "no")
+	h.expectCode(ExitState, "test", task.Slug)
 	h.expectCode(ExitUsage, "test", "--kind", "final", task.Slug)
 	h.expectCode(ExitNotFound, "test", "99-nope")
 }

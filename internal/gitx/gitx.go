@@ -177,7 +177,9 @@ func Changed(ctx context.Context, dir, from string, pathspecs []string) (bool, e
 // stores blobs for the edited files in the object database, as git add
 // would; git gc prunes them once nothing refers to them.
 func CodeTree(ctx context.Context, wt string) (string, error) {
-	dirty, err := Run(ctx, wt, "--no-optional-locks", "status", "--porcelain")
+	// --untracked-files=normal overrides status.showUntrackedFiles=no, which
+	// would hide a new file and return HEAD's tree.
+	dirty, err := Run(ctx, wt, "--no-optional-locks", "status", "--porcelain", "--untracked-files=normal")
 	if err != nil {
 		return "", err
 	}

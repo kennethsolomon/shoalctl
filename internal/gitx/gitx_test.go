@@ -3,6 +3,7 @@ package gitx
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -186,5 +187,57 @@ func TestCodeTree(t *testing.T) {
 	testutil.WriteFile(t, filepath.Join(repo, "README.md"), "app\n")
 	if got := tree(); got != clean {
 		t.Fatalf("back to the first content: %s, want %s", got, clean)
+	}
+
+	testutil.Git(t, repo, "commit", "-q", "-a", "-m", "back")
+
+	// status.showUntrackedFiles=no hides a new file from a plain git status;
+	// the file still counts.
+	testutil.Git(t, repo, "config", "status.showUntrackedFiles", "no")
+	testutil.WriteFile(t, filepath.Join(repo, "hidden.txt"), "h")
+	if got := tree(); got == clean {
+		t.Fatal("an untracked file under status.showUntrackedFiles=no kept HEAD's tree")
+	}
+	if err := os.Remove(filepath.Join(repo, "hidden.txt")); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, repo, "config", "--unset", "status.showUntrackedFiles")
+
+	// A tracked file deleted on disk, not staged, is gone from the code.
+	if err := os.Remove(filepath.Join(repo, "README.md")); err != nil {
+		t.Fatal(err)
+	}
+	deleted := tree()
+	if deleted == clean {
+		t.Fatal("a deleted tracked file kept the id")
+	}
+	if st := testutil.Git(t, repo, "status", "--porcelain"); st != "D README.md" {
+		t.Fatalf("CodeTree touched the real index: status %q", st)
+	}
+	testutil.Git(t, repo, "rm", "-q", "README.md")
+	if want := testutil.Git(t, repo, "write-tree"); deleted != want {
+		t.Fatalf("deleted file: %s, want the tree with it removed %s", deleted, want)
+	}
+	testutil.Git(t, repo, "reset", "-q", "--hard")
+
+	// A linked worktree has its own index under the common git dir.
+	linked := filepath.Join(t.TempDir(), "linked")
+	testutil.Git(t, repo, "worktree", "add", "-q", "-b", "linked", linked)
+	if got, err := CodeTree(ctx, linked); err != nil || got != clean {
+		t.Fatalf("clean linked worktree: %s, %v, want %s", got, err, clean)
+	}
+	testutil.WriteFile(t, filepath.Join(linked, "README.md"), "edited\n")
+	got, err := CodeTree(ctx, linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == clean {
+		t.Fatal("an edit in a linked worktree kept the id")
+	}
+	if st := testutil.Git(t, linked, "status", "--porcelain"); st != "M README.md" {
+		t.Fatalf("CodeTree touched the linked worktree's index: status %q", st)
+	}
+	if main := tree(); main != clean {
+		t.Fatalf("an edit in the linked worktree changed the main checkout's id: %s", main)
 	}
 }

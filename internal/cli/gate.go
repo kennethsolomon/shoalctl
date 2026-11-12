@@ -240,12 +240,13 @@ func changedPaths(ctx context.Context, wt, base string) ([]string, error) {
 }
 
 // requireClean refuses when wt has uncommitted changes, since a run must
-// describe a commit.
+// describe a commit. Untracked files count even under
+// status.showUntrackedFiles=no.
 func requireClean(ctx context.Context, wt, what string) (string, error) {
 	if _, err := os.Stat(wt); err != nil {
 		return "", fail(ExitState, "worktree %s is missing: %v", wt, err)
 	}
-	dirty, err := gitx.Run(ctx, wt, "status", "--porcelain")
+	dirty, err := gitx.Run(ctx, wt, "status", "--porcelain", "--untracked-files=normal")
 	if err != nil {
 		return "", err
 	}

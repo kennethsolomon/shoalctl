@@ -420,7 +420,7 @@ func requireUnchanged(ctx context.Context, wt, head, slug string) error {
 	if err != nil {
 		return err
 	}
-	dirty, err := gitx.Run(ctx, wt, "status", "--porcelain")
+	dirty, err := gitx.Run(ctx, wt, "status", "--porcelain", "--untracked-files=normal")
 	if err != nil {
 		return err
 	}
