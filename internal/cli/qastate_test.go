@@ -215,6 +215,41 @@ func TestAgentQARefusesCodeChangedMidRun(t *testing.T) {
 	expectQA(t, h, task.Slug, "after the refused check", qaNone, "-", 0)
 }
 
+// A qa round or a merge whose code changed while the suite ran names its own
+// command to run again, not done.
+func TestQAAndMergeRefuseCodeChangedMidRun(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t).withSession()
+	p := h.initWith(junitConfig)
+	task := startedTask(t, h, "feature", "Moving code")
+	commitIn(t, task.Worktree, "feature.txt", "x")
+	late := strings.Replace(junitConfig, "sh ./test.sh {junit}", "sh ./test.sh {junit}; echo late > late.txt", 1)
+	config := func(body string) {
+		if err := os.WriteFile(filepath.Join(p.dir, "config.toml"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	config(late)
+
+	errOut := h.expectCode(ExitDoneRefused, "qa", task.Slug)
+	mustContain(t, "qa changed mid-run", errOut, "changed while qa ran", "nothing was recorded", "run shoalctl qa "+task.Slug+" again")
+	if got := h.task(task.Slug); got.QARound != 0 {
+		t.Fatalf("qa counted a round over code that changed mid-run: %+v", got)
+	}
+
+	if err := os.Remove(filepath.Join(task.Worktree, "late.txt")); err != nil {
+		t.Fatal(err)
+	}
+	config(junitConfig)
+	finish(t, h, task.Slug, task.Worktree)
+	config(late)
+	errOut = h.expectCode(ExitDoneRefused, "merge")
+	mustContain(t, "merge changed mid-run", errOut, "changed while merge ran", "nothing was recorded", "run shoalctl merge --task "+task.Slug+" again")
+	if got := h.task(task.Slug); got.Stage != "done" {
+		t.Fatalf("merge left a task whose code changed mid-run at %q", got.Stage)
+	}
+}
+
 // done and merge warn on stderr, and go on, when no human QA round passed on
 // the code: never ran or stale. A fresh pass gets no warning.
 func TestDoneAndMergeWarnWithoutQAOnTheCode(t *testing.T) {
